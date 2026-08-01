@@ -1,0 +1,36 @@
+name: Bug report
+description: Report a reproducible Android-use problem without publishing private device data.
+title: "[bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include serials, tokens, screenshots, recordings, account data, or private logs.
+  - type: input
+    id: version
+    attributes:
+      label: au version
+      placeholder: "au --version"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Windows and Android environment
+      placeholder: "Windows x64; Android/OEM version"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Use the smallest command sequence with private identifiers removed.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual result
+    validations:
+      required: true

@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "product": "android-use",
+  "version": "1.0.0",
+  "protocol_version": 1,
+  "assets": {
+    "host_windows_x64": {
+      "url": "https://github.com/drperky20/android-use/releases/download/v1.0.0/au-windows-x64.exe",
+      "bytes": 0,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "helper_apk": {
+      "url": "https://github.com/drperky20/android-use/releases/download/v1.0.0/dev.codex.aubridge.apk",
+      "bytes": 0,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  }
+}

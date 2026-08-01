@@ -1,0 +1,18 @@
+{
+  "name": "android-use-workspace",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Development workspace for android-use",
+  "workspaces": ["packages/installer"],
+  "scripts": {
+    "test": "npm test --workspace packages/installer",
+    "lint": "npm run lint --workspace packages/installer",
+    "docs:check": "node scripts/check-doc-links.mjs",
+    "sbom": "node scripts/generate-sbom.mjs",
+    "skill:sync": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-public-skill.ps1",
+    "skill:check": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-public-skill.ps1 -Check"
+  },
+  "engines": {
+    "node": ">=20.11"
+  }
+}

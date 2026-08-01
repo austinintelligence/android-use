@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">AU Bridge</string>
+    <string name="accessibility_description">Enables authenticated semantic control for the local AU desktop client.</string>
+</resources>

@@ -1,0 +1,19 @@
+name: Feature request
+description: Suggest an agent-facing Android-use improvement.
+title: "[feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Agent problem
+      description: What latency, ambiguity, token, or capability problem should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed contract
+      description: Include compact input/output examples and cleanup behavior.
+    validations:
+      required: true
