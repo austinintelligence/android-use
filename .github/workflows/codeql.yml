@@ -22,7 +22,7 @@ jobs:
         include:
           - language: javascript-typescript
             os: ubuntu-latest
-            build_mode: autobuild
+            build_mode: none
           - language: rust
             os: windows-latest
             build_mode: none
@@ -44,8 +44,6 @@ jobs:
         if: matrix.language == 'java-kotlin'
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-helper.ps1 -Release
-      - uses: github/codeql-action/autobuild@47be0dbd5113ab1b79fe2dd3f68bdf7e426cdc87
-        if: matrix.language == 'javascript-typescript'
       - uses: github/codeql-action/analyze@47be0dbd5113ab1b79fe2dd3f68bdf7e426cdc87
         with:
           category: /language:${{ matrix.language }}
