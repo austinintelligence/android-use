@@ -25,26 +25,27 @@ jobs:
             build_mode: autobuild
           - language: rust
             os: windows-latest
-            build_mode: manual
+            build_mode: none
           - language: java-kotlin
             os: windows-latest
-            build_mode: autobuild
+            build_mode: manual
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - uses: github/codeql-action/init@47be0dbd5113ab1b79fe2dd3f68bdf7e426cdc87
-        with:
-          languages: ${{ matrix.language }}
-          build-mode: ${{ matrix.build_mode }}
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
         if: matrix.language == 'java-kotlin'
         with:
           distribution: temurin
           java-version: '17'
-      - name: Build Rust for CodeQL
-        if: matrix.language == 'rust'
-        run: cargo build --workspace --release
+      - uses: github/codeql-action/init@47be0dbd5113ab1b79fe2dd3f68bdf7e426cdc87
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build_mode }}
+      - name: Build Android helper for CodeQL
+        if: matrix.language == 'java-kotlin'
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-helper.ps1 -Release
       - uses: github/codeql-action/autobuild@47be0dbd5113ab1b79fe2dd3f68bdf7e426cdc87
-        if: matrix.language != 'rust'
+        if: matrix.language == 'javascript-typescript'
       - uses: github/codeql-action/analyze@47be0dbd5113ab1b79fe2dd3f68bdf7e426cdc87
         with:
           category: /language:${{ matrix.language }}
