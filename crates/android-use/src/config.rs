@@ -378,7 +378,7 @@ mod tests {
         fs::create_dir_all(&legacy).expect("legacy");
         fs::write(
             legacy.join("config.toml"),
-            "serial=192.168.1.103:42511\nadb_path=C:\\old\\adb.exe\n",
+            "serial=192.0.2.103:42511\nadb_path=C:\\old\\adb.exe\n",
         )
         .expect("legacy config");
         let mut config = Config::default();
@@ -387,9 +387,9 @@ mod tests {
         migrate_legacy_from(&paths, &mut config, &legacy).expect("second migration");
         assert_eq!(
             config.selected_endpoint.as_deref(),
-            Some("192.168.1.103:42511")
+            Some("192.0.2.103:42511")
         );
-        assert_eq!(config.known_wifi_endpoints, ["192.168.1.103:42511"]);
+        assert_eq!(config.known_wifi_endpoints, ["192.0.2.103:42511"]);
         assert_eq!(
             config.migration.legacy_backup.as_deref(),
             Some(backup.as_str())

@@ -390,7 +390,7 @@ mod tests {
         assert!(mapping_owned(&record, "a1b2c3d4", "reverse", "tcp:18765"));
         assert!(!mapping_owned(
             &record,
-            "adb-a1b2c3d4-cMDPBG._adb-tls-connect._tcp",
+            "adb-a1b2c3d4-test._adb-tls-connect._tcp",
             "reverse",
             "tcp:18765"
         ));
