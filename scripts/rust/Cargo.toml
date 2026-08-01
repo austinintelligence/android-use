@@ -20,7 +20,7 @@ sha2 = "0.10"
 base64 = "0.22"
 png = "0.17"
 thiserror = "2.0"
-windows-sys = { version = "0.59", features = [
+windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_Security_Authorization",
