@@ -1,0 +1,27 @@
+/scripts/rust/target/
+/scripts/helper/.gradle/
+/scripts/helper/build/
+/scripts/helper/app/build/
+/artifacts/raw/
+
+# Local release state, device evidence, and private signing material.
+/artifacts/
+/scripts/helper/gradle-*/
+/scripts/helper/*.keystore
+/scripts/helper/*.jks
+/scripts/helper/signing.properties
+*.token
+*.pem
+*.p12
+*.jks
+*.keystore
+*.apk
+*.mp4
+*.wav
+*.jpg
+*.jpeg
+*.png
+
+# Local installer and package-manager state.
+node_modules/
+npm-debug.log*

@@ -1,0 +1,40 @@
+{
+  "name": "android-use",
+  "version": "1.0.0",
+  "description": "Verified NPX installer for the android-use Rust Android control stack",
+  "type": "module",
+  "bin": {
+    "android-use": "cli.mjs"
+  },
+  "files": [
+    "cli.mjs",
+    "skill/**",
+    "LICENSE",
+    "release-manifest.example.json"
+  ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/drperky20/android-use.git"
+  },
+  "homepage": "https://github.com/drperky20/android-use",
+  "bugs": {
+    "url": "https://github.com/drperky20/android-use/issues"
+  },
+  "license": "MIT",
+  "scripts": {
+    "lint": "node --check cli.mjs",
+    "test": "node --test"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

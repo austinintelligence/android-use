@@ -1,0 +1,9 @@
+# AU Bridge helper
+
+The complete feature set needs `dev.codex.aubridge`, Java 17, min SDK 30, target/compile SDK 36, AGP 9.0.1, Gradle 9.1.0, and Build Tools 36.0.0. Build with `scripts/build-helper.ps1`; the build runs `scripts/validate-apk.ps1` against the packed APK and retains a machine-local signing key under `%LOCALAPPDATA%\Codex\android-use`, outside the skill.
+
+Install with `au app install PATH_TO_app-debug.apk`. The first helper-backed `au` command starts the exported foreground-service bootstrap automatically; open `dev.codex.aubridge/.MainActivity` only when granting or reviewing permissions. Enable Accessibility for semantic UI. Notification access is optional; `notif ls|watch|open|action|dismiss` return `E_CAPABILITY` when absent. After a helper restart, read-only semantic and notification queries retry within a bounded recovery window; state-changing operations are never replayed automatically.
+
+Android may clear an Accessibility binding after an explicit package force-stop or a debug-target instrumentation swap. `au doctor` reports this as a capability failure; restore the user-approved binding in Accessibility settings (or with the device's authorized adb settings path) before semantic tests. Do not treat a coordinate/UIAutomator fallback tree as proof that the helper is available.
+
+The helper requests no INTERNET permission. It owns an abstract local socket, token in app-private storage, bounded length-prefixed messages, token authentication, replay-resistant nonces, and a monotonic per-connection request sequence. A sequence must begin at `1` and increase by exactly one; replayed, skipped, or overflowed requests terminate that session. AU-tracked ADB forwards are the only host reachability path. Rust request debug output redacts the token. The token is read only through `run-as` on the locally signed debuggable helper.

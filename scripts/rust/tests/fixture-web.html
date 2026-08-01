@@ -1,0 +1,11 @@
+<!doctype html>
+<meta name="viewport" content="width=device-width">
+<h1 id="title">AU WiFi CDP</h1>
+<label>Name <input id="name" aria-label="Name"></label>
+<button id="go">Go</button>
+<div id="out">Ready</div>
+<script>
+  document.getElementById("go").addEventListener("click", () => {
+    document.getElementById("out").textContent = "Hello " + document.getElementById("name").value;
+  });
+</script>
