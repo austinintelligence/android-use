@@ -36,7 +36,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: github/codeql-action/init@47be0dbd5113ab1b79fe2dd3f68bdf7e426cdc87
+      - uses: github/codeql-action/init@f205ea1c3313d32999d8d6a48b4f6530d4437b38
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build_mode }}
@@ -44,6 +44,6 @@ jobs:
         if: matrix.language == 'java-kotlin'
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-helper.ps1 -Release
-      - uses: github/codeql-action/analyze@47be0dbd5113ab1b79fe2dd3f68bdf7e426cdc87
+      - uses: github/codeql-action/analyze@f205ea1c3313d32999d8d6a48b4f6530d4437b38
         with:
           category: /language:${{ matrix.language }}
