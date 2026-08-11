@@ -11,7 +11,7 @@ The repository also contains the optional Android helper `dev.codex.aubridge`. T
 From the standard Codex skill registry:
 
 ```powershell
-npx skills add drperky20/android-use --skill android-use -g -a codex -y
+npx skills add austinintelligence/android-use --skill android-use -g -a codex -y
 ```
 
 The canonical skill source is [`skills/android-use`](skills/android-use/SKILL.md).
