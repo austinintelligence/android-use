@@ -1,36 +1,54 @@
 # android-use
 
-Fast, bounded Android control for Windows agents.
+Control Android from a Windows agent without turning every action into brittle screen coordinates.
 
-`android-use` provides the two-character `au` CLI: a Rust-first ADB client and per-user daemon with persistent shell sessions, exact hardware-identity selection, compact machine output, batch/tape execution, semantic accessibility control, CDP web control, bounded media capture, files, apps, notifications, and mock location.
+`android-use` is a Windows-first control layer for Android phones and tablets. It gives agents one small, scriptable surface for inspecting a device, finding controls by meaning, tapping and typing, opening apps, working with Chrome, capturing bounded media, reading notifications, and more.
 
-The repository also contains the optional Android helper `dev.codex.aubridge`. The helper is required for semantic UI, notifications, camera, microphone, and location features. Basic coordinate control and read-only ADB commands remain usable without it.
+The project is built around a short command: `au`.
 
-## Install
+## Why it exists
 
-From the standard Codex skill registry:
+Android automation often breaks when a device reconnects, a screen moves, or a command prints far too much output. `android-use` keeps the path predictable:
+
+- exact device identity instead of trusting a friendly name or a remembered IP address;
+- semantic accessibility actions when the Android helper is available;
+- a warm per-user daemon so repeated actions do not pay the full connection cost;
+- compact, bounded output that is easier for an agent to reason about;
+- explicit limits around screenshots, recordings, shell commands, and other artifacts.
+
+## What you can do
+
+| Goal | Example | Extra Android helper needed? |
+| --- | --- | --- |
+| Inspect the current screen | `au ui snap --compact --frontier` | Usually yes |
+| Send a short batch of basic actions | `au --delay 200 b "home; t 50% 50%; tx 'hello'; k ENTER"` | No |
+| Find a control by text or properties | `au ui find "text~Allow,clickable=true#0"` | Yes |
+| Work with Chrome through CDP | See the browser references | No helper, but Chrome is required |
+| Use camera, microphone, notifications, or mock location | See the helper setup | Yes |
+
+The optional helper is `dev.codex.aubridge`. Basic coordinate control and read-only ADB commands remain useful without it.
+
+## Install on Windows
+
+Install the Codex skill from the public repository:
 
 ```powershell
 npx skills add austinintelligence/android-use --skill android-use -g -a codex -y
 ```
 
-The canonical skill source is [`skills/android-use`](skills/android-use/SKILL.md).
-
-After the npm package is published by the release owner on Windows x64:
+When a published npm release is available, the verified host installer can be used as well:
 
 ```powershell
 npx --yes android-use@latest install --agent codex
 ```
 
-The `1.0.0` GitHub prerelease is already available for source/release-asset
-verification; npm publication is intentionally owner-managed and is not
-claimed until the package is visible in the registry.
+The installer verifies the release manifest, SHA-256 digest, byte count, and staged replacement before activating `au.exe`. `--with-helper` keeps a verified helper APK in the local version store, and `--install-helper` installs it on the enrolled device.
 
-The installer verifies the signed release manifest, SHA-256, byte count, and staged replacement before activating `au.exe`. It never downloads an unpinned binary. `--with-helper` also downloads the helper APK; `--install-helper` installs it on the currently enrolled device.
+The installer stores host state under `%LOCALAPPDATA%\Codex\android-use` and the skill under `%USERPROFILE%\.codex\skills\android-use` (or `%CODEX_HOME%\skills\android-use`).
 
-The release installer stores host state under `%LOCALAPPDATA%\Codex\android-use` and the skill under `%USERPROFILE%\.codex\skills\android-use` (or `%CODEX_HOME%\skills\android-use`).
+## Connect your first device
 
-## First device
+Enable USB debugging or Wireless debugging on Android, authorize the computer, and then run:
 
 ```powershell
 au d
@@ -39,45 +57,54 @@ au st
 au ui snap --compact --frontier
 ```
 
-Enrollment records the endpoint's reported `ro.serialno`. USB is preferred; Wi-Fi and mDNS are failover candidates only when they report the same exact hardware identity. No device serial is embedded in the public source.
+Enrollment records the endpoint's reported `ro.serialno`. USB is preferred; Wi-Fi and mDNS are failover candidates only when they report the same exact hardware identity.
 
-## Agent-first usage
-
-```powershell
-# One persistent shell transaction, with a short settle gap between mutations.
-au --delay 200 b "home; t 50% 50%; tx 'hello'; k ENTER"
-
-# Text-first semantic control.
-au ui snap --compact --frontier
-au ui find "text~Allow,clickable=true#0"
-au ui tap NODE_HANDLE
-
-# Compact JSONL foreground mode.
-au -w pipe --jsonl
-
-# Raw escape hatches are intentionally broad and are not a safety boundary.
-au adb -- shell getprop ro.build.version.release
-au sh -- getprop ro.serialno
-```
-
-Normal success output is one line (`ok`, `ok N`, or `ok PATH`). Use `-w` for the versioned minified wire envelope, `-j` for stable JSON, and `--out PATH` for large or binary results. Screenshots, camera, microphone, and recordings never enter a normal terminal transcript as raw bytes.
-
-## Architecture
+## A simple mental model
 
 ```text
-Codex skill -> au CLI -> current-user named-pipe daemon -> persistent ADB transport
-                                      |\
-                                      | +-- CDP forward for Chrome
-                                      | +-- authenticated ADB-forwarded AU Bridge
-                                      |     (Accessibility, media, notification, location)
-                                      +-- bounded child-process and artifact manager
+Codex or another agent
+          |
+          v
+       au CLI  ->  Windows per-user daemon  ->  ADB  ->  Android device
+                                      \
+                                       +-> optional AU Bridge
+                                           (accessibility, media, notifications, location)
 ```
 
-The helper exposes no network listener and requests no `INTERNET` permission. It uses an authenticated abstract local socket reachable only through an AU-owned ADB forward. The Windows daemon uses a versioned, length-prefixed named-pipe protocol restricted to the current user.
+The CLI is intentionally small. The daemon keeps transports warm, owns the current-user named pipe, and manages bounded child processes and artifacts. The Android helper stays local to the device and exposes no network listener of its own.
+
+## Output made for agents
+
+Normal success output is one line such as `ok`, `ok N`, or `ok PATH`. Use:
+
+- `-w` for the versioned minified wire envelope;
+- `-j` for stable JSON;
+- `--out PATH` for large or binary results.
+
+Screenshots, camera frames, microphone data, and recordings do not get dumped into a normal terminal transcript as raw bytes.
+
+## Scope and limitations
+
+- Host support is currently Windows x64.
+- Root access is not required.
+- Semantic UI, notification, media, and mock-location features require one-time helper capabilities on Android.
+- Android firmware, OEM permissions, Chrome availability, camera hardware, and audio routing can affect individual capabilities. `au doctor` reports capability errors explicitly.
+- Raw ADB and shell remain available for advanced users. They are escape hatches, not a substitute for an agent's approval and policy layer.
+
+## Documentation
+
+Start with [`docs/README.md`](docs/README.md), then choose the depth you need:
+
+- [`docs/installation.md`](docs/installation.md) — first setup, helper installation, and device enrollment;
+- [`docs/architecture.md`](docs/architecture.md) — runtime layers, identity, and state ownership;
+- [`docs/limitations.md`](docs/limitations.md) — supported and unsupported environments;
+- [`docs/security.md`](docs/security.md) — security boundaries and safe use;
+- [`docs/supply-chain.md`](docs/supply-chain.md) — release verification and public-tree checks;
+- [`docs/benchmarks.md`](docs/benchmarks.md) — performance methodology and results.
 
 ## Build from source
 
-Requirements: Windows x64, Rust 1.94.0, JDK 17, Android SDK API 36, Build Tools 36.0.0, Gradle 9.1.0, and Node.js 20.11+ for the installer package.
+Maintainers need Windows x64, Rust 1.94.0, JDK 17, Android SDK API 36, Build Tools 36.0.0, Gradle 9.1.0, and Node.js 20.11+ for the installer package.
 
 ```powershell
 cargo fmt --all -- --check
@@ -88,25 +115,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-helper.ps1 -Re
 npm test --workspace packages/installer
 ```
 
-The helper build creates or reuses a machine-local signing key outside the repository. Private signing material, device state, recordings, benchmark artifacts, and local configuration are excluded from the public repository.
-
-## Scope and limitations
-
-- Host support is currently Windows x64.
-- Root access is not required.
-- Android semantic, notification, media, and mock-location features require one-time user-granted helper capabilities.
-- Android firmware, OEM permissions, Chrome availability, camera hardware, and audio routing can make individual capabilities unsupported; `au doctor` reports capability errors explicitly.
-- Wi-Fi performance depends on the endpoint. Failover is identity-safe even when latency is not.
-- Raw ADB and shell are available for advanced users, but authorization and confirmation remain an agent/skill policy concern rather than a bypassable string denylist.
-
-See [`docs/installation.md`](docs/installation.md), [`docs/architecture.md`](docs/architecture.md), [`docs/supply-chain.md`](docs/supply-chain.md), and [`references/command-map.md`](references/command-map.md).
-
-## Upstream references
-
-- [Open Agent Skills CLI](https://github.com/vercel-labs/skills) for the `npx skills add` installation flow.
-- [Android AccessibilityService API](https://developer.android.com/reference/android/accessibilityservice/AccessibilityService) for semantic UI control.
-- [Official scrcpy releases](https://github.com/Genymobile/scrcpy/releases) for the pinned v4.1 integration.
-- [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/) for owner-managed provenance publication.
+The helper build creates or reuses a machine-local signing key outside the repository. Private signing material, device state, recordings, benchmark artifacts, and local configuration do not belong in the public tree.
 
 ## Contributing and security
 
@@ -115,3 +124,4 @@ Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a change. Report securi
 ## License
 
 MIT. See [`LICENSE`](LICENSE).
+
