@@ -1,26 +1,40 @@
-# Contributing
+# Contributing to Android Use
 
-## Development rules
+Thanks for helping. Start with the [developer guide](docs/developers/README.md) for the source layout and local setup.
 
-Keep changes scoped, preserve exact argument boundaries, and do not add device-specific defaults or private evidence. New commands need compact output, bounded limits, deadlines, cleanup behavior, and tests for malformed input and failure recovery.
+## Before changing code
 
-Prefer semantic UI actions and persistent batches over repeated screenshots or process launches. Binary output must be explicit and redirected by default.
+- Keep the change focused and preserve unrelated work.
+- Do not add device-specific defaults, serials, tokens, private URLs, screenshots, recordings, or personal app data.
+- Keep local screenshots, recordings, and run evidence outside the checkout (or under an ignored temporary directory); never leave them in the repository root.
+- Prefer semantic actions and persistent sessions over repeated screenshots or process launches.
+- Give every operation a deadline, output bound, cancellation path, and clear failure.
+- Require explicit output paths for binary or large data.
 
-## Verification
+New commands need tests for valid use, malformed input, timeouts, partial completion, and cleanup. If an operation changes device state, define the authoritative postcondition before implementation.
 
-Run from the repository root:
+## Run the checks
 
-```powershell
+From the repository root:
+
+```sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-targets
-cargo build --workspace --release
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate-apk.ps1 -Apk android/aubridge/app/build/outputs/apk/release/app-release.apk
-npm test --workspace packages/installer
+npm test
+npm run docs:check
+npm run skill:check
 ```
 
-Live-device validation must use the harmless helper test activity, finite media durations, a temporary artifact directory, and an explicit cleanup proof. Never manipulate a personal application to prove a feature.
+If you changed the Android helper, build it and run the APK validator described in the [developer guide](docs/developers/README.md). Live-device tests must use a harmless fixture or test activity, finite capture durations, temporary artifact storage, and independent cleanup proof. Do not manipulate a personal app merely to demonstrate a feature.
 
-## Pull requests
+## Open a pull request
 
-Explain the user-visible contract, compatibility impact, tests, and any unsupported Android/OEM behavior. Redact serials, tokens, private URLs, and media. Do not commit `target`, Gradle build output, installer state, recordings, screenshots, or signing material.
+Explain:
+
+- what changes for users or agents;
+- any compatibility or security impact;
+- the checks you ran;
+- Android versions, device makers, or capabilities you could not test.
+
+Keep generated build output and local state out of the commit. A reviewer should be able to understand the contract change without reading benchmark archives or private device evidence.

@@ -4,7 +4,7 @@ Remote mode is intentionally separate from the local AU Bridge. `dev.codex.aubri
 
 Remote operations carry a device identity, operation ID, plan hash, expected generation, deadline, nonce, and mutation count. A relay may forward opaque ciphertext and bounded metadata, but it must not be able to issue raw device commands. Unknown mutation outcomes are not replayed.
 
-The current repository contains the v2 contract, transport vocabulary, strict
+The current repository contains the stable contract, transport vocabulary, strict
 remote operation validation, and local adapter foundation. `au remote status`
 and `au remote protocol` expose the boundary; `au remote pair` intentionally
 returns `E_REMOTE_NOT_READY` until a real broker and Android Keystore-backed

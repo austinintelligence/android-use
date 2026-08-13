@@ -302,9 +302,9 @@ jobs:
           node scripts/build-release-manifest.mjs --version "$VERSION" --base-url "$base" --directory release/assets --output release/assets/release-manifest.json --signature-output release/assets/release-manifest.json.sig --signing-key "$signing_key" --public-key packages/installer/release-public-key.pem --helper-signer "$helper_signer"
           node scripts/generate-sbom.mjs release/assets
           (cd release/assets && find . -maxdepth 1 -type f ! -name checksums.txt -printf '%f\n' | sort | xargs sha256sum) > release/assets/checksums.txt
-          pwsh -NoProfile -File scripts/generate-skill.ps1 -Check
+          pwsh -NoProfile -File scripts/validate-skill.ps1
           pwsh -NoProfile -File scripts/sync-public-skill.ps1 -Check
-          pwsh -NoProfile -File scripts/check-contract-generated.ps1
+          pwsh -NoProfile -File scripts/validate-agent-contract.ps1
           pwsh -NoProfile -File scripts/check-public.ps1
       - name: Attest all published artifacts
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d

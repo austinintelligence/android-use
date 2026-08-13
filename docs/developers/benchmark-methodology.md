@@ -35,7 +35,7 @@ Measure UTF-8 bytes and model-token estimates for the exact agent-visible payloa
 - bytes for dense tuples versus the repository's fixed object-shaped and legacy-rich fixtures
 - omitted-field/default rules and any information intentionally excluded
 
-Density is acceptable only if the payload remains deterministic, versioned, and sufficient to choose and verify the next action. A smaller payload that hides partial commits, identity changes, stale references, or errors is a regression.
+Density is acceptable only if the payload remains deterministic, schema-identified, and sufficient to choose and verify the next action. A smaller payload that hides partial commits, identity changes, stale references, or errors is a regression.
 
 ## Endurance and realism
 

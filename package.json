@@ -1,7 +1,6 @@
 {
   "name": "android-use-workspace",
   "private": true,
-  "version": "1.0.0",
   "description": "Development workspace for android-use",
   "workspaces": ["packages/installer"],
   "scripts": {
@@ -10,7 +9,7 @@
     "docs:check": "node scripts/check-doc-links.mjs",
     "sbom": "node scripts/generate-sbom.mjs",
     "skill:sync": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-public-skill.ps1",
-    "skill:check": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-public-skill.ps1 -Check"
+    "skill:check": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate-skill.ps1 && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-public-skill.ps1 -Check"
   },
   "engines": {
     "node": ">=20.11"

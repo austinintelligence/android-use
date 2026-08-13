@@ -1,6 +1,6 @@
-# Agent contract v2
+# Agent contract
 
-The v2 contract is the stable agent boundary for Android Use. It is available over `au serve --jsonl`, `au serve --mcp`, and the compatibility CLI commands `au observe`, `au execute`, `au artifact`, and `au recipe`.
+This is the stable agent boundary for Android Use. It is available over `au serve --jsonl`, `au serve --mcp`, and the compatibility CLI commands `au observe`, `au execute`, `au artifact`, and `au recipe`.
 
 The canonical methods are:
 
@@ -10,7 +10,7 @@ The canonical methods are:
 - `android.artifact` — bounded access to AU-owned artifact handles.
 - `android.recipe` — validated declarative workflows.
 
-Every request is versioned and has an ID:
+Every request includes a schema identifier and request ID:
 
 ```json
 {"v":2,"id":"r1","method":"android.observe","params":{"mode":"choices","encoding":"dense"}}
@@ -41,4 +41,4 @@ If an observation cannot fit its requested transcript budget, the contract
 returns `E_OUTPUT_LIMIT` with measured `bytes`, `budget`, `mode`, and a compact
 next-step hint. It never returns a successful-looking truncated observation.
 
-The machine-readable source is [`references/agent-contract.json`](../references/agent-contract.json). The Rust implementation is [`contract.rs`](../crates/android-use/src/contract.rs).
+The machine-readable source is `references/agent-contract.json`. The Rust implementation is [`contract.rs`](https://github.com/austinintelligence/android-use/blob/main/crates/android-use/src/contract.rs).

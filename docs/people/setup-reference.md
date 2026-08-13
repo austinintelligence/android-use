@@ -1,24 +1,20 @@
-# Installation
+# Setup reference
 
-## Skill installation
+For the guided path, start with [Getting started](getting-started.md). The sections below are for manual installation, automation, and recovery.
+
+## Skill-only installation
 
 ```sh
 npx skills add austinintelligence/android-use --skill android-use -g -a codex -y
 ```
 
-The skill payload is `skills/android-use`. It contains the short operational `SKILL.md`, generated protocol contract, `agents/openai.yaml`, and directly linked references. It intentionally does not contain release binaries, private state, or signing material.
+The skill payload is `skills/android-use`. It contains the short operational `SKILL.md`, machine-readable protocol contract, `agents/openai.yaml`, and directly linked references. It intentionally does not contain release binaries, private state, or signing material.
 
 ## Host installer
 
-```sh
-npx --yes android-use@latest setup --agent auto --wait
-npx --yes android-use@1.0.0 doctor --json
-```
+The guided NPX installer is built and tested but is not published to npm yet. The current GitHub prerelease contains only the Windows x64 host and Android helper. Do not present a universal public installer until the release workflow publishes the complete assets and package.
 
-These commands require the matching version to be published to npm. Before
-publication, use the GitHub skill or run `packages/installer/cli.mjs` from a
-checkout; the installer will not silently fall back from an unavailable npm
-package to an unverified source.
+Developers working from a checkout can run `node packages/installer/cli.mjs` with an explicit local manifest. Once the package is published, the intended command is `npx --yes android-use@latest setup --agent auto --wait`.
 
 `setup` detects Windows, macOS, or Linux and x64/ARM64, selects that exact
 asset from an Ed25519-signed release manifest, verifies its pinned signing key,
@@ -35,7 +31,7 @@ au ready --json
 au doctor --repair --json
 ```
 
-Use `install --with-helper` when you want to stage an APK without installing it. `--install-helper` installs the staged APK using the active enrollment. Use `update` for a new release, `rollback` for the last verified version, `uninstall` to remove owned host state, and `uninstall --purge --yes` only when intentionally removing versioned binaries and the installed skill. Modified skill files are preserved rather than silently deleted.
+Use `install --with-helper` to stage an APK without installing it. `--install-helper` installs the staged APK using the active enrollment. Use `update` for a new release, `rollback` for the last verified release, and `uninstall` to remove owned host state. Use `uninstall --purge --yes` only when intentionally removing installed binaries and the skill. Modified skill files are preserved rather than silently deleted.
 
 The installer accepts an explicit manifest with `--manifest PATH` for
 offline/release tests. Test-only OS/CPU overrides are honored only with that
@@ -101,4 +97,4 @@ au schema --json
 au agent configure auto --json
 ```
 
-The contract is `android.status`, `android.observe`, `android.execute`, `android.artifact`, and `android.recipe`. The compatibility CLI, tape protocol, raw ADB, and raw shell remain available for explicit local use but are not part of the safe contract. See [`docs/agent-contract.md`](agent-contract.md).
+The contract is `android.status`, `android.observe`, `android.execute`, `android.artifact`, and `android.recipe`. The compatibility CLI, tape protocol, raw ADB, and raw shell remain available for explicit local use but are not part of the safe contract. See the [agent contract](../agents/contract.md).

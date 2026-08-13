@@ -3,7 +3,7 @@
 This is a source comparison, not a performance leaderboard. It was refreshed
 against each project's official repository or documentation on 2026-08-12.
 Latency, token, success-rate, and resource claims are withheld until the same
-versioned workload is reproduced on the same host and device.
+fixed workload is reproduced on the same host and device.
 
 | System | Primary shape | Android-side component | Semantic UI | Browser/WebView | Media | Deterministic batching |
 | --- | --- | --- | --- | --- | --- | --- |

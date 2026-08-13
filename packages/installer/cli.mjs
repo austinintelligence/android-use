@@ -398,14 +398,64 @@ async function hostCommand(options, command, extra = []) {
   return { executable, ...(await invokeHost(executable, [command, "-j", ...extra], options)) };
 }
 
-function output(ok, value, options) {
+function readiness(value) {
+  const candidates = [
+    value?.ready?.data?.data?.ready,
+    value?.ready?.data?.ready,
+    value?.ready?.ready,
+    value?.setup?.data?.data?.ready,
+    value?.setup?.data?.ready,
+    value?.setup?.ready,
+  ];
+  return candidates.find((candidate) => typeof candidate === "boolean");
+}
+
+function setupOutput(value) {
+  if (value.dry_run) {
+    return [
+      "Android Use is ready to set up this computer.",
+      "Run the same command without --dry-run to install it.",
+    ].join("\n");
+  }
+  if (readiness(value) === false) {
+    return [
+      "Android Use is installed, but Android still needs your attention.",
+      "1. Unlock the Android device and keep its screen on.",
+      "2. Approve the USB debugging prompt if Android shows one.",
+      "3. Open AU Bridge and enable its Accessibility service.",
+      "Then run this setup command again. It will continue where it stopped.",
+    ].join("\n");
+  }
+  return [
+    "Android Use setup is complete.",
+    "The device and agent connection are ready.",
+    "Check at any time with: au ready",
+  ].join("\n");
+}
+
+function errorHint(code) {
+  const hints = {
+    E_DEVICE: "Connect an unlocked Android device with a data-capable USB cable, then try again.",
+    E_WAITING_FOR_AUTH: "Unlock Android and approve the USB debugging prompt, then try again.",
+    E_HELPER: "Open AU Bridge on Android, complete its requested setup step, then try again.",
+    E_AGENT: "Run setup with --agent auto, or name the agent you want to connect.",
+    E_ADB: "Rerun the setup command so Android Use can install or find Android platform tools.",
+  };
+  return hints[code] || "Run `au doctor --json` for details, then try setup again.";
+}
+
+function output(ok, value, options, command = "") {
   if (options.quiet && ok) return;
   if (options.json) {
     process.stdout.write(`${JSON.stringify(ok ? { ok: true, ...value } : { ok: false, ...value })}\n`);
     return;
   }
   if (!ok) {
-    process.stdout.write(`err ${value.code} ${value.message}\n`);
+    process.stdout.write(`err ${value.code} ${value.message}\n${errorHint(value.code)}\n`);
+    return;
+  }
+  if (command === "setup") {
+    process.stdout.write(`${setupOutput(value)}\n`);
     return;
   }
   if (value.path) process.stdout.write(`ok ${value.path}\n`);
@@ -1148,13 +1198,40 @@ async function uninstall(options) {
 }
 
 function help() {
-  return "android-use installer: install|update|setup|ready|doctor|rollback|uninstall|print-path|version; use --json, --dry-run, --with-helper, --install-helper, --skill-only, --host-only, --agent, --repair, --add-path, --no-path, or --purge --yes";
+  return `Android Use setup
+
+Start here:
+  npx --yes android-use@latest setup --agent auto --wait
+
+This installs the verified host, Android tools where supported, AU Bridge,
+and the matching agent skill. Android will still ask you to approve USB
+debugging and Accessibility on the device.
+
+Useful commands:
+  setup       Install what is missing and continue the guided setup
+  ready       Check whether the device and agent are ready
+  doctor      Explain problems; add --repair for AU-owned fixes
+  update      Install the newest verified release
+  rollback    Restore the previous verified release
+  uninstall   Remove Android Use while preserving user state by default
+  print-path  Print the installed au executable path
+  version     Print the installer version
+
+Common options:
+  --agent auto     Detect and configure the current agent
+  --wait           Wait for Android authorization and Accessibility
+  --json           Return machine-readable output
+  --dry-run        Show what setup would do without changing anything
+  --no-path        Do not add au to the user PATH
+  --repair         Repair only Android Use-owned state
+
+Run setup again after any Android prompt. It resumes from the last completed step.`;
 }
 
 async function main() {
   const parsed = parseArgs(process.argv.slice(2));
   const { command, options } = parsed;
-  if (command === "version" || options.version) return output(true, { version: VERSION }, options);
+  if (command === "version" || options.version) return output(true, { version: VERSION }, options, "version");
   if (options.help || command === "help") {
     process.stdout.write(`${help()}\n`);
     return;
@@ -1183,7 +1260,7 @@ async function main() {
   } else {
     result = await dispatch();
   }
-  output(true, result, options);
+  output(true, result, options, command);
 }
 
 try {

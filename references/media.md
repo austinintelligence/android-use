@@ -1,7 +1,0 @@
-# Media
-
-`ss` uses direct byte capture (`adb exec-out screencap -p`) into a non-clobbering PNG. `screen record N` is a finite, no-window scrcpy recording with device audio enabled by default. `mirror N`, `cam view N`, and scrcpy recording paths use verified official scrcpy 4.1; AU does not create Windows virtual camera or microphone devices. Install or verify the pinned archive with `scripts/install-scrcpy.ps1`.
-
-The helper provides camera list/JPEG/finite H.264 MP4/multipart-MJPEG, and microphone PCM16/WAV/finite PCM stream output. Camera and microphone commands require explicit confirmation. Media watchdogs stop on missing host heartbeat, connection loss, helper stop, explicit close, or finite deadline. Private media leaves the non-debuggable helper through authenticated 256 KiB chunks with exact offset/size checks and a 512 MiB host cap; AU deletes the device-side file after transfer. It never relies on `run-as`. Normal output is artifact metadata only; `--binary` is mandatory for pipe bytes.
-
-An artifact receipt proves capture or transfer, not that a user-facing media goal succeeded. A task that asks AU to play audio must verify playback (for example, a playing media session with current-position progress) and a task that asks AU to record must verify a non-empty, readable artifact with the expected duration. If the app reports unavailable media, authentication, an ad gate, or a permission block, preserve that as the outcome instead of reporting success because the page or player opened.

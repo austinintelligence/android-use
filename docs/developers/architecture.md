@@ -8,7 +8,7 @@
 4. The non-debuggable helper uses a shell-UID-gated credential-bootstrap socket plus an authenticated command socket, each reached only through temporary/AU-owned ADB forwards. Accessibility, notifications, Camera2, AudioRecord, private chunked artifact transfer, and Android test-provider work remain inside the helper.
 5. Chrome control uses a temporary CDP forward and treats DOM/page text as untrusted input.
 
-## V2 agent boundary
+## Agent boundary
 
 ```text
 agent adapter (MCP / JSONL / Codex / portable)
@@ -56,6 +56,6 @@ Persistent state uses `%LOCALAPPDATA%\Codex\android-use` on Windows,
 explicit portable override. These roots hold canonical configuration, setup
 and agent journals, daemon metadata, helper-forward registry, operation
 receipts, location restoration, release versions, and user artifacts. Windows
-retains its v1 root to preserve enrolled identity. Configuration writes are serialized with
+retains its existing root to preserve enrolled identity. Configuration writes are serialized with
 `serde_json`, written to a temporary file, flushed, and atomically replaced
 with a recoverable previous copy where applicable.

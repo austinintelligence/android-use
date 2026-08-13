@@ -1,4 +1,4 @@
-# Benchmark methodology
+# Benchmark results
 
 Benchmarks measure the agent interface, not just raw ADB. Each case records task definition, skilled-human estimate, agent completion time, command count, tool calls, input/output tokens where available, screenshots, retries, failures, recovery, transport, warmup, and sample count.
 
@@ -35,7 +35,7 @@ measurements exclude process startup; `p95` is the gate value.
 
 The Wi-Fi failure is intentionally visible: identity-safe failover works, but
 the current wireless endpoint does not meet the latency gate. The release is
-therefore a prerelease, not a stable-performance claim.
+therefore evidence from one retained device, not a universal performance claim.
 
 A separate 100-sample wireless stress lane retained a 130.185 ms p95. It is
 kept as corroborating tail-latency evidence rather than replaced by the more

@@ -1,7 +1,7 @@
 {
   "name": "android-use",
   "version": "1.0.0",
-  "description": "Verified NPX installer for the android-use Rust Android control stack",
+  "description": "Guided, verified setup for Android Use",
   "type": "module",
   "bin": {
     "android-use": "cli.mjs"

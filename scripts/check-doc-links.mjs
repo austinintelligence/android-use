@@ -26,7 +26,6 @@ function targetFromLink(source, raw) {
 await walk(root);
 const failures = [];
 for (const source of markdown) {
-  if (source.endsWith("references\\skill-static.md") || source.endsWith("references/skill-static.md")) continue;
   const body = await readFile(source, "utf8");
   for (const match of body.matchAll(/\[[^\]]*\]\(([^)]+)\)/gu)) {
     const target = targetFromLink(source, match[1]);

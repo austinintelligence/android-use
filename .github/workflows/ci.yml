@@ -24,12 +24,12 @@ jobs:
         run: cargo test --workspace --all-targets
       - name: Release build
         run: cargo build --workspace --release
-      - name: Contract and generated skill gates
+      - name: Agent contract and skill gates
         shell: powershell
         run: |
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-skill.ps1
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate-skill.ps1
           powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-public-skill.ps1 -Check
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-contract-generated.ps1
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validate-agent-contract.ps1
       - name: Publish-safe scan
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-public.ps1

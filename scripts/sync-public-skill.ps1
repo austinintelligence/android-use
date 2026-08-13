@@ -5,6 +5,18 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+function Get-Sha256([string]$Path) {
+  $stream = [IO.File]::OpenRead($Path)
+  try {
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '') }
+    finally { $sha.Dispose() }
+  } finally {
+    $stream.Dispose()
+  }
+}
+
 if ([string]::IsNullOrWhiteSpace($Root)) { $Root = Split-Path -Parent $PSScriptRoot }
 $Root = (Resolve-Path -LiteralPath $Root).Path
 
@@ -30,8 +42,8 @@ foreach ($destination in $destinations) {
       $from = Join-Path $canonical $relative
       $to = Join-Path $destination $relative
       if (-not (Test-Path -LiteralPath $to -PathType Leaf)) { throw "skill payload is missing: $to" }
-      $left = (Get-FileHash -LiteralPath $from -Algorithm SHA256).Hash
-      $right = (Get-FileHash -LiteralPath $to -Algorithm SHA256).Hash
+      $left = Get-Sha256 $from
+      $right = Get-Sha256 $to
       if ($left -ne $right) { throw "skill payload is stale: $to" }
     }
     continue

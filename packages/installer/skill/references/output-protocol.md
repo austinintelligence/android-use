@@ -12,7 +12,7 @@ Normal errors are one line: `err CODE message`. `-j` emits a single minified JSO
 
 `-c`/`--compact` is the tokenizer-dense machine mode: success is `{"o":1,"d":...}`, `{"o":1,"n":N,"d":...}`, `{"o":1,"p":"PATH"}`, or `{"o":1,"t":"TEXT"}`; errors are `{"o":0,"e":"CODE","m":"MESSAGE"}` and may include `"d":{...}` recovery details. `-c -q` emits nothing on success. The compact envelope is deliberately separate from `-j` so existing integrations keep their schema.
 
-`-w`/`--wire` is the preferred versioned agent envelope: success is `{"v":1,"o":1,"d":...}` (or `n`, `p`, `t`), and errors are `{"v":1,"o":0,"e":"CODE","m":"MESSAGE"}` with optional `"d":{...}` recovery details. If `-w` and `-c` are both supplied, `-w` wins. Use `-q` when only the side effect matters.
+`-w`/`--wire` is the preferred schema-identified agent envelope: success is `{"v":1,"o":1,"d":...}` (or `n`, `p`, `t`), and errors are `{"v":1,"o":0,"e":"CODE","m":"MESSAGE"}` with optional `"d":{...}` recovery details. If `-w` and `-c` are both supplied, `-w` wins. Use `-q` when only the side effect matters.
 
 `pipe` is a foreground line protocol. With `--jsonl`, send one request per
 line as `{"c":"COMMAND","a":["ARG",...]}` or `{"b":"DSL"}`; each

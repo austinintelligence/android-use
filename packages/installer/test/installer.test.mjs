@@ -12,6 +12,12 @@ const execFileAsync = promisify(execFile);
 const packageRoot = dirname(fileURLToPath(import.meta.url));
 const cli = join(packageRoot, "..", "cli.mjs");
 
+test("ships the public release verification key", async () => {
+  const key = await readFile(join(packageRoot, "..", "release-public-key.pem"), "utf8");
+  assert.match(key, /^-----BEGIN PUBLIC KEY-----/);
+  assert.doesNotMatch(key, /PRIVATE KEY/);
+});
+
 async function runWith(cliPath, args, env = {}) {
   try {
     const result = await execFileAsync(process.execPath, [cliPath, ...args], {
@@ -75,6 +81,13 @@ test("reports version without contacting the release endpoint", async () => {
   assert.deepEqual(JSON.parse(result.stdout), { ok: true, version: "1.0.0" });
 });
 
+test("explains the one-command setup path in plain language", async () => {
+  const result = await run(["--help"]);
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /npx --yes android-use@latest setup --agent auto --wait/);
+  assert.match(result.stdout, /Run setup again after any Android prompt/);
+});
+
 test("selects a portable host asset and Unix executable name", async () => {
   const f = await fixture();
   try {
@@ -111,6 +124,21 @@ test("plans one-command setup without invoking an unstaged host", async () => {
     assert.equal(value.helper, join(f.installRoot, "versions", "1.0.0", "dev.codex.aubridge.apk"));
     assert.equal(value.skill, join(f.codexHome, "skills", "android-use"));
     assert.deepEqual(await readdir(f.installRoot).catch(() => []), []);
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test("renders a friendly setup plan for people", async () => {
+  const f = await fixture();
+  try {
+    const result = await run([
+      "setup", "--dry-run", "--manifest", f.manifestPath, "--agent", "auto",
+      "--install-root", f.installRoot,
+    ], { CODEX_HOME: f.codexHome });
+    assert.equal(result.code, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /ready to set up this computer/i);
+    assert.match(result.stdout, /without --dry-run/i);
   } finally {
     await rm(f.root, { recursive: true, force: true });
   }

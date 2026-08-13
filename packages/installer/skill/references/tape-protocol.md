@@ -1,4 +1,4 @@
-# Model tape protocol v1
+# Model tape protocol
 
 `au x PROGRAM` (alias `au tape`) is the model-facing adapter. It compiles into the same typed helper, shell, selector, and proof paths used by the human CLI; it is not a second action implementation.
 
