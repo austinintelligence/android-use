@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$auExecutable = Join-Path $scriptRoot '..\crates\android-use\target\release\au.exe'
+$auExecutable = Join-Path $scriptRoot '..\target\release\au.exe'
 if (-not (Test-Path -LiteralPath $auExecutable -PathType Leaf)) {
     Write-Output 'err E_BUILD au.exe is not built; run scripts\build-au.cmd'
     exit 2

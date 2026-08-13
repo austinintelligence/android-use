@@ -6,31 +6,64 @@ import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Intent;
 import android.os.IBinder;
+import android.os.SystemClock;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.security.SecureRandom;
-import java.util.Base64;
 import java.util.concurrent.atomic.AtomicLong;
 
 /** Shared implementation for the current AU foreground bridge component. */
 public class BridgeService extends Service {
+    private static final long LISTENER_START_TIMEOUT_MS = 3_000L;
+    private static volatile boolean ready;
+    private final Object lifecycleLock = new Object();
     private final AtomicLong heartbeatAtMs = new AtomicLong(0L);
     private BridgeServer server;
+    private ForegroundServiceTypes foregroundServiceTypes;
+    private BootstrapServer bootstrapServer;
+    private boolean shuttingDown;
 
     @Override
     public void onCreate() {
         super.onCreate();
-        String token = loadOrCreateToken();
-        server = new BridgeServer(this, token);
-        server.start();
-        createChannel();
-        Notification notification = new Notification.Builder(this, "au-bridge")
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setContentTitle("AU Bridge active")
-                .setContentText("Authenticated local ADB-forwarded control only")
-                .build();
-        startForeground(4101, notification);
+        synchronized (lifecycleLock) {
+            ready = false;
+            shuttingDown = false;
+        }
+        try {
+            // Version 2 used a persistent app-file bearer token. SessionAuth
+            // now mints short-lived credentials through the shell/root-gated
+            // bootstrap socket, so old credentials must not survive migration.
+            removeLegacyCredentialFile("bridge_token");
+            removeLegacyCredentialFile("bridge_auth_version");
+            SessionAuth auth = new SessionAuth();
+            createChannel();
+            Notification notification = new Notification.Builder(this, "au-bridge")
+                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                    .setContentTitle("AU Bridge active")
+                    .setContentText("Authenticated local ADB-forwarded control only")
+                    .build();
+            foregroundServiceTypes = ForegroundServiceTypes.forService(this, notification);
+            foregroundServiceTypes.startCore();
+
+            server = new BridgeServer(this, auth, this::listenerStoppedUnexpectedly);
+            bootstrapServer = new BootstrapServer(auth, this::listenerStoppedUnexpectedly);
+            server.start();
+            bootstrapServer.start();
+            awaitListeners();
+
+            synchronized (lifecycleLock) {
+                if (shuttingDown || !server.isListening() || !bootstrapServer.isListening()) {
+                    throw new IllegalStateException("authenticated helper listeners stopped during startup");
+                }
+                ready = true;
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            failStartup();
+            throw new IllegalStateException("Interrupted while starting authenticated helper listeners", interrupted);
+        } catch (RuntimeException error) {
+            failStartup();
+            throw error;
+        }
     }
 
     @Override
@@ -40,16 +73,22 @@ public class BridgeService extends Service {
 
     @Override
     public void onDestroy() {
-        heartbeatAtMs.set(0L);
-        if (server != null) {
-            server.close();
+        synchronized (lifecycleLock) {
+            shuttingDown = true;
+            ready = false;
         }
+        heartbeatAtMs.set(0L);
+        closeListeners();
         super.onDestroy();
     }
 
     @Override
     public IBinder onBind(Intent intent) {
         return null;
+    }
+
+    static boolean isRunning() {
+        return ready;
     }
 
     public void heartbeat() {
@@ -61,27 +100,74 @@ public class BridgeService extends Service {
         return value > 0 && System.currentTimeMillis() - value <= 3_000L;
     }
 
-    private String loadOrCreateToken() {
-        File tokenFile = new File(getFilesDir(), "bridge_token");
+    ForegroundServiceTypes.Lease beginCameraForeground() throws BridgeServer.BridgeError {
+        if (!ready || foregroundServiceTypes == null) {
+            throw new BridgeServer.BridgeError("E_HELPER", "foreground service is not ready");
+        }
+        return foregroundServiceTypes.acquireCamera();
+    }
+
+    ForegroundServiceTypes.Lease beginMicrophoneForeground() throws BridgeServer.BridgeError {
+        if (!ready || foregroundServiceTypes == null) {
+            throw new BridgeServer.BridgeError("E_HELPER", "foreground service is not ready");
+        }
+        return foregroundServiceTypes.acquireMicrophone();
+    }
+
+    private void awaitListeners() throws InterruptedException {
+        long deadline = SystemClock.elapsedRealtime() + LISTENER_START_TIMEOUT_MS;
+        if (!server.awaitListening(remainingStartupMs(deadline))) {
+            throw new IllegalStateException(
+                    "Cannot bind authenticated helper command listener: "
+                            + server.failureDescription());
+        }
+        if (!bootstrapServer.awaitListening(remainingStartupMs(deadline))) {
+            throw new IllegalStateException(
+                    "Cannot bind authenticated helper bootstrap listener: "
+                            + bootstrapServer.failureDescription());
+        }
+    }
+
+    private static long remainingStartupMs(long deadline) {
+        return Math.max(0L, deadline - SystemClock.elapsedRealtime());
+    }
+
+    private void listenerStoppedUnexpectedly() {
+        boolean shouldStop;
+        synchronized (lifecycleLock) {
+            ready = false;
+            shouldStop = !shuttingDown;
+        }
+        if (shouldStop) {
+            stopSelf();
+        }
+    }
+
+    private void failStartup() {
+        synchronized (lifecycleLock) {
+            ready = false;
+            shuttingDown = true;
+        }
+        closeListeners();
+    }
+
+    private void closeListeners() {
+        BridgeServer command = server;
+        if (command != null) {
+            command.close();
+        }
+        BootstrapServer bootstrap = bootstrapServer;
+        if (bootstrap != null) {
+            bootstrap.close();
+        }
+    }
+
+    private void removeLegacyCredentialFile(String name) {
         try {
-            if (tokenFile.isFile()) {
-                String existing = new String(
-                        java.nio.file.Files.readAllBytes(tokenFile.toPath()),
-                        java.nio.charset.StandardCharsets.UTF_8).trim();
-                if (existing.length() >= 32) {
-                    return existing;
-                }
-            }
-            byte[] random = new byte[32];
-            new SecureRandom().nextBytes(random);
-            String token = Base64.getUrlEncoder().withoutPadding().encodeToString(random);
-            try (FileOutputStream output = openFileOutput("bridge_token", MODE_PRIVATE)) {
-                output.write(token.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                output.getFD().sync();
-            }
-            return token;
-        } catch (Exception error) {
-            throw new IllegalStateException("Cannot create private bridge token", error);
+            super.deleteFile(name);
+        } catch (RuntimeException ignored) {
+            // Old credentials are defense-in-depth only; listener startup
+            // remains independent of deleting already-private migration data.
         }
     }
 

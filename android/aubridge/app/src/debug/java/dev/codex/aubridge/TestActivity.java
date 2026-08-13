@@ -16,6 +16,7 @@ import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
 
+/** Debug-only deterministic UI fixture; never shipped in the production APK. */
 public final class TestActivity extends Activity {
     private TextView state;
 

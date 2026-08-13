@@ -9,7 +9,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$au = Join-Path $scriptRoot '..\crates\android-use\target\release\au.exe'
+$au = Join-Path $scriptRoot '..\target\release\au.exe'
 $tokenizerRoot = Join-Path (Split-Path -Parent $scriptRoot) 'artifacts\tools\tiktoken'
 if (-not (Test-Path -LiteralPath $au -PathType Leaf)) { throw "au.exe is missing: $au" }
 if (-not (Test-Path -LiteralPath $tokenizerRoot -PathType Container)) { throw "tiktoken measurement environment is missing: $tokenizerRoot" }

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+#[cfg(any(windows, test))]
 use serde_json::Value;
 
 use crate::error::{AuError, Result};
@@ -24,10 +25,7 @@ pub struct AppPaths {
 
 impl AppPaths {
     pub fn discover() -> Result<Self> {
-        let local = env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .ok_or_else(|| AuError::code("E_ENV", "LOCALAPPDATA is not set"))?;
-        let root = local.join("Codex").join("android-use");
+        let root = platform_root()?;
         let state = root.join("state");
         let artifacts = root.join("artifacts");
         fs::create_dir_all(&state)?;
@@ -41,6 +39,39 @@ impl AppPaths {
             state,
             artifacts,
         })
+    }
+}
+
+fn platform_root() -> Result<PathBuf> {
+    if let Some(root) = env::var_os("AU_STATE_ROOT") {
+        return Ok(PathBuf::from(root));
+    }
+    #[cfg(windows)]
+    {
+        let local = env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .ok_or_else(|| AuError::code("E_ENV", "LOCALAPPDATA is not set"))?;
+        Ok(local.join("Codex").join("android-use"))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let home = env::var_os("HOME")
+            .map(PathBuf::from)
+            .ok_or_else(|| AuError::code("E_ENV", "HOME is not set"))?;
+        Ok(home
+            .join("Library")
+            .join("Application Support")
+            .join("android-use"))
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if let Some(data) = env::var_os("XDG_DATA_HOME") {
+            return Ok(PathBuf::from(data).join("android-use"));
+        }
+        let home = env::var_os("HOME")
+            .map(PathBuf::from)
+            .ok_or_else(|| AuError::code("E_ENV", "HOME is not set"))?;
+        Ok(home.join(".local").join("share").join("android-use"))
     }
 }
 
@@ -145,6 +176,7 @@ pub fn save(paths: &AppPaths, config: &Config) -> Result<()> {
     atomic_write(&paths.config, &bytes)
 }
 
+#[cfg(windows)]
 fn migrate_legacy_adb_path(config: &mut Config) -> bool {
     let Some(path) = config.adb_path.as_ref() else {
         return false;
@@ -165,6 +197,11 @@ fn migrate_legacy_adb_path(config: &mut Config) -> bool {
     }
     config.adb_path = Some(canonical);
     true
+}
+
+#[cfg(not(windows))]
+fn migrate_legacy_adb_path(_config: &mut Config) -> bool {
+    false
 }
 
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -239,13 +276,23 @@ fn backup_corrupt_config(paths: &AppPaths, contents: &str) -> Result<PathBuf> {
 }
 
 fn migrate_legacy(paths: &AppPaths, config: &mut Config) -> Result<()> {
-    let local = env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .ok_or_else(|| AuError::code("E_ENV", "LOCALAPPDATA is not set"))?;
-    let legacy_root = local.join("Codex").join("android-agent-display");
-    migrate_legacy_from(paths, config, &legacy_root)
+    #[cfg(windows)]
+    {
+        let local = env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .ok_or_else(|| AuError::code("E_ENV", "LOCALAPPDATA is not set"))?;
+        let legacy_root = local.join("Codex").join("android-agent-display");
+        migrate_legacy_from(paths, config, &legacy_root)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = paths;
+        config.migration.legacy_imported = true;
+        Ok(())
+    }
 }
 
+#[cfg(any(windows, test))]
 fn migrate_legacy_from(paths: &AppPaths, config: &mut Config, legacy_root: &Path) -> Result<()> {
     let candidates = [
         legacy_root.join("config.toml"),
@@ -276,6 +323,7 @@ fn migrate_legacy_from(paths: &AppPaths, config: &mut Config, legacy_root: &Path
     Ok(())
 }
 
+#[cfg(any(windows, test))]
 fn import_legacy_text(config: &mut Config, text: &str) {
     if let Ok(value) = serde_json::from_str::<Value>(text) {
         if let Some(serial) = value.get("serial").and_then(Value::as_str) {
@@ -295,6 +343,7 @@ fn import_legacy_text(config: &mut Config, text: &str) {
     }
 }
 
+#[cfg(any(windows, test))]
 fn import_endpoint(config: &mut Config, endpoint: &str) {
     if endpoint.contains(':')
         && !config

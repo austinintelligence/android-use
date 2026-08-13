@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://android-use.dev/schema/agent-contract-v2.json",
+  "title": "Android Use Agent Contract",
+  "version": 2,
+  "methods": [
+    "android.status",
+    "android.observe",
+    "android.execute",
+    "android.artifact",
+    "android.recipe"
+  ],
+  "limits": {
+    "max_steps": 32,
+    "max_mutations": 16,
+    "max_deadline_ms": 600000,
+    "max_message_bytes": 262144,
+    "default_observe_bytes": 12288
+  },
+  "operations": [
+    "find",
+    "tap",
+    "long",
+    "set",
+    "scroll",
+    "global",
+    "wait",
+    "assert",
+    "observe",
+    "launch"
+  ],
+  "observation_encodings": {
+    "object": "named fields for adapters and debugging",
+    "dense": "short envelope and decision-bearing tuples for model context"
+  },
+  "dense_envelope": [
+    "v",
+    "o",
+    "g",
+    "m",
+    "d"
+  ],
+  "dense_choice_tuple": [
+    "stable_ref",
+    "label",
+    "role",
+    "flags"
+  ],
+  "dense_flags": {
+    "clickable": 1,
+    "enabled": 2,
+    "checked": 4,
+    "scrollable": 8,
+    "visible": 16,
+    "redacted": 32
+  },
+  "execution_compilers": [
+    "helper-proof",
+    "plan-run"
+  ],
+  "receipt_states": [
+    "committed",
+    "known_partial",
+    "unknown_commit"
+  ],
+  "forbidden_operations": [
+    "raw",
+    "shell",
+    "adb",
+    "arbitrary_code",
+    "arbitrary_path"
+  ],
+  "error_codes": [
+    "E_ARGS",
+    "E_AUTH",
+    "E_NOT_READY",
+    "E_IDENTITY",
+    "E_UNAUTHORIZED",
+    "E_AMBIGUOUS",
+    "E_NO_MATCH",
+    "E_STALE",
+    "E_TIMEOUT",
+    "E_CANCELLED",
+    "E_PARTIAL",
+    "E_UNKNOWN_COMMIT",
+    "E_SENSITIVE",
+    "E_CAPABILITY",
+    "E_REPLAY",
+    "E_LIMIT",
+    "E_OUTPUT_LIMIT",
+    "E_PROTOCOL"
+  ]
+}

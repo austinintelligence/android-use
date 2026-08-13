@@ -1,24 +1,34 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Camera commands are optional; camera-less tablets and ChromeOS
+         devices must remain installable for semantic and browser control. -->
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
 
     <application
         android:allowBackup="false"
         android:label="AU Bridge"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="false">
-        <activity
-            android:name=".TestActivity"
-            android:exported="true"
-            android:permission="android.permission.DUMP" />
+        <!-- ProfileInstaller is not part of the bridge runtime. Keep the
+             dependency's startup/provider surface out of the production APK. -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            tools:node="remove" />
+        <receiver
+            android:name="androidx.profileinstaller.ProfileInstallReceiver"
+            tools:node="remove" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -28,21 +38,20 @@
             </intent-filter>
         </activity>
 
-        <receiver
-            android:name=".TestNotificationReceiver"
-            android:exported="false" />
-
         <service
             android:name=".AuBridgeService"
             android:exported="true"
-            android:permission="android.permission.FOREGROUND_SERVICE"
-            android:foregroundServiceType="camera|microphone|location">
-            <!-- Some firmware requires a resolver-visible action for a
-                 shell-launched explicit foreground service. The socket still
-                 requires the private token before any command is accepted. -->
+            android:permission="android.permission.DUMP"
+            android:foregroundServiceType="camera|microphone|specialUse">
+            <!-- DUMP is signature/privileged: adb shell can start this explicit
+                 component, but ordinary applications cannot. The two local
+                 sockets still authenticate bootstrap and every command. -->
             <intent-filter>
                 <action android:name="dev.codex.aubridge.action.BRIDGE" />
             </intent-filter>
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Authenticated local ADB-forwarded device automation bridge" />
         </service>
 
         <service

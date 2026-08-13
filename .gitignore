@@ -3,6 +3,7 @@
 /android/aubridge/.gradle/
 /android/aubridge/build/
 /android/aubridge/app/build/
+/android/aubridge/fixture/build/
 /artifacts/raw/
 
 # Local release state, device evidence, and private signing material.
@@ -22,7 +23,11 @@
 *.jpg
 *.jpeg
 *.png
+!/assets/*.png
 
 # Local installer and package-manager state.
 node_modules/
 npm-debug.log*
+
+# Durable local goal-mode checkpoint state. Never publish device/run details.
+/.codex-run/

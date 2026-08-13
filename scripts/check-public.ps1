@@ -6,7 +6,7 @@ if ([string]::IsNullOrWhiteSpace($Root)) { $Root = Split-Path -Parent $PSScriptR
 $Root = (Resolve-Path -LiteralPath $Root).Path
 
 $files = @(git -C $Root ls-files --cached --others --exclude-standard |
-  Where-Object { $_ -and $_ -notmatch '^(artifacts|target|crates/android-use/target|android/aubridge/build|android/aubridge/\.gradle)/' })
+  Where-Object { $_ -and $_ -notmatch '^(artifacts|target|android/aubridge/(?:[^/]+/)?build|android/aubridge/\.gradle)/' })
 $rules = @(
   @{ name = 'long numeric identity'; pattern = '\b\d{12,20}\b' },
   @{ name = 'absolute Windows user path'; pattern = '(?i)\b[A-Z]:\\Users\\' },

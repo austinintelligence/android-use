@@ -1,9 +1,11 @@
 package dev.codex.aubridge;
 
 import android.accessibilityservice.AccessibilityService;
+import android.accessibilityservice.AccessibilityServiceInfo;
 import android.accessibilityservice.GestureDescription;
 import android.graphics.Path;
 import android.graphics.Rect;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
@@ -19,7 +21,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
-public final class AubridgeAccessibilityService extends AccessibilityService {
+public final class AubridgeAccessibilityService extends AccessibilityService implements PlanExecutor.Ui {
     private static volatile AubridgeAccessibilityService instance;
     private final AtomicLong generation = new AtomicLong(0L);
     // Accessibility callbacks run on the service thread. Do not hold the
@@ -28,10 +30,14 @@ public final class AubridgeAccessibilityService extends AccessibilityService {
     // and can otherwise deadlock the helper socket.
     private final Object snapshotLock = new Object();
     private final Map<Long, AccessibilityNodeInfo> handles = new HashMap<>();
+    private final Map<Long, String> stableHandleKeys = new HashMap<>();
+    private final Map<String, Long> stableRefs = new HashMap<>();
     private final List<String> events = new ArrayList<>();
     private JSONObject cachedSnapshot;
     private boolean cachedExpanded;
     private boolean dirty = true;
+    private int cachedWindowId = Integer.MIN_VALUE;
+    private String cachedPackageName = "";
 
     static AubridgeAccessibilityService current() {
         return instance;
@@ -39,18 +45,29 @@ public final class AubridgeAccessibilityService extends AccessibilityService {
 
     @Override
     protected void onServiceConnected() {
-        instance = this;
+        synchronized (snapshotLock) {
+            instance = this;
+            AccessibilityServiceInfo info = getServiceInfo();
+            if (info != null) {
+                info.flags |= AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+                        | AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+                        | AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS;
+                setServiceInfo(info);
+            }
+            snapshotLock.notifyAll();
+        }
     }
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
-        synchronized (this) {
+        synchronized (snapshotLock) {
             generation.incrementAndGet();
             dirty = true;
             events.add(event.getEventType() + "@" + event.getWindowId());
             if (events.size() > 32) {
                 events.remove(0);
             }
+            snapshotLock.notifyAll();
         }
     }
 
@@ -62,6 +79,9 @@ public final class AubridgeAccessibilityService extends AccessibilityService {
     public void onDestroy() {
         synchronized (snapshotLock) {
             recycleHandles();
+            cachedSnapshot = null;
+            dirty = true;
+            snapshotLock.notifyAll();
         }
         if (instance == this) {
             instance = null;
@@ -91,6 +111,8 @@ public final class AubridgeAccessibilityService extends AccessibilityService {
                 return waitFor(args, true);
             case "ui.proof":
                 return proof(args);
+            case "ui.run":
+                return run(args);
             case "ui.global":
                 return global(args);
             case "ui.gesture":
@@ -106,6 +128,8 @@ public final class AubridgeAccessibilityService extends AccessibilityService {
         boolean compact = args.optString("args", "").contains("--compact");
         boolean delta = args.optString("args", "").contains("--delta");
         boolean frontier = args.optString("args", "").contains("--frontier");
+        boolean contract = args.optString("args", "").contains("--contract")
+                || args.optString("args", "").contains("--v2");
         JSONArray requestArgs = args.optJSONArray("args");
         if (requestArgs != null) {
             for (int index = 0; index < requestArgs.length(); index++) {
@@ -118,6 +142,8 @@ public final class AubridgeAccessibilityService extends AccessibilityService {
                     delta = true;
                 } else if ("--frontier".equals(value)) {
                     frontier = true;
+                } else if ("--contract".equals(value) || "--v2".equals(value)) {
+                    contract = true;
                 }
             }
         }
@@ -131,6 +157,9 @@ public final class AubridgeAccessibilityService extends AccessibilityService {
                         .put("g", cachedSnapshot.getLong("generation"))
                         .put("same", true);
             }
+            if (contract) {
+                return renderContract(cachedSnapshot);
+            }
             return frontier ? renderFrontier(cachedSnapshot) : renderSnapshot(cachedSnapshot, compact);
         }
         JSONObject previous = cachedSnapshot;
@@ -141,20 +170,31 @@ public final class AubridgeAccessibilityService extends AccessibilityService {
         if (root == null) {
             throw new BridgeServer.BridgeError("E_UI", "no active accessibility window");
         }
+        int windowId = root.getWindowId();
+        String packageName = string(root.getPackageName());
+        if (cachedSnapshot != null
+                && (cachedWindowId != windowId || !cachedPackageName.equals(packageName))) {
+            nextGeneration = generation.incrementAndGet();
+        }
         JSONArray nodes = new JSONArray();
         JSONArray previousNodes = previousCompatible && previous != null
                 ? previous.optJSONArray("nodes")
                 : null;
-        traverse(root, nextGeneration, nodes, 0, expanded ? 800 : 200, expanded, previousNodes);
+        traverse(root, nextGeneration, nodes, 0, expanded ? 800 : 200, expanded, previousNodes, "0");
         JSONObject reply = new JSONObject();
         reply.put("generation", nextGeneration);
         reply.put("nodes", nodes);
         reply.put("events", new JSONArray(events));
         cachedSnapshot = new JSONObject(reply.toString());
         cachedExpanded = expanded;
+        cachedWindowId = windowId;
+        cachedPackageName = packageName;
         dirty = false;
         if (delta && previousCompatible) {
             return renderDelta(previous, reply, compact);
+        }
+        if (contract) {
+            return renderContract(reply);
         }
         return frontier ? renderFrontier(reply) : renderSnapshot(reply, compact);
         }
@@ -211,14 +251,60 @@ public final class AubridgeAccessibilityService extends AccessibilityService {
                 .put("n", nodes);
     }
 
+    /**
+     * V2 contract output. This deliberately does not expose the accessibility
+     * tree or the helper's compact wire format. References are stable semantic
+     * keys when Android provides one, with the numeric handle retained only as
+     * a local compatibility fallback.
+     */
+    private JSONObject renderContract(JSONObject full) throws Exception {
+        JSONArray source = full.getJSONArray("nodes");
+        JSONArray choices = new JSONArray();
+        for (int index = 0; index < source.length(); index++) {
+            JSONObject node = source.getJSONObject(index);
+            if (!frontierNode(node)) {
+                continue;
+            }
+            String stableId = node.optString("stable_id", "");
+            String label = node.optString("text", "");
+            if (label.isEmpty()) {
+                label = node.optString("description", "");
+            }
+            JSONObject choice = new JSONObject()
+                    .put("ref", stableId.isEmpty() ? Long.toString(node.getLong("id")) : stableId)
+                    .put("legacy_ref", Long.toString(node.getLong("id")))
+                    .put("label", cap(label))
+                    .put("role", role(node.optString("class_name")))
+                    .put("enabled", node.optBoolean("enabled"))
+                    .put("clickable", node.optBoolean("clickable"))
+                    .put("checked", node.optBoolean("checked"))
+                    .put("scrollable", node.optBoolean("scrollable"))
+                    .put("visible", node.optBoolean("visible", true))
+                    .put("redacted", node.optBoolean("redacted"))
+                    .put("bounds", node.optJSONArray("bounds"));
+            if (!node.optString("resource_id", "").isEmpty()) {
+                choice.put("resource_id", node.optString("resource_id"));
+            }
+            if (!node.optString("package_name", "").isEmpty()) {
+                choice.put("package_name", node.optString("package_name"));
+            }
+            choices.put(choice);
+        }
+        return new JSONObject()
+                .put("v", 2)
+                .put("g", full.getLong("generation"))
+                .put("complete", source.length() < 200)
+                .put("choices", choices)
+                .put("redaction", "android-accessibility-sensitive");
+    }
+
     private static boolean frontierNode(JSONObject node) throws Exception {
         JSONArray bounds = node.optJSONArray("bounds");
-        boolean visible = bounds != null
+        boolean visible = node.optBoolean("visible", true)
+                && bounds != null
                 && bounds.length() >= 4
-                && bounds.optInt(2) > 0
-                && bounds.optInt(3) > 24
-                && bounds.optInt(0) < 1280
-                && bounds.optInt(1) < 752;
+                && bounds.optInt(2) > bounds.optInt(0)
+                && bounds.optInt(3) > bounds.optInt(1);
         if (!visible) {
             return false;
         }
@@ -275,28 +361,47 @@ public final class AubridgeAccessibilityService extends AccessibilityService {
         return value;
     }
 
-    private void traverse(AccessibilityNodeInfo node, long currentGeneration, JSONArray nodes, int depth, int limit, boolean expanded, JSONArray previousNodes) throws Exception {
+    private void traverse(AccessibilityNodeInfo node, long currentGeneration, JSONArray nodes, int depth, int limit, boolean expanded, JSONArray previousNodes, String path) throws Exception {
         if (node == null || nodes.length() >= limit || depth > 32) {
             return;
         }
         Rect bounds = new Rect();
         node.getBoundsInScreen(bounds);
+        String resourceId = string(node.getViewIdResourceName());
+        String className = string(node.getClassName());
+        String packageName = string(node.getPackageName());
+        boolean password = node.isPassword();
+        boolean sensitive = password;
+        if (Build.VERSION.SDK_INT >= 34) {
+            sensitive = sensitive || node.isAccessibilityDataSensitive();
+        }
+        String rawText = string(node.getText());
+        String rawDescription = string(node.getContentDescription());
+        String stableKey = stableKey(node, resourceId, className, packageName, path);
         JSONObject item = new JSONObject();
-        item.put("text", string(node.getText()));
-        item.put("description", string(node.getContentDescription()));
-        item.put("resource_id", string(node.getViewIdResourceName()));
+        item.put("text", sensitive ? "" : rawText);
+        item.put("description", sensitive ? "" : rawDescription);
+        item.put("resource_id", resourceId);
         // These fields are part of the public selector grammar. They stay in
         // the compact snapshot as short strings so a selector's meaning never
         // changes depending on whether the caller requested --expanded.
-        item.put("class_name", string(node.getClassName()));
-        item.put("package_name", string(node.getPackageName()));
+        item.put("class_name", className);
+        item.put("package_name", packageName);
         item.put("clickable", node.isClickable());
         item.put("enabled", node.isEnabled());
         item.put("scrollable", node.isScrollable());
         item.put("checked", node.isChecked());
+        item.put("visible", node.isVisibleToUser());
+        item.put("window_id", node.getWindowId());
+        item.put("unique_id", uniqueId(node));
+        String publicStableId = stableId(stableKey);
+        item.put("stable_id", publicStableId);
+        item.put("password", password);
+        item.put("sensitive", sensitive);
+        item.put("redacted", sensitive);
         item.put("bounds", new JSONArray().put(bounds.left).put(bounds.top).put(bounds.right).put(bounds.bottom));
         int index = nodes.length();
-        long id = (currentGeneration << 20) | index;
+        long id = handleId(stableKey, (currentGeneration << 20) | index);
         if (previousNodes != null && index < previousNodes.length()) {
             JSONObject previous = previousNodes.optJSONObject(index);
             if (previous != null && nodeEquivalent(previous, item)) {
@@ -305,10 +410,62 @@ public final class AubridgeAccessibilityService extends AccessibilityService {
         }
         item.put("id", id);
         handles.put(id, AccessibilityNodeInfo.obtain(node));
+        stableRefs.put(publicStableId, id);
         nodes.put(item);
         for (int childIndex = 0; childIndex < node.getChildCount(); childIndex++) {
-            traverse(node.getChild(childIndex), currentGeneration, nodes, depth + 1, limit, expanded, previousNodes);
+            traverse(node.getChild(childIndex), currentGeneration, nodes, depth + 1, limit, expanded, previousNodes, path + "." + childIndex);
         }
+    }
+
+    private static String uniqueId(AccessibilityNodeInfo node) {
+        if (Build.VERSION.SDK_INT < 33) {
+            return "";
+        }
+        String value = node.getUniqueId();
+        return value == null ? "" : value;
+    }
+
+    private static String stableKey(AccessibilityNodeInfo node, String resourceId, String className, String packageName, String path) {
+        String unique = uniqueId(node);
+        if (!unique.isEmpty()) {
+            return "unique|" + unique;
+        }
+        return "window|" + node.getWindowId()
+                + "|package|" + packageName
+                + "|resource|" + resourceId
+                + "|class|" + className
+                + "|path|" + path;
+    }
+
+    private static String stableId(String key) {
+        return "s" + Long.toUnsignedString(fnv1a64(key), 36);
+    }
+
+    private long handleId(String key, long fallback) {
+        if (key == null || key.isEmpty()) {
+            return fallback;
+        }
+        long candidate = fnv1a64(key);
+        if (candidate == 0L) {
+            candidate = 1L;
+        }
+        while (true) {
+            String previous = stableHandleKeys.get(candidate);
+            if (previous == null || previous.equals(key)) {
+                stableHandleKeys.put(candidate, key);
+                return candidate;
+            }
+            candidate++;
+        }
+    }
+
+    private static long fnv1a64(String value) {
+        long hash = 0xcbf29ce484222325L;
+        for (int index = 0; index < value.length(); index++) {
+            hash ^= value.charAt(index);
+            hash *= 0x100000001b3L;
+        }
+        return hash;
     }
 
     private static boolean nodeEquivalent(JSONObject left, JSONObject right) throws Exception {
@@ -317,10 +474,13 @@ public final class AubridgeAccessibilityService extends AccessibilityService {
                 && left.optString("resource_id").equals(right.optString("resource_id"))
                 && left.optString("class_name").equals(right.optString("class_name"))
                 && left.optString("package_name").equals(right.optString("package_name"))
+                && left.optString("stable_id").equals(right.optString("stable_id"))
                 && left.optBoolean("clickable") == right.optBoolean("clickable")
                 && left.optBoolean("enabled") == right.optBoolean("enabled")
                 && left.optBoolean("scrollable") == right.optBoolean("scrollable")
                 && left.optBoolean("checked") == right.optBoolean("checked")
+                && left.optBoolean("visible", true) == right.optBoolean("visible", true)
+                && left.optBoolean("redacted") == right.optBoolean("redacted")
                 && left.optJSONArray("bounds").toString().equals(right.optJSONArray("bounds").toString());
     }
 
@@ -370,19 +530,55 @@ public final class AubridgeAccessibilityService extends AccessibilityService {
     }
 
     private JSONObject action(JSONObject args, int action, String key) throws Exception {
-        synchronized (this) {
+        synchronized (snapshotLock) {
             AccessibilityNodeInfo node = resolve(args);
-            boolean success = node.performAction(action);
+            AccessibilityNodeInfo target = actionTarget(node, action);
+            boolean promoted = target != node;
+            boolean success = target.performAction(action);
+            if (promoted) {
+                target.recycle();
+            }
             if (!success) {
                 throw new BridgeServer.BridgeError("E_UI", "accessibility node rejected action");
             }
+            return new JSONObject().put(key, true).put("promoted", promoted);
         }
-        // Some Android firmware can deliver the resulting accessibility event just after the
-        // action acknowledgement. Keep the settle window local to mutating
-        // actions so a rapid semantic batch does not race the next lookup;
-        // this is not a global batch pacing delay.
-        Thread.sleep(80L);
-        return new JSONObject().put(key, true);
+    }
+
+    /**
+     * Text and icon nodes are frequently children of the actual clickable
+     * control (Play Store, OEM settings, and many Compose UIs do this). A
+     * selector should address the visible semantic target without forcing an
+     * agent to reverse-engineer the widget hierarchy. Walk a short bounded
+     * ancestor chain for actions whose Android semantics support promotion;
+     * keep text entry strict so an input selector can never silently redirect
+     * to a container.
+     */
+    private static AccessibilityNodeInfo actionTarget(AccessibilityNodeInfo node, int action) {
+        boolean promote = action == AccessibilityNodeInfo.ACTION_CLICK
+                || action == AccessibilityNodeInfo.ACTION_LONG_CLICK
+                || action == AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+                || action == AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD;
+        if (!promote) {
+            return node;
+        }
+        AccessibilityNodeInfo candidate = node;
+        for (int depth = 0; depth <= 8 && candidate != null; depth++) {
+            boolean actionable = candidate.isEnabled()
+                    && ((action == AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+                            || action == AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
+                            ? candidate.isScrollable()
+                            : candidate.isClickable());
+            if (actionable) {
+                return candidate;
+            }
+            AccessibilityNodeInfo parent = candidate.getParent();
+            if (candidate != node) {
+                candidate.recycle();
+            }
+            candidate = parent;
+        }
+        return node;
     }
 
     private JSONObject setText(JSONObject args) throws Exception {
@@ -390,7 +586,7 @@ public final class AubridgeAccessibilityService extends AccessibilityService {
         if (values == null || values.length() < 2) {
             throw new BridgeServer.BridgeError("E_ARGS", "ui set HANDLE_OR_SELECTOR TEXT");
         }
-        synchronized (this) {
+        synchronized (snapshotLock) {
             AccessibilityNodeInfo node = resolve(values.optString(0));
             Bundle bundle = new Bundle();
             bundle.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, values.optString(1));
@@ -398,7 +594,6 @@ public final class AubridgeAccessibilityService extends AccessibilityService {
                 throw new BridgeServer.BridgeError("E_UI", "node rejected text action");
             }
         }
-        Thread.sleep(80L);
         return new JSONObject().put("set", true);
     }
 
@@ -406,13 +601,12 @@ public final class AubridgeAccessibilityService extends AccessibilityService {
         JSONArray values = args.optJSONArray("args");
         String direction = values == null ? "forward" : values.optString(1, "forward");
         int action = "backward".equals(direction) ? AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD : AccessibilityNodeInfo.ACTION_SCROLL_FORWARD;
-        synchronized (this) {
+        synchronized (snapshotLock) {
             AccessibilityNodeInfo node = resolve(values == null ? "" : values.optString(0));
             if (!node.performAction(action)) {
                 throw new BridgeServer.BridgeError("E_UI", "node rejected scroll action");
             }
         }
-        Thread.sleep(80L);
         return new JSONObject().put("scrolled", direction);
     }
 
@@ -476,18 +670,32 @@ public final class AubridgeAccessibilityService extends AccessibilityService {
         String selector = values == null ? "" : values.optString(0, "");
         int timeout = values == null ? 5_000 : values.optInt(1, 5_000);
         timeout = Math.max(1, Math.min(timeout, 30_000));
-        // Let the accessibility callback publish the mutation before the
-        // first snapshot. This is a proof-local event yield, not a batch-wide
-        // pacing delay, and it avoids holding the service monitor while the
-        // The current window is still completing a scroll or text mutation.
-        Thread.sleep(100L);
         long deadline = System.currentTimeMillis() + timeout;
+        long observedGeneration;
+        synchronized (snapshotLock) {
+            observedGeneration = generation.get();
+        }
         while (System.currentTimeMillis() < deadline) {
             try {
                 JSONObject found = find(new JSONObject().put("args", new JSONArray().put(selector)));
                 return new JSONObject().put(assertion ? "asserted" : "matched", true).put("node", found.getJSONObject("node"));
-            } catch (BridgeServer.BridgeError ignored) {
-                Thread.sleep(80L);
+            } catch (BridgeServer.BridgeError error) {
+                if (!"E_UI".equals(error.code)) {
+                    throw error;
+                }
+            }
+            long remaining = deadline - System.currentTimeMillis();
+            if (remaining <= 0L) break;
+            synchronized (snapshotLock) {
+                if (generation.get() == observedGeneration) {
+                    try {
+                        snapshotLock.wait(remaining);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        throw new BridgeServer.BridgeError("E_CANCELLED", "semantic wait interrupted");
+                    }
+                }
+                observedGeneration = generation.get();
             }
         }
         throw new BridgeServer.BridgeError(assertion ? "E_ASSERT" : "E_TIMEOUT", "selector did not appear: " + selector);
@@ -520,10 +728,6 @@ public final class AubridgeAccessibilityService extends AccessibilityService {
         }
         String handle = Long.toString(node.getLong("id"));
         action(new JSONObject().put("args", new JSONArray().put(handle)), AccessibilityNodeInfo.ACTION_CLICK, "tapped");
-        // Let the target window publish its accessibility event before the
-        // event-driven wait begins; this is a small proof-local readiness
-        // guard, not a global semantic action delay.
-        Thread.sleep(80L);
         waitFor(new JSONObject().put("args", new JSONArray().put(postselector).put(timeout)), false);
         waitFor(new JSONObject().put("args", new JSONArray().put(postselector).put(timeout)), true);
         return new JSONObject()
@@ -531,6 +735,187 @@ public final class AubridgeAccessibilityService extends AccessibilityService {
                 .put("node", node)
                 .put("postcondition", postselector)
                 .put("generation", found.getLong("generation"));
+    }
+
+    /**
+     * Execute one bounded semantic plan inside one authenticated bridge frame.
+     * The host validates identity, generation, operation receipts, and
+     * sensitive policy before using this path. The helper independently caps
+     * steps and mutations so a malformed or downgraded host cannot turn it
+     * into an unbounded interpreter.
+     */
+    private JSONObject run(JSONObject args) throws Exception {
+        JSONArray steps = args.optJSONArray("steps");
+        if (steps == null || steps.length() < 1 || steps.length() > 32) {
+            throw new BridgeServer.BridgeError("E_ARGS", "ui run requires 1..32 steps");
+        }
+        int mutations = 0;
+        for (int index = 0; index < steps.length(); index++) {
+            JSONObject step = steps.optJSONObject(index);
+            if (step == null) {
+                throw new BridgeServer.BridgeError("E_ARGS", "ui run step must be an object");
+            }
+            String op = step.optString("op", "");
+            if ("tap".equals(op) || "long".equals(op) || "set".equals(op)
+                    || "scroll".equals(op) || "global".equals(op)) {
+                mutations++;
+            } else if (!("find".equals(op) || "wait".equals(op)
+                    || "assert".equals(op) || "observe".equals(op))) {
+                throw new BridgeServer.BridgeError("E_ARGS", "unsupported ui run operation " + op);
+            }
+        }
+        int requestedLimit = args.optInt("max_mutations", 16);
+        if (mutations > Math.max(0, Math.min(16, requestedLimit))) {
+            throw new BridgeServer.BridgeError("E_LIMIT", "ui run exceeds mutation limit");
+        }
+
+        JSONArray receipts = new JSONArray();
+        int committedMutations = 0;
+        for (int index = 0; index < steps.length(); index++) {
+            JSONObject step = steps.getJSONObject(index);
+            String op = step.getString("op");
+            String target = step.optString("target", "");
+            JSONObject data;
+            try {
+                switch (op) {
+                    case "find":
+                        data = find(callArgs(target));
+                        break;
+                    case "tap":
+                        data = action(callArgs(target), AccessibilityNodeInfo.ACTION_CLICK, "tapped");
+                        break;
+                    case "long":
+                        data = action(callArgs(target), AccessibilityNodeInfo.ACTION_LONG_CLICK, "long_clicked");
+                        break;
+                    case "set":
+                        data = setText(callArgs(target, step.optString("text", "")));
+                        break;
+                    case "scroll":
+                        data = scroll(callArgs(target, step.optString("direction", "forward")));
+                        break;
+                    case "global":
+                        data = global(callArgs(step.optString("key", "")));
+                        break;
+                    case "wait":
+                        data = waitFor(callArgs(target, Integer.toString(step.optInt("timeout_ms", 3_000))), false);
+                        break;
+                    case "assert":
+                        data = waitFor(callArgs(target, Integer.toString(step.optInt("timeout_ms", 3_000))), true);
+                        break;
+                    case "observe":
+                        data = snapshot(new JSONObject().put("args", new JSONArray()
+                                .put("--compact").put("--frontier").put("--contract")));
+                        break;
+                    default:
+                        throw new BridgeServer.BridgeError("E_ARGS", "unsupported ui run operation " + op);
+                }
+            } catch (BridgeServer.BridgeError error) {
+                boolean mutationOutcomeUnknown = "tap".equals(op) || "long".equals(op)
+                        || "set".equals(op) || "scroll".equals(op) || "global".equals(op);
+                return new JSONObject()
+                        .put("c", false)
+                        .put("p", receipts.length() > 0)
+                        .put("m", committedMutations)
+                        .put("u", mutationOutcomeUnknown)
+                        .put("i", index)
+                        .put("e", error.code)
+                        .put("message", error.getMessage())
+                        .put("g", currentGeneration())
+                        .put("r", receipts);
+            }
+            receipts.put(new JSONArray().put(index).put(op).put(data));
+            if ("tap".equals(op) || "long".equals(op) || "set".equals(op)
+                    || "scroll".equals(op) || "global".equals(op)) {
+                committedMutations++;
+            }
+        }
+        return new JSONObject()
+                .put("c", true)
+                .put("m", committedMutations)
+                .put("g", currentGeneration())
+                .put("r", receipts);
+    }
+
+    @Override
+    public boolean planVisible(String selector) throws Exception {
+        try {
+            find(callArgs(selector));
+            return true;
+        } catch (BridgeServer.BridgeError error) {
+            if ("E_UI".equals(error.code)) {
+                return false;
+            }
+            throw error;
+        }
+    }
+
+    @Override
+    public void planTap(String target) throws Exception {
+        action(callArgs(target), AccessibilityNodeInfo.ACTION_CLICK, "tapped");
+    }
+
+    @Override
+    public void planText(String target, String text) throws Exception {
+        setText(callArgs(target, text));
+    }
+
+    @Override
+    public void planScroll(String target, String direction) throws Exception {
+        scroll(callArgs(target, direction));
+    }
+
+    @Override
+    public void planBack() throws Exception {
+        global(callArgs("back"));
+    }
+
+    @Override
+    public long planGeneration() {
+        return currentGeneration();
+    }
+
+    @Override
+    public void planAwaitChange(long observedGeneration, long timeoutMs) throws Exception {
+        if (timeoutMs <= 0L) {
+            return;
+        }
+        synchronized (snapshotLock) {
+            if (generation.get() == observedGeneration) {
+                try {
+                    snapshotLock.wait(Math.min(timeoutMs, 100L));
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new BridgeServer.BridgeError("E_CANCELLED", "plan wait interrupted");
+                }
+            }
+        }
+    }
+
+    @Override
+    public PlanExecutor.State planState() throws Exception {
+        synchronized (snapshotLock) {
+            snapshot(new JSONObject());
+            String encoded = cachedWindowId + "|" + cachedPackageName + "|"
+                    + (cachedSnapshot == null ? "" : cachedSnapshot.toString());
+            return new PlanExecutor.State(
+                    generation.get(),
+                    cachedWindowId,
+                    Long.toUnsignedString(fnv1a64(encoded), 36));
+        }
+    }
+
+    private long currentGeneration() {
+        synchronized (snapshotLock) {
+            return generation.get();
+        }
+    }
+
+    private static JSONObject callArgs(String... values) throws Exception {
+        JSONArray args = new JSONArray();
+        for (String value : values) {
+            args.put(value);
+        }
+        return new JSONObject().put("args", args);
     }
 
     private AccessibilityNodeInfo resolve(JSONObject args) throws Exception {
@@ -558,6 +943,14 @@ public final class AubridgeAccessibilityService extends AccessibilityService {
                 }
                 return node;
             } catch (NumberFormatException ignored) {
+                Long stableHandle = stableRefs.get(value);
+                if (stableHandle != null) {
+                    AccessibilityNodeInfo node = handles.get(stableHandle);
+                    if (node != null) {
+                        return node;
+                    }
+                    throw new BridgeServer.BridgeError("E_STALE", "stale semantic reference");
+                }
                 JSONObject found = find(new JSONObject().put("args", new JSONArray().put(value)));
                 return handles.get(found.getJSONObject("node").getLong("id"));
             }
@@ -705,5 +1098,7 @@ public final class AubridgeAccessibilityService extends AccessibilityService {
             node.recycle();
         }
         handles.clear();
+        stableHandleKeys.clear();
+        stableRefs.clear();
     }
 }

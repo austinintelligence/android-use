@@ -24,9 +24,41 @@ jobs:
         run: cargo test --workspace --all-targets
       - name: Release build
         run: cargo build --workspace --release
+      - name: Contract and generated skill gates
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-skill.ps1
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-public-skill.ps1 -Check
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-contract-generated.ps1
       - name: Publish-safe scan
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-public.ps1
+
+  portable-host:
+    name: portable-${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            runner: ubuntu-24.04
+          - name: linux-arm64
+            runner: ubuntu-24.04-arm
+          - name: macos-x64
+            runner: macos-15-intel
+          - name: macos-arm64
+            runner: macos-15
+          - name: windows-arm64
+            runner: windows-11-arm
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Pin Rust toolchain
+        shell: bash
+        run: rustup toolchain install 1.94.0 --profile minimal && rustup default 1.94.0
+      - name: Native test and release build
+        shell: bash
+        run: cargo test --workspace --all-targets && cargo build --workspace --release
 
   helper:
     runs-on: windows-latest
@@ -37,7 +69,7 @@ jobs:
           distribution: temurin
           java-version: '17'
       - name: Unit tests and signed CI release compile
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-helper.ps1 -Release
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-helper.ps1 -Release -BenchmarkFixture
 
   installer:
     runs-on: windows-latest
@@ -49,6 +81,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test --workspace packages/installer
+      - run: npm run test:packages --workspace packages/installer
+      - run: npm run test:tarball --workspace packages/installer
       - run: npm run lint --workspace packages/installer
       - run: npm pack --workspace packages/installer --dry-run
       - run: npm run docs:check

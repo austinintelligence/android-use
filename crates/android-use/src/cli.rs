@@ -15,10 +15,12 @@ struct ParseState {
     batch_delay_explicit: bool,
     output: OutputMode,
     force: bool,
+    repair: bool,
     output_path: Option<PathBuf>,
     no_daemon: bool,
     daemon_child: bool,
     pipe_jsonl: bool,
+    mcp: bool,
     disassemble: bool,
     trace_path: Option<PathBuf>,
     trace_id: Option<String>,
@@ -33,10 +35,12 @@ impl Default for ParseState {
             batch_delay_explicit: false,
             output: OutputMode::default(),
             force: false,
+            repair: false,
             output_path: None,
             no_daemon: false,
             daemon_child: false,
             pipe_jsonl: false,
+            mcp: false,
             disassemble: false,
             trace_path: None,
             trace_id: None,
@@ -76,6 +80,10 @@ impl ParseState {
                 self.force = true;
                 Ok(Some(index + 1))
             }
+            "--repair" => {
+                self.repair = true;
+                Ok(Some(index + 1))
+            }
             "--no-daemon" => {
                 self.no_daemon = true;
                 Ok(Some(index + 1))
@@ -86,6 +94,10 @@ impl ParseState {
             }
             "--jsonl" => {
                 self.pipe_jsonl = true;
+                Ok(Some(index + 1))
+            }
+            "--mcp" => {
+                self.mcp = true;
                 Ok(Some(index + 1))
             }
             "--disasm" | "--disassemble" | "--decode" => {
@@ -138,10 +150,12 @@ pub struct Cli {
     pub batch_delay_explicit: bool,
     pub output: OutputMode,
     pub force: bool,
+    pub repair: bool,
     pub output_path: Option<PathBuf>,
     pub no_daemon: bool,
     pub daemon_child: bool,
     pub pipe_jsonl: bool,
+    pub mcp: bool,
     pub disassemble: bool,
     pub trace_path: Option<PathBuf>,
     pub trace_id: Option<String>,
@@ -166,10 +180,12 @@ impl Cli {
                 batch_delay_explicit: false,
                 output: OutputMode::default(),
                 force: false,
+                repair: false,
                 output_path: None,
                 no_daemon: true,
                 daemon_child: false,
                 pipe_jsonl: false,
+                mcp: false,
                 disassemble: false,
                 trace_path: None,
                 trace_id: None,
@@ -226,10 +242,12 @@ impl Cli {
             batch_delay_explicit: state.batch_delay_explicit,
             output: state.output,
             force: state.force,
+            repair: state.repair,
             output_path: state.output_path,
             no_daemon: state.no_daemon,
             daemon_child: state.daemon_child,
             pipe_jsonl: state.pipe_jsonl,
+            mcp: state.mcp,
             disassemble: state.disassemble,
             trace_path: state.trace_path,
             trace_id: state.trace_id,
@@ -277,6 +295,16 @@ impl Cli {
                 | "disconnect"
                 | "daemon"
                 | "pipe"
+                | "serve"
+                | "setup"
+                | "ready"
+                | "schema"
+                | "agent"
+                | "observe"
+                | "execute"
+                | "artifact"
+                | "recipe"
+                | "remote"
         )
     }
 
@@ -301,10 +329,12 @@ impl Cli {
             batch_delay_explicit: self.batch_delay_explicit,
             output: self.output,
             force: self.force,
+            repair: self.repair,
             output_path: self.output_path.clone(),
             no_daemon: true,
             daemon_child: true,
             pipe_jsonl: self.pipe_jsonl,
+            mcp: self.mcp,
             disassemble: self.disassemble,
             trace_path: self.trace_path.clone(),
             trace_id: self.trace_id.clone(),
@@ -321,7 +351,7 @@ fn required_flag_value(tokens: &[String], index: usize, name: &str) -> Result<St
 }
 
 pub fn help_text() -> &'static str {
-    "au 1.0\n\nconnection: d u p c dc st cap doctor\nfast: b pipe tape|x daemon start|stop|status|ping\ntape: D0 V; R; F0 SELECTOR; T|L|E|S $0; W|A SELECTOR [MS]; P SELECTOR POST [MS]; K KEY; H B; G X Y; Q; --disasm\nexperiment: exp f1 SELECTOR POSTSELECTOR [TIMEOUT_MS]\ngui: t dt lp sw dr tx k home back recents notify quick wake sleep rot ss\nsemantic: ui snap|find|tap|long|set|scroll|wait|assert|watch|global|gesture\nvision: inspect|hash|diff|crop|region|check|clear\nweb: web open|tabs|use|go|click|type|text|eval|wait|back|reload|close|shot\napps: app ls|info|start|stop|install|uninstall|clear|perm|grant|revoke|intent\nmedia: mirror screen record cam list|view|snap|record|pipe mic cap|pipe\nlocation: loc status|get|set|clear|route|enable|disable\nsystem: clip notif ls|watch|open|action|dismiss file prop settings sys log ps fwd rev\nraw: adb -- ... | adb -g -- ... | sh -- ...\n\nGlobal options may precede or follow normal commands: -s SERIAL|wifi|usb|mdns -j -c -w -q --delay MS --timeout MS --out PATH --force --binary --no-daemon --jsonl --trace PATH --disasm. Raw adb/sh preserve every post-command argument.\n-c/--compact: dense JSON {o:1,d|n|p|t} or {o:0,e,m}; -w/--wire: versioned dense envelope {v:1,o:1,d|n|p|t} or {v:1,o:0,e,m}; -j is stable JSON. Structured output is bounded; use --out for large results.\nTape is bounded to 64 instructions/20 state actions; @N is a session dictionary ref and $N is a tape-run node register.\nBatch control prefixes: `retry 1 ACTION` retries only after a failed shell attempt (semantic retries are limited to read-only/synchronization actions); `repeat N ACTION` intentionally runs N times. Combined worst-case attempts remain bounded by 20 state actions.\nBatch pacing: --delay/--batch-delay 0..999 ms (default 250 for shell actions; semantic proof paths do not pace). Long media and location routes stay foreground for cancellation. `pipe --jsonl` accepts compact request objects {c:COMMAND,a:[ARGS]} or {b:DSL}. `--trace PATH` appends bounded JSONL spans with one propagated trace ID."
+    "au 1.1\n\nconnection: d u p c dc st cap doctor ready setup\ncontract: serve --jsonl|--mcp schema observe execute artifact recipe\nremote: remote status|protocol|pair|enable|disable|revoke\nfast: b pipe tape|x daemon start|stop|status|ping\ntape: D0 V; R; F0 SELECTOR; T|L|E|S $0; W|A SELECTOR [MS]; P SELECTOR POST [MS]; K KEY; H B; G X Y; Q; --disasm\nexperiment: exp f1 SELECTOR POSTSELECTOR [TIMEOUT_MS]\ngui: t dt lp sw dr tx k home back recents notify quick wake sleep rot ss\nsemantic: ui snap|find|tap|long|set|scroll|wait|assert|watch|global|gesture\nvision: inspect|hash|diff|crop|region|check|clear\nweb: web open|tabs|use|go|click|type|text|eval|wait|back|reload|close|shot\napps: app ls|info|start|stop|install|uninstall|clear|perm|grant|revoke|intent\nmedia: mirror screen record cam list|view|snap|record|pipe mic cap|pipe\nlocation: loc status|get|set|clear|route|enable|disable\nsystem: clip notif ls|watch|open|action|dismiss file prop settings sys log ps fwd rev\nraw: adb -- ... | adb -g -- ... | sh -- ...\n\nGlobal options may precede or follow normal commands: -s SERIAL|wifi|usb|mdns -j -c -w -q --delay MS --timeout MS --out PATH --force --repair --binary --no-daemon --jsonl --mcp --trace PATH --disasm. Raw adb/sh preserve every post-command argument.\nContract methods use v2 bounded JSONL or MCP/stdio; raw shell and ADB remain compatibility escape hatches only. Structured output is bounded; use --out for large results.\nTape is internal/compatibility bytecode bounded to 64 instructions/20 state actions; @N is a session dictionary ref and $N is a tape-run node register.\nBatch control prefixes: `retry 1 ACTION` retries only after a failed shell attempt (semantic retries are limited to read-only/synchronization actions); `repeat N ACTION` intentionally runs N times. Combined worst-case attempts remain bounded by 20 state actions.\nBatch pacing: --delay/--batch-delay 0..999 ms (default 250 for shell actions; semantic proof paths do not pace). Long media and location routes stay foreground for cancellation. `pipe --jsonl` accepts compact request objects {c:COMMAND,a:[ARGS]} or {b:DSL}. `--trace PATH` appends bounded JSONL spans with one propagated trace ID."
 }
 
 #[cfg(test)]

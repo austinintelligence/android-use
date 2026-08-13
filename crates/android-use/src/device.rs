@@ -54,7 +54,20 @@ impl SelectionCache {
             if config.identity_matches(endpoint.hardware_serial.as_deref())
                 && endpoint_matches_requested(endpoint, requested)
             {
-                return Ok(endpoint.clone());
+                // A cached endpoint is usable only while the same live ADB
+                // transport is present. USB serials are stable device
+                // identity, but a reconnect can reuse the endpoint with a
+                // different transport (and a daemon must not carry stale
+                // helper/forward state across that boundary).
+                if endpoint.transport_id.is_some() {
+                    let current = DeviceInventory::discover_endpoints(adb)?;
+                    if current
+                        .iter()
+                        .any(|candidate| same_transport_connection(endpoint, candidate))
+                    {
+                        return Ok(endpoint.clone());
+                    }
+                }
             }
         }
         let inventory = DeviceInventory::discover_for_identity(
@@ -104,8 +117,7 @@ impl DeviceInventory {
             "device.discover",
             json!({"configured":configured_serial.is_some()}),
         );
-        let result = adb.global(&["devices".into(), "-l".into()])?;
-        let mut endpoints = parse_devices(&text(&result.stdout));
+        let mut endpoints = Self::discover_endpoints(adb)?;
         for endpoint in &mut endpoints {
             if endpoint.state != "device" {
                 continue;
@@ -128,6 +140,10 @@ impl DeviceInventory {
             }
         }
         Ok(Self { endpoints })
+    }
+
+    fn discover_endpoints(adb: &Adb) -> Result<Vec<Endpoint>> {
+        Ok(parse_devices(&adb.devices_long()?))
     }
 
     pub fn resolve(&self, config: &Config, requested: Option<&str>) -> Result<Endpoint> {
@@ -246,6 +262,13 @@ impl DeviceInventory {
     }
 }
 
+fn same_transport_connection(cached: &Endpoint, current: &Endpoint) -> bool {
+    cached.endpoint == current.endpoint
+        && current.state == "device"
+        && cached.transport_id.is_some()
+        && cached.transport_id == current.transport_id
+}
+
 pub(crate) fn endpoint_kind_selector(value: &str) -> Option<EndpointKind> {
     match value.to_ascii_lowercase().as_str() {
         "usb" => Some(EndpointKind::Usb),
@@ -305,7 +328,7 @@ fn parse_device_line(line: &str) -> Option<Endpoint> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_devices, DeviceInventory, EndpointKind};
+    use super::{parse_devices, same_transport_connection, DeviceInventory, EndpointKind};
     use crate::config::Config;
 
     #[test]
@@ -408,5 +431,32 @@ mod tests {
             &endpoints[0],
             Some("other-serial")
         ));
+    }
+
+    #[test]
+    fn non_usb_cache_is_bound_to_one_live_transport_connection() {
+        let cached =
+            parse_devices("List of devices attached\n192.0.2.1:4321 device transport_id:7\n")
+                .remove(0);
+        let same =
+            parse_devices("List of devices attached\n192.0.2.1:4321 device transport_id:7\n")
+                .remove(0);
+        let reconnected =
+            parse_devices("List of devices attached\n192.0.2.1:4321 device transport_id:8\n")
+                .remove(0);
+        assert!(same_transport_connection(&cached, &same));
+        assert!(!same_transport_connection(&cached, &reconnected));
+    }
+
+    #[test]
+    fn usb_cache_is_bound_to_one_live_transport_connection() {
+        let cached =
+            parse_devices("List of devices attached\na1b2c3d4 device transport_id:7\n").remove(0);
+        let same =
+            parse_devices("List of devices attached\na1b2c3d4 device transport_id:7\n").remove(0);
+        let reconnected =
+            parse_devices("List of devices attached\na1b2c3d4 device transport_id:8\n").remove(0);
+        assert!(same_transport_connection(&cached, &same));
+        assert!(!same_transport_connection(&cached, &reconnected));
     }
 }

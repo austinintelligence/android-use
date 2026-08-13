@@ -15,7 +15,7 @@ android {
 
     defaultConfig {
         applicationId = "dev.codex.aubridge"
-        minSdk = 30
+        minSdk = 26
         targetSdk = 36
         versionCode = 1
         versionName = "1.0.0"
@@ -40,11 +40,10 @@ android {
             }
         }
         release {
-            // The AU helper token is intentionally retrieved through Android's
-            // run-as boundary. This is a local per-user control app, not a
-            // store release; keep the signed release variant debuggable so
-            // the host never needs a token in its CLI arguments or files.
-            debuggable = true
+            // Release authentication is provisioned over a shell-UID-gated
+            // abstract socket reached only through an authorized ADB forward.
+            // Never weaken the APK to make app-private files readable.
+            debuggable = false
             minifyEnabled = true
             shrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

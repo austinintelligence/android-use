@@ -6,6 +6,7 @@ use android_use::config::AppPaths;
 use android_use::daemon;
 use android_use::error::{AuError, Result};
 use android_use::output::{emit_action_result, emit_error};
+use android_use::serve;
 use android_use::trace;
 use android_use::VERSION;
 
@@ -48,6 +49,13 @@ fn main() {
                 std::process::exit(1);
             }
         }
+    }
+    if cli.command == "serve" {
+        if let Err(error) = serve::run(&cli) {
+            emit_error(cli.output, &error);
+            std::process::exit(1);
+        }
+        return;
     }
     let result = run(&cli, raw);
     match result {

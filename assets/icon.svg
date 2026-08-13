@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">android-use icon</title>
+  <desc id="desc">A green Android device frame containing a compact command cursor.</desc>
+  <rect width="512" height="512" rx="112" fill="#171a18"/>
+  <rect x="116" y="72" width="280" height="368" rx="58" fill="#f6f4ed"/>
+  <rect x="140" y="106" width="232" height="286" rx="30" fill="#b9f227"/>
+  <path d="M206 194l58 62-58 62" fill="none" stroke="#171a18" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M274 318h54" fill="none" stroke="#171a18" stroke-width="30" stroke-linecap="round"/>
+  <circle cx="256" cy="416" r="12" fill="#171a18"/>
+</svg>

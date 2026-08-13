@@ -20,6 +20,9 @@ use crate::trace;
 const CHROME_PACKAGE: &str = "com.android.chrome";
 const DEVTOOLS_SOCKET: &str = "chrome_devtools_remote";
 const MAX_CDP_MESSAGE: usize = 1024 * 1024;
+const MAX_TAB_ID_BYTES: usize = 128;
+const TAB_CLOSE_CONFIRMATION: Duration = Duration::from_secs(3);
+const TAB_OPEN_IDENTIFICATION: Duration = Duration::from_millis(1_500);
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct Tab {
@@ -246,9 +249,12 @@ impl WebForwardPool {
         result
     }
 
-    fn close_session(&mut self, serial: &str) {
+    fn close_session(&mut self, serial: &str) -> bool {
         if let Some(mut session) = self.sessions.remove(serial) {
             session.close();
+            true
+        } else {
+            false
         }
     }
 
@@ -327,11 +333,23 @@ fn execute_inner(
         json!({"op":operation,"a":args.len(),"serial":serial}),
     );
     match operation {
-        "open" => open(adb, serial, required(args, 1, "web open URL")?),
+        "open" => open_with_context(
+            adb,
+            paths,
+            serial,
+            required(args, 1, "web open URL")?,
+            pool.as_deref_mut(),
+        ),
         "tabs" => with_tabs(adb, paths, serial, pool.as_deref_mut(), |tabs, _| {
             Ok(compact_tabs(&tabs))
         }),
-        "use" => select_tab(paths, required(args, 1, "web use TAB_ID")?),
+        "use" => activate_tab(
+            adb,
+            paths,
+            serial,
+            required(args, 1, "web use TAB_ID")?,
+            pool.as_deref_mut(),
+        ),
         "go" => with_web_fallback(
             with_cdp(adb, paths, serial, pool.as_deref_mut(), |cdp| {
                 cdp.command(
@@ -535,6 +553,74 @@ fn open(adb: &Adb, serial: &str, url: &str) -> Result<Value> {
     )
 }
 
+fn open_with_context(
+    adb: &Adb,
+    paths: &AppPaths,
+    serial: &str,
+    url: &str,
+    mut pool: Option<&mut WebForwardPool>,
+) -> Result<Value> {
+    // Capture AU's current target set before launching. This is best effort:
+    // a device with CDP unavailable must still retain the cheap launch path.
+    let before = with_tabs(adb, paths, serial, pool.as_deref_mut(), |tabs, _| Ok(tabs)).ok();
+    let launched = open(adb, serial, url)?;
+    if before.is_none() {
+        return Ok(launched);
+    }
+    let deadline = Instant::now() + TAB_OPEN_IDENTIFICATION;
+    while Instant::now() < deadline {
+        let tabs = match with_tabs(adb, paths, serial, pool.as_deref_mut(), |tabs, _| Ok(tabs)) {
+            Ok(tabs) => tabs,
+            Err(_) => {
+                std::thread::sleep(Duration::from_millis(75));
+                continue;
+            }
+        };
+        if let Some((tab, by)) = opened_tab(&tabs, before.as_deref(), url) {
+            let _ = select_tab(paths, &tab.id);
+            return Ok(json!({
+                "opened":true,
+                "url":url,
+                "package":CHROME_PACKAGE,
+                "proof":launched.get("proof"),
+                "tab":{"id":tab.id,"type":tab.kind,"title":limit_text(&tab.title,160),"url":limit_text(&tab.url,512)},
+                "identified_by":by
+            }));
+        }
+        std::thread::sleep(Duration::from_millis(75));
+    }
+    Ok(json!({
+        "opened":true,
+        "url":url,
+        "package":CHROME_PACKAGE,
+        "proof":launched.get("proof"),
+        "identified":false
+    }))
+}
+
+fn opened_tab<'a>(
+    tabs: &'a [Tab],
+    before: Option<&[Tab]>,
+    requested_url: &str,
+) -> Option<(&'a Tab, &'static str)> {
+    let is_page = |tab: &&Tab| tab.kind == "page";
+    let url_match =
+        |tab: &&Tab| tab.url == requested_url || tab.url.starts_with(&format!("{requested_url}#"));
+    let mut new_pages = tabs.iter().filter(is_page).filter(|tab| {
+        before.is_some_and(|old| !old.iter().any(|candidate| candidate.id == tab.id))
+    });
+    if let Some(tab) = new_pages.clone().find(url_match) {
+        return Some((tab, "new_url"));
+    }
+    if let Some(tab) = new_pages.next() {
+        return Some((tab, "new_target"));
+    }
+    tabs.iter()
+        .filter(is_page)
+        .find(url_match)
+        .map(|tab| (tab, "url"))
+}
+
 fn chrome_open_command(url: &str) -> Vec<String> {
     vec![
         "shell".into(),
@@ -685,6 +771,29 @@ fn select_tab(paths: &AppPaths, tab: &str) -> Result<Value> {
     Ok(json!({"selected":tab}))
 }
 
+fn activate_tab(
+    adb: &Adb,
+    paths: &AppPaths,
+    serial: &str,
+    tab: &str,
+    pool: Option<&mut WebForwardPool>,
+) -> Result<Value> {
+    validate_tab_id(tab)?;
+    with_tabs(adb, paths, serial, pool, |tabs, port| {
+        if !tabs.iter().any(|candidate| candidate.id == tab) {
+            return Err(AuError::code("E_CDP", "Chrome tab no longer exists"));
+        }
+        let proof = http_get_retry(port, &format!("/json/activate/{tab}"))?;
+        if !proof.to_ascii_lowercase().contains("activated") {
+            return Err(AuError::code(
+                "E_CDP",
+                "Chrome did not confirm visible tab activation",
+            ));
+        }
+        select_tab(paths, tab)
+    })
+}
+
 fn click(
     adb: &Adb,
     paths: &AppPaths,
@@ -803,8 +912,18 @@ fn close_tab(
     paths: &AppPaths,
     serial: &str,
     requested: Option<&str>,
-    pool: Option<&mut WebForwardPool>,
+    mut pool: Option<&mut WebForwardPool>,
 ) -> Result<Value> {
+    // Chrome can keep a target alive until its DevTools WebSocket is closed.
+    // Evict the daemon's cached session before requesting closure so the
+    // confirmation below observes the same lifecycle a user sees in Chrome.
+    if let Some(pool_ref) = pool.as_deref_mut() {
+        let evicted = pool_ref.close_session(serial);
+        trace::event(
+            "web.close.session_evicted",
+            json!({"serial":serial,"had_session":evicted}),
+        );
+    }
     with_tabs(adb, paths, serial, pool, |tabs, port| {
         let state = load_state(paths)?;
         let id = requested
@@ -815,9 +934,53 @@ fn close_tab(
                     .map(|tab| tab.id.as_str())
             })
             .ok_or_else(|| AuError::code("E_CDP", "no tab selected"))?;
+        validate_tab_id(id)?;
         let response = http_get(port, &format!("/json/close/{id}"))?;
+        if !wait_for_tab_absence(port, id, TAB_CLOSE_CONFIRMATION) {
+            return Err(AuError::code(
+                "E_CDP",
+                format!(
+                    "Chrome did not confirm tab close within {} ms",
+                    TAB_CLOSE_CONFIRMATION.as_millis()
+                ),
+            ));
+        }
+        let mut state = load_state(paths)?;
+        if state.selected_tab.as_deref() == Some(id) {
+            state.selected_tab = None;
+            atomic_write(&paths.state.join("web.json"), &serde_json::to_vec(&state)?)?;
+        }
         Ok(json!({"closed":id,"response":response.chars().take(400).collect::<String>()}))
     })
+}
+
+fn validate_tab_id(tab: &str) -> Result<()> {
+    if tab.is_empty()
+        || tab.len() > MAX_TAB_ID_BYTES
+        || !tab
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(AuError::code("E_ARGS", "invalid bounded Chrome tab id"));
+    }
+    Ok(())
+}
+
+fn wait_for_tab_absence(port: u16, id: &str, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Ok(body) = http_get(port, "/json") {
+            if let Ok(tabs) = serde_json::from_str::<Vec<Tab>>(&body) {
+                if !tabs.iter().any(|tab| tab.id == id) {
+                    return true;
+                }
+            }
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn screenshot(
@@ -1182,10 +1345,12 @@ fn nonce() -> u64 {
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
+    use std::time::Duration;
 
     use super::{
-        chrome_open_command, compact_tabs, forward_is_listed, launch_rejected, optional_timeout,
-        read_http_response, reserve_local_port, Tab,
+        chrome_open_command, compact_tabs, forward_is_listed, launch_rejected, opened_tab,
+        optional_timeout, read_http_response, reserve_local_port, validate_tab_id,
+        wait_for_tab_absence, Tab,
     };
 
     #[test]
@@ -1236,6 +1401,41 @@ mod tests {
     }
 
     #[test]
+    fn opened_tab_prefers_new_exact_url_and_then_new_target() {
+        let before = vec![Tab {
+            id: "old".into(),
+            kind: "page".into(),
+            title: "Old".into(),
+            url: "https://old.example/".into(),
+            websocket: None,
+        }];
+        let exact = Tab {
+            id: "new".into(),
+            kind: "page".into(),
+            title: "New".into(),
+            url: "https://new.example/".into(),
+            websocket: None,
+        };
+        let exact_tabs = [before[0].clone(), exact.clone()];
+        let result =
+            opened_tab(&exact_tabs, Some(&before), "https://new.example/").expect("exact target");
+        assert_eq!(result.0.id, "new");
+        assert_eq!(result.1, "new_url");
+
+        let other = Tab {
+            id: "other".into(),
+            kind: "page".into(),
+            title: "Other".into(),
+            url: "chrome://newtab/".into(),
+            websocket: None,
+        };
+        let new_target_tabs = [before[0].clone(), other];
+        let result = opened_tab(&new_target_tabs, Some(&before), "https://missing.example/")
+            .expect("new target");
+        assert_eq!(result.1, "new_target");
+    }
+
+    #[test]
     fn cdp_forward_port_is_a_real_loopback_candidate() {
         assert!(reserve_local_port().expect("port") > 0);
     }
@@ -1276,5 +1476,21 @@ mod tests {
         assert!(output.to_string().contains("\"id\":\"7\""));
         assert!(!output.to_string().contains("ws://secret"));
         assert_eq!(output["tabs"][0]["url"].as_str().expect("url").len(), 512);
+    }
+
+    #[test]
+    fn tab_ids_are_safe_for_cdp_close_and_activate_paths() {
+        assert!(validate_tab_id("ABC123-_9").is_ok());
+        assert!(validate_tab_id("bad/id").is_err());
+        assert!(validate_tab_id("bad?query").is_err());
+        assert!(validate_tab_id(&"x".repeat(129)).is_err());
+    }
+
+    #[test]
+    fn close_confirmation_helper_is_bounded_without_network_access() {
+        // Port zero cannot accept a connection; the helper must return after
+        // its deadline instead of converting a missing CDP endpoint into an
+        // unbounded cleanup wait.
+        assert!(!wait_for_tab_absence(0, "target", Duration::from_millis(1)));
     }
 }

@@ -1,17 +1,18 @@
 use std::env;
-use std::fs;
-use std::io::Read;
+use std::fs::{self, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use base64::Engine as _;
 use serde_json::{json, Value};
 
 use crate::adb::Adb;
 use crate::config::AppPaths;
 use crate::error::{AuError, Result};
-use crate::files::{artifact_from_process, reserve_output, screenshot, Artifact};
-use crate::helper::{self, HELPER_PACKAGE};
+use crate::files::{reserve_output, screenshot, Artifact};
+use crate::helper;
 use crate::process::{run, RunOptions};
 
 pub struct MediaOptions<'a> {
@@ -147,7 +148,7 @@ fn camera(
                 "camera.snapshot",
                 json!({"camera":args.get(1)}),
             )?;
-            let artifact = pull_private_media(adb, serial, &data, destination, 20)?;
+            let artifact = pull_private_media(adb, paths, serial, &data, destination, 20)?;
             Ok(artifact_json(&artifact))
         }
         "record" => {
@@ -161,8 +162,14 @@ fn camera(
                 json!({"seconds":seconds,"camera":args.get(2)}),
                 seconds,
             )?;
-            let artifact =
-                pull_private_media(adb, serial, &data, destination, seconds.saturating_add(10))?;
+            let artifact = pull_private_media(
+                adb,
+                paths,
+                serial,
+                &data,
+                destination,
+                seconds.saturating_add(10),
+            )?;
             Ok(artifact_json(&artifact))
         }
         "view" => {
@@ -209,8 +216,14 @@ fn camera(
                 json!({"seconds":seconds,"camera":args.get(2)}),
                 seconds,
             )?;
-            let artifact =
-                pull_private_media(adb, serial, &data, destination, seconds.saturating_add(10))?;
+            let artifact = pull_private_media(
+                adb,
+                paths,
+                serial,
+                &data,
+                destination,
+                seconds.saturating_add(10),
+            )?;
             Ok(json!({
                 "binary_path":artifact.path,
                 "bytes":artifact.bytes,
@@ -248,8 +261,14 @@ fn microphone(
                 json!({"seconds":seconds,"format":"wav"}),
                 seconds,
             )?;
-            let artifact =
-                pull_private_media(adb, serial, &data, destination, seconds.saturating_add(10))?;
+            let artifact = pull_private_media(
+                adb,
+                paths,
+                serial,
+                &data,
+                destination,
+                seconds.saturating_add(10),
+            )?;
             Ok(artifact_json(&artifact))
         }
         "pipe" => {
@@ -269,8 +288,14 @@ fn microphone(
                 json!({"seconds":seconds,"format":"pcm_s16le"}),
                 seconds,
             )?;
-            let artifact =
-                pull_private_media(adb, serial, &data, destination, seconds.saturating_add(10))?;
+            let artifact = pull_private_media(
+                adb,
+                paths,
+                serial,
+                &data,
+                destination,
+                seconds.saturating_add(10),
+            )?;
             Ok(json!({
                 "binary_path":artifact.path,
                 "bytes":artifact.bytes,
@@ -289,6 +314,7 @@ fn microphone(
 
 fn pull_private_media(
     adb: &Adb,
+    paths: &AppPaths,
     serial: &str,
     data: &Value,
     destination: PathBuf,
@@ -311,36 +337,152 @@ fn pull_private_media(
             "helper returned invalid media path",
         ));
     }
-    let media_adb = adb.with_timeout(Duration::from_secs(timeout_seconds.max(8)));
-    let result = media_adb.device_to_file(
-        serial,
-        &[
-            "exec-out".into(),
-            "run-as".into(),
-            HELPER_PACKAGE.into(),
-            "cat".into(),
-            format!("files/{file}"),
-        ],
-        destination,
-    );
-    let cleanup = media_adb.device(
-        serial,
-        &[
-            "shell".into(),
-            "run-as".into(),
-            HELPER_PACKAGE.into(),
-            "rm".into(),
-            "-f".into(),
-            format!("files/{file}"),
-        ],
-    );
-    match result {
-        Ok(result) => {
-            cleanup?;
-            artifact_from_process(&result)
+    const CHUNK_BYTES: u64 = 256 * 1024;
+    const MAX_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
+    let expected = data.get("bytes").and_then(Value::as_u64).ok_or_else(|| {
+        AuError::code(
+            "E_MEDIA",
+            "helper response did not include private media size",
+        )
+    })?;
+    if expected == 0 || expected > MAX_ARTIFACT_BYTES {
+        return Err(AuError::code(
+            "E_OUTPUT_LIMIT",
+            "private media size is zero or exceeds the 512 MiB artifact limit",
+        ));
+    }
+
+    let mut session = helper::HelperSession::open(adb, paths, serial)?;
+    let deadline = Instant::now() + Duration::from_secs(timeout_seconds.max(8));
+    let opened = session.call_with_timeout(
+        "artifact.open",
+        json!({"file":file}),
+        deadline
+            .saturating_duration_since(Instant::now())
+            .min(Duration::from_secs(30)),
+    )?;
+    let handle = opened.get("handle").and_then(Value::as_str).unwrap_or("");
+    let opened_file = opened.get("file").and_then(Value::as_str).unwrap_or("");
+    let opened_bytes = opened.get("total_bytes").and_then(Value::as_u64);
+    let expected_sha256 = opened.get("sha256").and_then(Value::as_str).unwrap_or("");
+    if handle.len() != 32
+        || !handle.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || opened_file != file
+        || opened_bytes != Some(expected)
+        || expected_sha256.len() != 64
+        || !expected_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(AuError::code(
+            "E_PROTOCOL",
+            "helper returned invalid private artifact snapshot metadata",
+        ));
+    }
+    let transfer = (|| -> Result<Artifact> {
+        use sha2::{Digest, Sha256};
+
+        let mut output = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&destination)?;
+        let mut offset = 0u64;
+        let mut hasher = Sha256::new();
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(AuError::code(
+                    "E_TIMEOUT",
+                    "private media transfer timed out",
+                ));
+            }
+            let response = session.call_with_timeout(
+                "artifact.read",
+                json!({"handle":handle,"file":file,"offset":offset,"length":CHUNK_BYTES}),
+                remaining.min(Duration::from_secs(5)),
+            )?;
+            let response_file = response.get("file").and_then(Value::as_str).unwrap_or("");
+            let response_handle = response.get("handle").and_then(Value::as_str).unwrap_or("");
+            let response_offset = response.get("offset").and_then(Value::as_u64);
+            let next = response.get("next_offset").and_then(Value::as_u64);
+            let chunk_bytes = response.get("bytes").and_then(Value::as_u64);
+            let total = response.get("total_bytes").and_then(Value::as_u64);
+            let encoded = response.get("data").and_then(Value::as_str).unwrap_or("");
+            let eof = response
+                .get("eof")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if response_file != file
+                || response_handle != handle
+                || response_offset != Some(offset)
+                || total != Some(expected)
+                || next.is_none()
+                || chunk_bytes.is_none()
+            {
+                return Err(AuError::code(
+                    "E_PROTOCOL",
+                    "helper returned inconsistent private artifact metadata",
+                ));
+            }
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .map_err(|_| {
+                    AuError::code("E_PROTOCOL", "helper returned invalid artifact data")
+                })?;
+            let next = next.unwrap_or(offset);
+            if decoded.len() as u64 != chunk_bytes.unwrap_or(u64::MAX)
+                || decoded.len() as u64 > CHUNK_BYTES
+                || next != offset.saturating_add(decoded.len() as u64)
+                || next > expected
+                || (!eof && decoded.is_empty())
+                || (eof && next != expected)
+            {
+                return Err(AuError::code(
+                    "E_PROTOCOL",
+                    "helper returned an invalid private artifact chunk",
+                ));
+            }
+            output.write_all(&decoded)?;
+            hasher.update(&decoded);
+            offset = next;
+            if eof {
+                output.flush()?;
+                output.sync_all()?;
+                break;
+            }
         }
-        Err(error) => {
-            let _ = cleanup;
+        let actual_sha256 = format!("{:x}", hasher.finalize());
+        if actual_sha256 != expected_sha256 {
+            return Err(AuError::code(
+                "E_HASH",
+                "private artifact digest did not match the immutable device snapshot",
+            ));
+        }
+        Ok(Artifact {
+            path: destination.display().to_string(),
+            bytes: expected,
+            sha256: actual_sha256,
+        })
+    })();
+
+    let cleanup = session
+        .call("artifact.delete", json!({"handle":handle,"file":file}))
+        .and_then(|value| {
+            if value.get("removed").and_then(Value::as_bool) == Some(true) {
+                Ok(())
+            } else {
+                Err(AuError::code(
+                    "E_ARTIFACT",
+                    "helper did not remove private media",
+                ))
+            }
+        });
+    match (transfer, cleanup) {
+        (Ok(artifact), Ok(())) => Ok(artifact),
+        (Err(error), _) => {
+            let _ = fs::remove_file(&destination);
+            Err(error)
+        }
+        (Ok(_), Err(error)) => {
+            let _ = fs::remove_file(&destination);
             Err(error)
         }
     }
@@ -382,21 +524,31 @@ fn duration(args: &[String], index: usize, default: u64, usage: &str) -> Result<
 }
 
 fn find_scrcpy() -> Result<PathBuf> {
-    let candidates = [
-        env::var_os("LOCALAPPDATA").map(|root| {
-            PathBuf::from(root).join("Codex/android-use/tools/scrcpy/scrcpy-win64-v4.1/scrcpy.exe")
-        }),
-        env::var_os("PATH").and_then(|value| {
-            env::split_paths(&value)
-                .map(|path| path.join("scrcpy.exe"))
-                .find(|path| path.is_file())
-        }),
-    ];
+    let executable = if cfg!(windows) {
+        "scrcpy.exe"
+    } else {
+        "scrcpy"
+    };
+    let mut candidates = vec![env::var_os("AU_INSTALL_ROOT").map(|root| {
+        PathBuf::from(root)
+            .join("tools")
+            .join("scrcpy")
+            .join(executable)
+    })];
+    #[cfg(windows)]
+    candidates.push(env::var_os("LOCALAPPDATA").map(|root| {
+        PathBuf::from(root).join("Codex/android-use/tools/scrcpy/scrcpy-win64-v4.1/scrcpy.exe")
+    }));
+    candidates.push(env::var_os("PATH").and_then(|value| {
+        env::split_paths(&value)
+            .map(|path| path.join(executable))
+            .find(|path| path.is_file())
+    }));
     candidates
         .into_iter()
         .flatten()
         .find(|path| path.is_file())
-        .ok_or_else(|| AuError::code("E_SCRCPY", "scrcpy 4.1 is not installed"))
+        .ok_or_else(|| AuError::code("E_SCRCPY", "scrcpy 4.1 is not installed or on PATH"))
 }
 
 #[cfg(test)]

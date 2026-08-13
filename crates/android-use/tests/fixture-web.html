@@ -1,11 +1,20 @@
 <!doctype html>
 <meta name="viewport" content="width=device-width">
-<h1 id="title">AU WiFi CDP</h1>
+<title>AU Agentic Browser Fixture</title>
+<h1 id="title">AU Agentic Browser Fixture</h1>
 <label>Name <input id="name" aria-label="Name"></label>
-<button id="go">Go</button>
+<button id="go">RUN BROWSER STEP</button>
 <div id="out">Ready</div>
+<a id="download" href="fixture-download.txt" download="au-agentic-download.txt">Download fixture</a>
+<ol id="rows"></ol>
 <script>
   document.getElementById("go").addEventListener("click", () => {
     document.getElementById("out").textContent = "Hello " + document.getElementById("name").value;
   });
+  const rows = document.getElementById("rows");
+  for (let index = 1; index <= 60; index++) {
+    const row = document.createElement("li");
+    row.textContent = "Browser row " + index;
+    rows.appendChild(row);
+  }
 </script>

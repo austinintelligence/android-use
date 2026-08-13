@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::adb::Adb;
-use crate::config::{atomic_write, AppPaths};
+use crate::config::{atomic_write, load, AppPaths};
 use crate::error::{AuError, Result};
 use crate::process::text;
 use crate::protocol::{read_frame, write_frame};
@@ -20,6 +20,25 @@ use crate::{trace, MAX_PROTOCOL_FRAME, PROTOCOL_VERSION};
 
 pub const HELPER_PACKAGE: &str = "dev.codex.aubridge";
 const HELPER_SOCKET: &str = "codex_au_bridge";
+const HELPER_BOOTSTRAP_SOCKET: &str = "codex_au_bridge_bootstrap";
+
+#[derive(Serialize)]
+struct BootstrapRequest<'a> {
+    version: u16,
+    operation: &'static str,
+    nonce: &'a str,
+}
+
+#[derive(Deserialize)]
+struct BootstrapResponse {
+    version: u16,
+    ok: bool,
+    nonce: String,
+    #[serde(default)]
+    token: String,
+    #[serde(default)]
+    code: String,
+}
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct HelperRequest {
@@ -88,7 +107,7 @@ impl HelperSession {
         // closes the recovery gap after an app/service restart: a dead
         // daemon-owned socket must not require a manual tap in MainActivity.
         start_bridge_service(adb, serial)?;
-        let token = read_token(adb, serial)?;
+        let token = bootstrap_token(adb, paths, serial)?;
         let local = create_forward(adb, paths, serial)?;
         let port = local
             .strip_prefix("tcp:")
@@ -228,7 +247,7 @@ impl HelperSession {
             return Ok(());
         }
         let _ = self.stream.shutdown(Shutdown::Both);
-        remove_forward(&self.adb, &self.paths, &self.serial, &self.local)?;
+        remove_forward_bounded(&self.adb, &self.paths, &self.serial, &self.local)?;
         self.closed = true;
         Ok(())
     }
@@ -243,6 +262,7 @@ fn helper_error_code(code: &str) -> &'static str {
         "E_CAPABILITY" => "E_CAPABILITY",
         "E_FRAME" => "E_FRAME",
         "E_LOCATION" => "E_LOCATION",
+        "E_LIMIT" => "E_LIMIT",
         "E_MEDIA" => "E_MEDIA",
         "E_PROTOCOL" => "E_PROTOCOL",
         "E_STALE" => "E_STALE",
@@ -329,6 +349,7 @@ impl HelperPool {
         timeout: Duration,
     ) -> Result<Value> {
         if !self.sessions.contains_key(serial) {
+            verify_endpoint_identity(adb, paths, serial)?;
             let session = HelperSession::open(adb, paths, serial)?;
             self.sessions.insert(serial.into(), session);
         }
@@ -342,6 +363,31 @@ impl HelperPool {
             Ok(value) => Ok(value),
             Err(error) => {
                 self.close(serial);
+                // The bridge authenticates before it accepts the request
+                // sequence or dispatches the operation. An expired session is
+                // therefore a pre-dispatch rejection, unlike a transport
+                // failure after a mutation may already have run. Establish a
+                // fresh authenticated epoch and retry exactly once so a long
+                // warm agent session can cross the helper TTL boundary without
+                // making the agent restart or replay blindly.
+                if error.kind() == "E_AUTH" {
+                    trace::event(
+                        "helper.session_reauth",
+                        json!({"operation":operation,"reason":"pre_dispatch_auth_rejection"}),
+                    );
+                    verify_endpoint_identity(adb, paths, serial)?;
+                    let mut session = HelperSession::open(adb, paths, serial)?;
+                    match session.call_with_timeout(operation, retry_args, timeout) {
+                        Ok(value) => {
+                            self.sessions.insert(serial.into(), session);
+                            return Ok(value);
+                        }
+                        Err(retry_error) => {
+                            let _ = session.close();
+                            return Err(retry_error);
+                        }
+                    }
+                }
                 // A service restart can leave the Android abstract socket
                 // absent for a bounded interval. Retry only read-only
                 // operations; repeating a tap, text mutation, media capture,
@@ -365,6 +411,7 @@ impl HelperPool {
                     let mut last_error = error;
                     for _ in 0..8 {
                         thread::sleep(Duration::from_millis(200));
+                        verify_endpoint_identity(adb, paths, serial)?;
                         match HelperSession::open(adb, paths, serial) {
                             Ok(mut session) => {
                                 let retry = session.call_with_timeout(
@@ -402,6 +449,31 @@ impl HelperPool {
             let _ = session.close();
         }
     }
+}
+
+/// Re-probe non-USB endpoint identity whenever an authenticated helper session
+/// is opened or recovered. A daemon selection cache cannot authorize a Wi-Fi
+/// address after that address has been reused by another device.
+fn verify_endpoint_identity(adb: &Adb, paths: &AppPaths, endpoint: &str) -> Result<()> {
+    let config = load(paths)?;
+    let Some(expected) = config.enrolled_serial() else {
+        return Ok(());
+    };
+    if endpoint == expected {
+        return Ok(());
+    }
+    let response = adb.device(
+        endpoint,
+        &["shell".into(), "getprop".into(), "ro.serialno".into()],
+    )?;
+    let actual = text(&response.stdout);
+    if actual != expected {
+        return Err(AuError::code(
+            "E_IDENTITY",
+            "helper endpoint no longer matches the enrolled hardware identity",
+        ));
+    }
+    Ok(())
 }
 
 impl Drop for HelperPool {
@@ -477,11 +549,22 @@ pub fn capability(adb: &Adb, serial: &str) -> Result<Value> {
             match HelperSession::open(adb, &paths, serial) {
                 Ok(mut session) => {
                     let probe = session.call("heartbeat", json!({}));
-                    let _ = session.close();
                     match probe {
-                        Ok(_) => value["available"] = json!(true),
+                        Ok(_) => {
+                            value["available"] = json!(true);
+                            // Capability probing is read-only and intentionally
+                            // discards the tree. It distinguishes an installed
+                            // bridge from an accessibility service the user has
+                            // actually enabled without leaking UI text into
+                            // setup output.
+                            let semantic = session
+                                .call("ui.snap", json!({"args":["--compact", "--frontier"]}))
+                                .is_ok();
+                            value["semantic"] = json!(semantic);
+                        }
                         Err(error) => value["error"] = error_value(&error),
                     }
+                    let _ = session.close();
                 }
                 Err(error) => value["error"] = error_value(&error),
             }
@@ -492,48 +575,149 @@ pub fn capability(adb: &Adb, serial: &str) -> Result<Value> {
     }
 }
 
-fn read_token(adb: &Adb, serial: &str) -> Result<String> {
-    // The Android service creates the private token in onCreate(). Starting
-    // the service and reading the file are separate ADB transactions, so a
-    // clean install can briefly expose a valid service with no file yet.
-    // Retry only this bounded bootstrap race; never wait indefinitely.
-    let deadline = Instant::now() + Duration::from_secs(3);
-    let mut last_error: String;
-    loop {
-        match adb.device(
-            serial,
-            &[
-                "shell".into(),
-                "run-as".into(),
-                HELPER_PACKAGE.into(),
-                "cat".into(),
-                "files/bridge_token".into(),
-            ],
-        ) {
-            Ok(result) => {
-                let token = text(&result.stdout);
-                if token.len() >= 16
-                    && token.len() <= 512
-                    && !token.chars().any(char::is_whitespace)
-                {
-                    return Ok(token);
+/// Capability probe that reuses a daemon/contract-owned authenticated helper
+/// session. Package presence still comes from Android's package manager, but
+/// heartbeat and semantic readiness no longer allocate a forward, read the
+/// token, and authenticate again on every status request.
+pub fn capability_with_pool(
+    adb: &Adb,
+    paths: &AppPaths,
+    serial: &str,
+    pool: &mut HelperPool,
+) -> Result<Value> {
+    let installed = adb.device(
+        serial,
+        &[
+            "shell".into(),
+            "pm".into(),
+            "path".into(),
+            HELPER_PACKAGE.into(),
+        ],
+    );
+    match installed {
+        Ok(result) if text(&result.stdout).starts_with("package:") => {
+            let mut value = json!({
+                "installed": true,
+                "package": HELPER_PACKAGE,
+                "available": false,
+                "protocol": PROTOCOL_VERSION
+            });
+            match pool.call(adb, paths, serial, "heartbeat", json!({})) {
+                Ok(_) => {
+                    value["available"] = json!(true);
+                    value["semantic"] = json!(pool
+                        .call(
+                            adb,
+                            paths,
+                            serial,
+                            "ui.snap",
+                            json!({"args":["--compact", "--frontier"]}),
+                        )
+                        .is_ok());
                 }
-                last_error = "token file was empty or malformed".to_string();
+                Err(error) => value["error"] = error_value(&error),
             }
-            Err(error) => last_error = error.compact_message(),
+            Ok(value)
         }
+        Ok(_) => Ok(json!({"installed":false,"package":HELPER_PACKAGE})),
+        Err(error) => Err(error),
+    }
+}
+
+fn bootstrap_token(adb: &Adb, paths: &AppPaths, serial: &str) -> Result<String> {
+    let local = create_forward_to(adb, paths, serial, HELPER_BOOTSTRAP_SOCKET)?;
+    let result = bootstrap_token_through(&local);
+    let cleanup = remove_forward_bounded(adb, paths, serial, &local);
+    match (result, cleanup) {
+        (Ok(token), Ok(())) => Ok(token),
+        (Err(error), Ok(())) => Err(error),
+        (_, Err(error)) => Err(AuError::code(
+            "E_FORWARD",
+            format!(
+                "could not remove credential bootstrap forward: {}",
+                error.compact_message()
+            ),
+        )),
+    }
+}
+
+fn bootstrap_token_through(local: &str) -> Result<String> {
+    let port = local
+        .strip_prefix("tcp:")
+        .ok_or_else(|| AuError::code("E_HELPER", "invalid bootstrap forward"))?
+        .parse::<u16>()?;
+    let address = format!("127.0.0.1:{port}")
+        .parse()
+        .map_err(|error: std::net::AddrParseError| AuError::code("E_HELPER", error.to_string()))?;
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let last_error = loop {
+        let attempt_error = match TcpStream::connect_timeout(&address, Duration::from_millis(300)) {
+            Ok(mut stream) => {
+                if let Err(error) = stream.set_read_timeout(Some(Duration::from_secs(2))) {
+                    error.to_string()
+                } else if let Err(error) = stream.set_write_timeout(Some(Duration::from_secs(2))) {
+                    error.to_string()
+                } else {
+                    let challenge = nonce();
+                    let request = BootstrapRequest {
+                        version: PROTOCOL_VERSION,
+                        operation: "bootstrap",
+                        nonce: &challenge,
+                    };
+                    match write_frame(&mut stream, &request)
+                        .and_then(|_| read_frame::<_, BootstrapResponse>(&mut stream))
+                        .and_then(|response| validate_bootstrap_response(response, &challenge))
+                    {
+                        Ok(token) => return Ok(token),
+                        Err(error) => error.compact_message(),
+                    }
+                }
+            }
+            Err(error) => error.to_string(),
+        };
         if Instant::now() >= deadline {
-            break;
+            break attempt_error;
         }
         thread::sleep(Duration::from_millis(75));
-    }
+    };
     Err(AuError::code(
         "E_HELPER",
         format!(
-            "helper token unavailable; install a debuggable signed helper first ({})",
+            "helper credential bootstrap unavailable; update or restart AU Bridge ({})",
             last_error
         ),
     ))
+}
+
+fn validate_bootstrap_response(response: BootstrapResponse, challenge: &str) -> Result<String> {
+    if response.version != PROTOCOL_VERSION || response.nonce != challenge {
+        return Err(AuError::code(
+            "E_PROTOCOL",
+            "helper bootstrap response did not match the request",
+        ));
+    }
+    if !response.ok {
+        return Err(AuError::code(
+            "E_AUTH",
+            if response.code.is_empty() {
+                "helper rejected credential bootstrap".to_string()
+            } else {
+                format!("helper rejected credential bootstrap ({})", response.code)
+            },
+        ));
+    }
+    let token = response.token;
+    if !(32..=128).contains(&token.len())
+        || !token
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return Err(AuError::code(
+            "E_PROTOCOL",
+            "helper bootstrap returned malformed credential material",
+        ));
+    }
+    Ok(token)
 }
 
 fn start_bridge_service(adb: &Adb, serial: &str) -> Result<()> {
@@ -573,12 +757,21 @@ fn ensure_helper_package_enabled(adb: &Adb, serial: &str) -> Result<()> {
 }
 
 fn create_forward(adb: &Adb, paths: &AppPaths, serial: &str) -> Result<String> {
+    create_forward_to(adb, paths, serial, HELPER_SOCKET)
+}
+
+fn create_forward_to(
+    adb: &Adb,
+    paths: &AppPaths,
+    serial: &str,
+    socket_name: &str,
+) -> Result<String> {
     let result = adb.device(
         serial,
         &[
             "forward".into(),
             "tcp:0".into(),
-            format!("localabstract:{HELPER_SOCKET}"),
+            format!("localabstract:{socket_name}"),
         ],
     )?;
     let port = text(&result.stdout);
@@ -603,7 +796,7 @@ fn create_forward(adb: &Adb, paths: &AppPaths, serial: &str) -> Result<String> {
     records.push(ForwardRecord {
         serial: serial.into(),
         local: local.clone(),
-        remote: format!("localabstract:{HELPER_SOCKET}"),
+        remote: format!("localabstract:{socket_name}"),
         created_by: "helper".into(),
     });
     if let Err(error) = atomic_write(&paths.forwards, &serde_json::to_vec(&records)?) {
@@ -640,6 +833,40 @@ pub fn remove_forward(adb: &Adb, paths: &AppPaths, serial: &str, local: &str) ->
         ));
     }
     adb.device(serial, &["forward".into(), "--remove".into(), local.into()])?;
+    forget_forward_record(paths, records, serial, local)
+}
+
+/// Remove one AU-owned forward with a short bounded retry. ADB can transiently
+/// reject `forward --remove` while a device reconnects; leaving that forward
+/// in the registry is worse for future sessions. If the forward disappears but
+/// registry persistence fails during the first attempt, reconcile the exact
+/// owned record without broad cleanup.
+fn remove_forward_bounded(adb: &Adb, paths: &AppPaths, serial: &str, local: &str) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_millis(600);
+    loop {
+        let error = match remove_forward(adb, paths, serial, local) {
+            Ok(()) => return Ok(()),
+            Err(error) => error,
+        };
+        if let Ok(active) = active_forwards(adb, serial) {
+            if !active.contains(local) {
+                let records = load_forwards(&paths.forwards)?;
+                return forget_forward_record(paths, records, serial, local);
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(error);
+        }
+        thread::sleep(Duration::from_millis(75));
+    }
+}
+
+fn forget_forward_record(
+    paths: &AppPaths,
+    records: Vec<ForwardRecord>,
+    serial: &str,
+    local: &str,
+) -> Result<()> {
     let remaining = records
         .into_iter()
         .filter(|record| !(record.serial == serial && record.local == local))
@@ -742,7 +969,8 @@ pub fn helper_frame_limit() -> usize {
 mod tests {
     use super::{
         helper_error_code, helper_frame_limit, helper_transport_error,
-        is_accessibility_binding_error, HelperRequest, HELPER_PACKAGE,
+        is_accessibility_binding_error, validate_bootstrap_response, BootstrapResponse,
+        HelperRequest, HELPER_PACKAGE,
     };
     use crate::error::AuError;
 
@@ -776,6 +1004,37 @@ mod tests {
         let debug = format!("{request:?}");
         assert!(!debug.contains("secret-token"));
         assert!(debug.contains("<redacted>"));
+    }
+
+    #[test]
+    fn bootstrap_response_is_challenge_bound_and_token_bounded() {
+        let response = BootstrapResponse {
+            version: 1,
+            ok: true,
+            nonce: "nonce-00000001".into(),
+            token: "A".repeat(43),
+            code: String::new(),
+        };
+        assert_eq!(
+            validate_bootstrap_response(response, "nonce-00000001").unwrap(),
+            "A".repeat(43)
+        );
+        let mismatched = BootstrapResponse {
+            version: 1,
+            ok: true,
+            nonce: "nonce-00000002".into(),
+            token: "A".repeat(43),
+            code: String::new(),
+        };
+        assert!(validate_bootstrap_response(mismatched, "nonce-00000001").is_err());
+        let malformed = BootstrapResponse {
+            version: 1,
+            ok: true,
+            nonce: "nonce-00000001".into(),
+            token: "not valid whitespace".into(),
+            code: String::new(),
+        };
+        assert!(validate_bootstrap_response(malformed, "nonce-00000001").is_err());
     }
 
     #[test]

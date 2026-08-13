@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{self, BufRead};
 use std::path::Path;
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -13,7 +14,10 @@ use crate::cli::Cli;
 use crate::config::{load, save, AppPaths, Config};
 use crate::device::{DeviceInventory, EndpointKind};
 use crate::error::{AuError, Result};
-use crate::{app, helper, location, media, system, tape, trace, vision, web};
+use crate::{
+    app, helper, location, media, plan, recipe, remote, runtime, setup, system, tape, trace,
+    vision, web,
+};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
@@ -79,11 +83,41 @@ pub fn execute(cli: &Cli) -> Result<ActionResult> {
         json!({"c":cli.command,"a":cli.args.len(),"serial":cli.serial}),
     );
     let paths = AppPaths::discover()?;
+    if let Some(result) = runtime::device_free(&cli.command, &cli.args)? {
+        return Ok(result);
+    }
+    if cli.command == "remote" {
+        return remote::action(&cli.args);
+    }
     let mut config = load(&paths)?;
-    let adb = Adb::from_config(&config, cli.timeout_ms)?;
+    let adb = match Adb::from_config(&config, cli.timeout_ms) {
+        Ok(adb) => adb,
+        Err(error) if matches!(cli.command.as_str(), "setup" | "ready") => {
+            return setup::without_adb(cli, &paths, &error);
+        }
+        Err(error) if cli.command == "doctor" => {
+            return Ok(doctor_without_adb(&paths, &config, cli.repair, &error));
+        }
+        Err(error) => return Err(error),
+    };
     let result = dispatch(cli, &paths, &mut config, &adb);
     trace_result(&result);
     result
+}
+
+fn doctor_without_adb(
+    paths: &AppPaths,
+    config: &Config,
+    repair: bool,
+    error: &AuError,
+) -> ActionResult {
+    ActionResult::ok(json!({
+        "host": {"state": "installed", "config": paths.config},
+        "adb": {"ready": false, "error": {"code": error.kind(), "message": error.compact_message()}},
+        "device": {"enrolled": config.enrolled_serial().is_some(), "identity": config.enrolled_serial()},
+        "helper": {"ready": false, "next": "PLATFORM_TOOLS_READY"},
+        "repair": if repair { json!({"applied":false,"reason":"ADB unavailable","scope":"AU-owned state only"}) } else { Value::Null }
+    }))
 }
 
 pub fn execute_daemon(
@@ -139,6 +173,15 @@ pub fn execute_daemon(
                 .helper_pool
                 .get_or_insert_with(helper::HelperPool::new),
         ),
+        "cap" => capability_with_pool(
+            cli,
+            paths,
+            config,
+            &adb,
+            runtime
+                .helper_pool
+                .get_or_insert_with(helper::HelperPool::new),
+        ),
         "ui" => semantic_ui_with_pool(
             cli,
             paths,
@@ -169,7 +212,14 @@ pub fn execute_daemon(
     ) || result.as_ref().is_err_and(|error| {
         matches!(
             error.kind(),
-            "E_ADB" | "E_DEVICE" | "E_IDENTITY" | "E_SHELL"
+            "E_ADB"
+                | "E_DEVICE"
+                | "E_IDENTITY"
+                | "E_SHELL"
+                | "E_HELPER"
+                | "E_PROTOCOL"
+                | "E_FRAME"
+                | "E_TIMEOUT"
         )
     }) {
         runtime.selection.invalidate();
@@ -203,6 +253,11 @@ pub fn dispatch(
         "st" | "status" => status(cli, config, adb),
         "cap" => capability(cli, paths, config, adb),
         "doctor" => doctor(cli, paths, config, adb),
+        "setup" | "ready" => setup::action(cli, paths, config, adb),
+        "observe" | "execute" => runtime::action(cli),
+        "artifact" => runtime::action(cli),
+        "recipe" => recipe::action(paths, &cli.args),
+        "remote" => remote::action(&cli.args),
         "exp" => experiment(cli, paths, config, adb),
         "b" | "batch" => run_batch(cli, paths, config, adb),
         "tape" | "x" => {
@@ -295,7 +350,7 @@ fn disconnect(adb: &Adb, cli: &Cli) -> Result<ActionResult> {
 
 fn status(cli: &Cli, config: &Config, adb: &Adb) -> Result<ActionResult> {
     let endpoint = selected(cli, config, adb)?;
-    let state = adb.device(&endpoint.endpoint, &["get-state".into()])?;
+    let state = adb.get_state(&endpoint.endpoint)?;
     let android = adb.device(
         &endpoint.endpoint,
         &[
@@ -308,7 +363,8 @@ fn status(cli: &Cli, config: &Config, adb: &Adb) -> Result<ActionResult> {
         "endpoint":endpoint.endpoint,
         "kind":endpoint.kind,
         "hardware_serial":endpoint.hardware_serial,
-        "state":String::from_utf8_lossy(&state.stdout.bytes).trim(),
+        "transport":crate::transport::TransportDescriptor::from_endpoint(&endpoint),
+        "state":state,
         "android":String::from_utf8_lossy(&android.stdout.bytes).trim()
     })))
 }
@@ -333,9 +389,60 @@ fn capability(cli: &Cli, paths: &AppPaths, config: &Config, adb: &Adb) -> Result
     ))
 }
 
+fn capability_with_pool(
+    cli: &Cli,
+    paths: &AppPaths,
+    config: &Config,
+    adb: &Adb,
+    pool: &mut helper::HelperPool,
+) -> Result<ActionResult> {
+    let endpoint = selected(cli, config, adb)?;
+    let helper = helper::capability_with_pool(adb, paths, &endpoint.endpoint, pool)?;
+    let camera = adb
+        .device(
+            &endpoint.endpoint,
+            &["shell".into(), "cmd".into(), "camera".into(), "help".into()],
+        )
+        .is_ok();
+    let ui = adb
+        .device(
+            &endpoint.endpoint,
+            &["shell".into(), "uiautomator".into(), "help".into()],
+        )
+        .is_ok();
+    Ok(ActionResult::ok(json!({
+        "endpoint":endpoint.endpoint,
+        "helper":helper,
+        "camera_backend":camera,
+        "uiautomator":ui,
+        "artifact_dir":paths.artifacts
+    })))
+}
+
 fn doctor(cli: &Cli, paths: &AppPaths, config: &Config, adb: &Adb) -> Result<ActionResult> {
-    let inventory =
+    let mut inventory =
         DeviceInventory::discover_for_identity(adb, config.enrolled_serial().unwrap_or_default())?;
+    let mut server_restarted = false;
+    let mut repair_reason = None;
+    if cli.repair && config.enrolled_serial().is_some() && inventory.endpoints.is_empty() {
+        adb.restart_local_server()?;
+        server_restarted = true;
+        let deadline = Instant::now() + Duration::from_millis(cli.timeout_ms.min(8_000));
+        loop {
+            inventory = DeviceInventory::discover_for_identity(
+                adb,
+                config.enrolled_serial().unwrap_or_default(),
+            )?;
+            if !inventory.endpoints.is_empty() || Instant::now() >= deadline {
+                break;
+            }
+            thread::sleep(Duration::from_millis(250));
+        }
+        if inventory.endpoints.is_empty() {
+            repair_reason =
+                Some("local ADB server restarted but the enrolled device stayed offline");
+        }
+    }
     let selected_endpoint = if config.enrolled_serial().is_some() {
         inventory.resolve(config, cli.serial.as_deref()).ok()
     } else {
@@ -370,12 +477,29 @@ fn doctor(cli: &Cli, paths: &AppPaths, config: &Config, adb: &Adb) -> Result<Act
         )
     };
     let forwarding = fs::read_to_string(&paths.forwards).unwrap_or_else(|_| "[]".into());
+    let repair = if cli.repair {
+        let removed = helper::cleanup_owned_forwards(adb, paths)?;
+        Some(json!({
+            "owned_forwards_removed": removed,
+            "adb_server_restarted": server_restarted,
+            "device_recovered": server_restarted && !inventory.endpoints.is_empty(),
+            "reason": repair_reason,
+            "scope": if server_restarted {
+                "explicit local ADB repair plus AU-owned forward registry"
+            } else {
+                "AU-owned forward registry only"
+            }
+        }))
+    } else {
+        None
+    };
     Ok(ActionResult::ok(json!({
         "endpoint":endpoint,
         "selection":selection,
         "helper":helper,
         "location":location,
         "tracked_forwards":serde_json::from_str::<Value>(&forwarding).unwrap_or_else(|_| json!({"corrupt":true})),
+        "repair":repair,
         "config":paths.config,
         "enrolled":config.enrolled_serial().is_some(),
         "inventory":inventory.endpoints
@@ -899,6 +1023,42 @@ fn run_batch_fast(
     let mut first_action = true;
     let mut index = 0usize;
     while index < normalized.len() {
+        if !cli.batch_delay_explicit {
+            if let Some(run) = batch::compile_semantic_run(&normalized[index..]) {
+                let payload = serde_json::to_string(&run.payload)?;
+                let nested = cli.child("ui", vec!["run".into(), payload], &endpoint);
+                let mut context = NestedContext {
+                    paths,
+                    config,
+                    adb,
+                    pool,
+                    helper_pool,
+                    web_pool,
+                    tape_session: None,
+                };
+                match execute_nested_with_pools(&nested, &mut context) {
+                    Ok(_) => {
+                        completed += run.consumed as u32;
+                        first_action = false;
+                        index += run.consumed;
+                        continue;
+                    }
+                    Err(error)
+                        if run.mutations > 0
+                            && matches!(error.kind(), "E_HELPER" | "E_PROTOCOL" | "E_DEVICE") =>
+                    {
+                        return Err(AuError::code(
+                            "E_UNKNOWN_COMMIT",
+                            format!(
+                                "fused semantic batch outcome is unknown: {}",
+                                error.compact_message()
+                            ),
+                        ));
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+        }
         if batch::boundary(&normalized[index]) == Boundary::Shell {
             let end = normalized[index..]
                 .iter()
@@ -1358,25 +1518,66 @@ fn semantic_ui_with_pool(
             *value = coordinate(value, extent)?.to_string();
         }
     }
-    let operation = format!("ui.{operation}");
+    let mut validated_plan = None;
+    let helper_payload = if operation == "run" {
+        let source = helper_args
+            .first()
+            .ok_or_else(|| AuError::code("E_ARGS", "ui run requires a JSON plan"))?;
+        let value: Value = serde_json::from_str(source)
+            .map_err(|error| AuError::code("E_ARGS", format!("invalid ui run plan: {error}")))?;
+        if !value.is_object() {
+            return Err(AuError::code("E_ARGS", "ui run plan must be an object"));
+        }
+        if value.get("operations").is_some() {
+            let checked = plan::validate_payload(value)?;
+            let payload = checked.payload.clone();
+            validated_plan = Some(checked);
+            payload
+        } else {
+            value
+        }
+    } else {
+        json!({"args":helper_args})
+    };
+    let helper_operation = if validated_plan.is_some() {
+        "plan.run".to_owned()
+    } else {
+        format!("ui.{operation}")
+    };
+    let plan_timeout = validated_plan
+        .as_ref()
+        .map(|checked| Duration::from_millis(checked.deadline_ms));
     let data = if let Some(pool) = helper_pool {
         pool.call_with_timeout(
             adb,
             paths,
             &endpoint.endpoint,
-            &operation,
-            json!({"args":helper_args}),
-            Duration::from_millis(cli.timeout_ms),
+            &helper_operation,
+            helper_payload.clone(),
+            plan_timeout.unwrap_or_else(|| Duration::from_millis(cli.timeout_ms)),
+        )?
+    } else if let Some(timeout) = plan_timeout {
+        let mut pool = helper::HelperPool::new();
+        pool.call_with_timeout(
+            adb,
+            paths,
+            &endpoint.endpoint,
+            &helper_operation,
+            helper_payload.clone(),
+            timeout,
         )?
     } else {
         helper::call(
             adb,
             paths,
             &endpoint.endpoint,
-            &operation,
-            json!({"args":helper_args}),
+            &helper_operation,
+            helper_payload,
         )?
     };
+    if let Some(checked) = validated_plan.as_ref() {
+        plan::validate_receipt(&data, checked)?;
+    }
     Ok(ActionResult::ok(data))
 }
 

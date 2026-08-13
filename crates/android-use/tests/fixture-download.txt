@@ -1,0 +1,2 @@
+AU agentic download fixture v1
+This file is deterministic, disposable, and contains no device or account data.

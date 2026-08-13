@@ -1,5 +1,6 @@
 use std::io::{Cursor, Read, Write};
 
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -37,6 +38,8 @@ pub struct Response {
 pub struct ProtocolError {
     pub code: String,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -48,6 +51,7 @@ pub enum FrameMode {
 const NATIVE_MAGIC: [u8; 4] = *b"AU2\0";
 const NATIVE_REQUEST: u8 = 1;
 const NATIVE_RESPONSE: u8 = 2;
+const NATIVE_DETAILS_PREFIX: &str = "\u{1e}AUDETAILS:";
 
 impl Response {
     pub fn ok(id: u64, data: Value) -> Self {
@@ -69,6 +73,7 @@ impl Response {
             error: Some(ProtocolError {
                 code: error.kind().into(),
                 message: error.compact_message(),
+                details: error.details().cloned(),
             }),
         }
     }
@@ -158,7 +163,10 @@ pub fn write_daemon_response<W: Write>(
                     .as_ref()
                     .ok_or_else(|| AuError::code("E_FRAME", "error response omitted error"))?;
                 put_string(&mut payload, &error.code)?;
-                put_string(&mut payload, &error.message)?;
+                put_string(
+                    &mut payload,
+                    &native_error_message(&error.message, error.details.as_ref())?,
+                )?;
             }
             write_length_prefixed(writer, &payload)
         }
@@ -210,6 +218,37 @@ fn put_string(payload: &mut Vec<u8>, value: &str) -> Result<()> {
     put_u16(payload, bytes.len() as u16);
     payload.extend_from_slice(bytes);
     Ok(())
+}
+
+fn native_error_message(message: &str, details: Option<&Value>) -> Result<String> {
+    let Some(details) = details else {
+        return Ok(message.into());
+    };
+    let encoded =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(serde_json::to_vec(details)?);
+    let combined = format!("{message}{NATIVE_DETAILS_PREFIX}{encoded}");
+    if combined.len() > u16::MAX as usize {
+        return Err(AuError::code(
+            "E_FRAME",
+            "native error details exceed maximum size",
+        ));
+    }
+    Ok(combined)
+}
+
+fn decode_native_error_message(message: &str) -> Result<(String, Option<Value>)> {
+    let Some((plain, encoded)) = message.split_once(NATIVE_DETAILS_PREFIX) else {
+        return Ok((message.into(), None));
+    };
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded)
+        .map_err(|error| {
+            AuError::code("E_FRAME", format!("invalid native error details: {error}"))
+        })?;
+    let details = serde_json::from_slice(&bytes).map_err(|error| {
+        AuError::code("E_FRAME", format!("invalid native error details: {error}"))
+    })?;
+    Ok((plain.into(), Some(details)))
 }
 
 fn take_exact<'a>(cursor: &mut Cursor<&'a [u8]>, length: usize) -> Result<&'a [u8]> {
@@ -330,8 +369,15 @@ fn decode_native_response(payload: &[u8]) -> Result<Response> {
         (Some(data), None)
     } else {
         let code = take_string(&mut cursor)?;
-        let message = take_string(&mut cursor)?;
-        (None, Some(ProtocolError { code, message }))
+        let (message, details) = decode_native_error_message(&take_string(&mut cursor)?)?;
+        (
+            None,
+            Some(ProtocolError {
+                code,
+                message,
+                details,
+            }),
+        )
     };
     finish_native(&cursor)?;
     Ok(Response {
@@ -369,7 +415,7 @@ pub fn validate_request(request: &Request) -> Result<()> {
 mod tests {
     use super::{
         read_frame, read_native_response, validate_request, write_daemon_response, write_frame,
-        write_native_request, FrameMode, Request, RequestBody, Response,
+        write_native_request, FrameMode, ProtocolError, Request, RequestBody, Response,
     };
     use crate::{MAX_PROTOCOL_FRAME, PROTOCOL_VERSION};
 
@@ -444,6 +490,27 @@ mod tests {
         let decoded = read_native_response(&mut response_bytes.as_slice()).expect("response");
         assert_eq!(decoded.id, 17);
         assert!(decoded.ok);
+    }
+
+    #[test]
+    fn native_error_frames_preserve_bounded_recovery_details() {
+        let response = Response {
+            version: PROTOCOL_VERSION,
+            id: 18,
+            ok: false,
+            data: None,
+            error: Some(ProtocolError {
+                code: "E_PARTIAL".into(),
+                message: "step failed".into(),
+                details: Some(serde_json::json!({"failed_index":2,"next":"observe"})),
+            }),
+        };
+        let mut bytes = Vec::new();
+        write_daemon_response(&mut bytes, &response, FrameMode::Native).expect("write error");
+        let decoded = read_native_response(&mut bytes.as_slice()).expect("read error");
+        let error = decoded.error.expect("protocol error");
+        assert_eq!(error.code, "E_PARTIAL");
+        assert_eq!(error.details.expect("details")["failed_index"], 2);
     }
 
     #[test]

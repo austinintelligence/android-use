@@ -4,7 +4,7 @@
   "skill": {
     "name": "android-use",
     "display_name": "Android Use",
-    "description": "Fast, compact Android control on Windows through the Rust au CLI, persistent ADB paths, and the authenticated AU Bridge helper. Use for authorized Android device discovery, exact-identity enrollment, batched GUI/app/web control, semantic UI, media, files, notifications, and mock-location work."
+    "description": "Fast, compact Android control on Windows, macOS, and Linux through the Rust au CLI, persistent ADB paths, and the authenticated AU Bridge helper. Use for authorized Android device discovery, exact-identity enrollment, batched GUI/app/web control, semantic UI, media, files, notifications, and mock-location work."
   },
   "aliases": ["x", "tape"],
   "limits": {"instructions": 64, "state_actions": 20, "dictionary_entries": 32, "dictionary_value_bytes": 8192},

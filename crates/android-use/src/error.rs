@@ -1,5 +1,6 @@
 use std::io;
 
+use serde_json::Value;
 use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, AuError>;
@@ -7,9 +8,17 @@ pub type Result<T> = std::result::Result<T, AuError>;
 #[derive(Debug, Error)]
 pub enum AuError {
     #[error("{message}")]
-    Code { code: &'static str, message: String },
+    Code {
+        code: &'static str,
+        message: String,
+        details: Option<Value>,
+    },
     #[error("{message}")]
-    Protocol { code: String, message: String },
+    Protocol {
+        code: String,
+        message: String,
+        details: Option<Value>,
+    },
     #[error("I/O: {0}")]
     Io(#[from] io::Error),
     #[error("JSON: {0}")]
@@ -21,6 +30,7 @@ impl AuError {
         Self::Code {
             code,
             message: message.into(),
+            details: None,
         }
     }
 
@@ -28,6 +38,7 @@ impl AuError {
         Self::Protocol {
             code: code.into(),
             message: message.into(),
+            details: None,
         }
     }
 
@@ -42,6 +53,33 @@ impl AuError {
 
     pub fn compact_message(&self) -> String {
         self.to_string().replace(['\r', '\n'], " ")
+    }
+
+    pub fn details(&self) -> Option<&Value> {
+        match self {
+            Self::Code { details, .. } | Self::Protocol { details, .. } => details.as_ref(),
+            Self::Io(_) | Self::Json(_) => None,
+        }
+    }
+
+    pub fn with_details(mut self, details: Value) -> Self {
+        match &mut self {
+            Self::Code {
+                details: current, ..
+            }
+            | Self::Protocol {
+                details: current, ..
+            } => *current = Some(details),
+            Self::Io(_) | Self::Json(_) => {}
+        }
+        self
+    }
+
+    pub fn with_optional_details(self, details: Option<Value>) -> Self {
+        match details {
+            Some(details) => self.with_details(details),
+            None => self,
+        }
     }
 }
 

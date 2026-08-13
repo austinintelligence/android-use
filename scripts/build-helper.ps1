@@ -1,5 +1,7 @@
 param(
   [switch]$Release,
+  [switch]$BenchmarkFixture,
+  [string]$ExpectedReleaseSignerSha256 = $env:AUBRIDGE_EXPECTED_SIGNER_SHA256,
   [string]$SdkRoot = $(if ($env:ANDROID_SDK_ROOT) { $env:ANDROID_SDK_ROOT } elseif ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:LOCALAPPDATA 'Android\Sdk' })
 )
 
@@ -82,15 +84,43 @@ if (!(Test-Path $keystore)) {
   ) | Set-Content -LiteralPath $signing -Encoding Ascii
 }
 
-$task = if ($Release) { ':app:assembleRelease' } else { ':app:assembleDebug' }
+$tasks = if ($Release) {
+  @(':app:testDebugUnitTest', ':app:assembleDebugAndroidTest', ':app:assembleRelease')
+} else {
+  @(':app:testDebugUnitTest', ':app:assembleDebugAndroidTest')
+}
+if ($BenchmarkFixture) {
+  $tasks += if ($Release) { ':fixture:assembleRelease' } else { ':fixture:assembleDebug' }
+}
 Push-Location $projectRoot
 try {
-  & $gradle --no-daemon --stacktrace $task
-  if ($LASTEXITCODE -ne 0) { throw "Gradle task $task failed." }
+  & $gradle --no-daemon --stacktrace @tasks
+  if ($LASTEXITCODE -ne 0) { throw "Gradle tasks $($tasks -join ', ') failed." }
   $apkRelative = if ($Release) { 'app\build\outputs\apk\release\app-release.apk' } else { 'app\build\outputs\apk\debug\app-debug.apk' }
   $apk = Join-Path $projectRoot $apkRelative
-  & (Join-Path $PSScriptRoot 'validate-apk.ps1') -Apk $apk -SdkRoot $sdkRoot
+  $debugApk = Join-Path $projectRoot 'app\build\outputs\apk\debug\app-debug.apk'
+  $apksigner = Join-Path $sdkRoot 'build-tools\36.0.0\apksigner.bat'
+  if (-not (Test-Path -LiteralPath $debugApk -PathType Leaf) -or -not (Test-Path -LiteralPath $apksigner -PathType Leaf)) {
+    throw 'A signed debug target and apksigner are required to prove helper signer continuity.'
+  }
+  $debugSigning = (& $apksigner verify --verbose --print-certs $debugApk 2>&1 | Out-String)
+  $debugSignerMatch = [regex]::Match($debugSigning, 'Signer #1 certificate SHA-256 digest:\s*([0-9a-fA-F]+)')
+  if (-not $debugSignerMatch.Success) { throw 'Could not derive the persistent helper signer from the debug target.' }
+  $expectedSigner = $debugSignerMatch.Groups[1].Value.ToLowerInvariant()
+  if ($Release -and -not [string]::IsNullOrWhiteSpace($ExpectedReleaseSignerSha256)) {
+    $pinnedSigner = $ExpectedReleaseSignerSha256.Trim().ToLowerInvariant()
+    if ($pinnedSigner -notmatch '^[0-9a-f]{64}$') { throw 'ExpectedReleaseSignerSha256 must be one SHA-256 certificate fingerprint.' }
+    if ($expectedSigner -ne $pinnedSigner) { throw 'The configured helper key does not match the previously published release signer.' }
+    $expectedSigner = $pinnedSigner
+  }
+  & (Join-Path $PSScriptRoot 'validate-apk.ps1') -Apk $apk -SdkRoot $sdkRoot -ExpectedSignerSha256 $expectedSigner
   if ($LASTEXITCODE -ne 0) { throw 'Packed APK validation failed.' }
+  if ($BenchmarkFixture) {
+    $fixtureVariant = if ($Release) { 'release' } else { 'debug' }
+    $fixtureApk = Join-Path $projectRoot "fixture\build\outputs\apk\$fixtureVariant\fixture-$fixtureVariant.apk"
+    & (Join-Path $PSScriptRoot 'validate-apk.ps1') -Apk $fixtureApk -SdkRoot $sdkRoot -Profile Fixture
+    if ($LASTEXITCODE -ne 0) { throw 'Benchmark fixture APK validation failed.' }
+  }
 } finally {
   Pop-Location
 }

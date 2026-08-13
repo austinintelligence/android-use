@@ -1,10 +1,13 @@
 # Supply-chain and release verification
 
-The public release is assembled from the tagged source tree on a Windows x64
-GitHub runner. The workflow builds the workspace Rust binary and the Java 17
-Android helper, generates a release manifest with byte counts and SHA-256
-digests, emits SPDX dependency inventories, writes `checksums.txt`, and creates
-an artifact attestation before publishing the release.
+The public release is assembled from the tagged source tree on native GitHub
+hosted Windows, macOS, and Linux x64/ARM64 runners. The workflow builds six
+host artifacts plus the Java 17 Android helper. It then builds portable
+archives, Debian/RPM packages, x64/ARM64 MSIs, and Homebrew/Winget metadata.
+Every required artifact is listed by byte count and SHA-256 in an exact-byte
+Ed25519-signed release manifest. The workflow also emits SPDX dependency
+inventories, writes `checksums.txt`, and creates an artifact attestation before
+publishing the release.
 
 ## Local verification
 
@@ -20,10 +23,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-public.ps1
 
 Build the release asset set into a private temporary directory, not into the
 repository, then verify each row in `checksums.txt` before distributing it.
-The host and helper are intentionally separate artifacts: the helper APK must
-retain the machine-local signing identity, while the host installer activates a
-binary only after manifest hash, byte-count, staging, and atomic replacement
-checks succeed.
+The host and helper are intentionally separate raw artifacts. Public helper
+releases must match `android/aubridge/release-signer.sha256`; changing that pin
+is an explicit key-rotation event. The installer pins the release-manifest
+public key, verifies the detached signature before trusting asset metadata,
+then verifies each streamed asset's hash and byte count. Activation is journaled
+and whole-install rollback is exercised with process-death fault injection.
 
 ## GitHub and npm publication
 
@@ -34,7 +39,7 @@ verify a downloaded artifact with the GitHub CLI when an attestation is
 available:
 
 ```powershell
-gh attestation verify .\au-windows-x64.exe -R drperky20/android-use
+gh attestation verify .\au-windows-x64.exe -R austinintelligence/android-use
 ```
 
 The npm package is published separately from `packages/installer` with

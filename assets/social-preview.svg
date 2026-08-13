@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc">
+  <title id="title">Give your AI an Android device</title>
+  <desc id="desc">android-use social preview with a device-command mark and concise product message.</desc>
+  <rect width="1280" height="640" fill="#f6f4ed"/>
+  <path d="M0 540C250 460 376 610 640 532s390-18 640-86v194H0z" fill="#b9f227"/>
+  <g transform="translate(80 72) scale(.75)">
+    <rect width="512" height="512" rx="112" fill="#171a18"/>
+    <rect x="116" y="72" width="280" height="368" rx="58" fill="#f6f4ed"/>
+    <rect x="140" y="106" width="232" height="286" rx="30" fill="#b9f227"/>
+    <path d="M206 194l58 62-58 62" fill="none" stroke="#171a18" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M274 318h54" fill="none" stroke="#171a18" stroke-width="30" stroke-linecap="round"/>
+    <circle cx="256" cy="416" r="12" fill="#171a18"/>
+  </g>
+  <text x="520" y="190" fill="#171a18" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="42" font-weight="700" letter-spacing="-1">android-use</text>
+  <text x="520" y="278" fill="#171a18" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="68" font-weight="780" letter-spacing="-3">Give your AI an</text>
+  <text x="520" y="350" fill="#171a18" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="68" font-weight="780" letter-spacing="-3">Android device.</text>
+  <text x="522" y="410" fill="#4c534e" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="27">Fast semantic control. Tiny observations. Real hardware.</text>
+  <g transform="translate(520 460)">
+    <rect width="340" height="72" rx="16" fill="#171a18"/>
+    <text x="28" y="47" fill="#b9f227" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="25">$ android-use setup</text>
+  </g>
+</svg>

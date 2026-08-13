@@ -12,7 +12,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$auExecutable = Join-Path $scriptRoot '..\crates\android-use\target\release\au.exe'
+$auExecutable = Join-Path $scriptRoot '..\target\release\au.exe'
 $pipeName = 'codex-android-use-v1'
 $protocolVersion = 1
 $maxProtocolFrame = 1MB

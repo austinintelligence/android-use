@@ -1,4 +1,4 @@
 interface:
   display_name: "Android Use"
   short_description: "Fast, bounded Android control through au"
-  default_prompt: "Use $android-use for authorized Android control. Prefer one daemon-backed batch or tape, -w wire proof, semantic handles, and text-first deltas; reuse the validated device session, confirm privacy-sensitive or destructive work, and clean up AU-owned resources."
+  default_prompt: "Use $android-use for authorized Android control. Bootstrap with verified setup when au is missing; prefer dense v2 observations and one bounded semantic plan over repeated probes; reuse the exact-identity warm session, confirm privacy-sensitive or destructive work, and clean up only AU-owned resources."
