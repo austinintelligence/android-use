@@ -5,9 +5,9 @@ edition = "2021"
 rust-version = "1.94"
 description = "Fast, bounded Android control over ADB"
 license = "MIT"
-repository = "https://github.com/drperky20/android-use"
-homepage = "https://github.com/drperky20/android-use"
-documentation = "https://github.com/drperky20/android-use/tree/main/docs"
+repository = "https://github.com/austinintelligence/android-use"
+homepage = "https://github.com/austinintelligence/android-use"
+documentation = "https://github.com/austinintelligence/android-use/tree/main/docs"
 readme = "../../README.md"
 keywords = ["android", "adb", "automation", "agents"]
 categories = ["command-line-utilities", "development-tools"]
@@ -28,6 +28,8 @@ sha2 = "0.10"
 base64 = "0.22"
 png = "0.17"
 thiserror = "2.0"
+
+[target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
   "Win32_Foundation",
   "Win32_Security",

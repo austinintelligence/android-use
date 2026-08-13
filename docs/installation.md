@@ -1,86 +1,104 @@
-# Install and connect android-use
+# Installation
 
-This page is the practical first-run guide. If you are only trying to understand the project, start with the [root README](../README.md).
+## Skill installation
 
-## 1. Install the skill
-
-Install the Codex skill from the public repository:
-
-```powershell
+```sh
 npx skills add austinintelligence/android-use --skill android-use -g -a codex -y
 ```
 
-The skill contains the short operational instructions, the generated protocol contract, and the references an agent needs. It does not contain private device state, release binaries, or signing material.
+The skill payload is `skills/android-use`. It contains the short operational `SKILL.md`, generated protocol contract, `agents/openai.yaml`, and directly linked references. It intentionally does not contain release binaries, private state, or signing material.
 
-## 2. Install the Windows host
+## Host installer
 
-When the npm package is available for the release you want:
-
-```powershell
-npx --yes android-use@latest install --agent codex
-npx --yes android-use@latest doctor --json
+```sh
+npx --yes android-use@latest setup --agent auto --wait
+npx --yes android-use@1.0.0 doctor --json
 ```
 
-The installer downloads a published HTTPS release manifest, checks the asset size and SHA-256 digest, stages the files, and activates them atomically. Use `update` for a newer verified release, `rollback` for the last verified version, and `uninstall` to remove the host state.
+These commands require the matching version to be published to npm. Before
+publication, use the GitHub skill or run `packages/installer/cli.mjs` from a
+checkout; the installer will not silently fall back from an unavailable npm
+package to an unverified source.
 
-Until the package is published, use the GitHub skill source and the release assets managed by the repository owner. Do not treat an npm command as proof that a package is already available.
-
-## 3. Connect Android
-
-On the device, enable USB debugging or Wireless debugging and authorize the computer. Then discover and enroll the exact endpoint:
+`setup` detects Windows, macOS, or Linux and x64/ARM64, selects that exact
+asset from an Ed25519-signed release manifest, verifies its pinned signing key,
+makes Unix binaries executable, installs a managed PATH entry,
+keeps official platform-tools under the AU root when Google publishes a
+compatible archive, installs the signed helper after ADB authorization, and
+resumes the Rust setup journal. It is idempotent. Android-required settings
+such as Accessibility and notification access still require the user to
+approve them on the device:
 
 ```powershell
-au d
-au u SERIAL_OR_ENDPOINT
-au st
+au setup --wait
+au ready --json
+au doctor --repair --json
 ```
 
-`au u` records the endpoint's reported `ro.serialno`. Later USB, Wi-Fi, and mDNS candidates are accepted only when they identify the same physical device.
+Use `install --with-helper` when you want to stage an APK without installing it. `--install-helper` installs the staged APK using the active enrollment. Use `update` for a new release, `rollback` for the last verified version, `uninstall` to remove owned host state, and `uninstall --purge --yes` only when intentionally removing versioned binaries and the installed skill. Modified skill files are preserved rather than silently deleted.
 
-## 4. Add the optional Android helper
+The installer accepts an explicit manifest with `--manifest PATH` for
+offline/release tests. Test-only OS/CPU overrides are honored only with that
+local manifest, never for network installs. Network manifests require a
+detached Ed25519 signature verified by the public key embedded in the package;
+each public asset must use HTTPS and carry a SHA-256 plus byte count. Downloads
+are streamed with a size bound, staged, hashed, and activated only after
+verification. Activation uses a transaction journal and restores the entire
+prior install after interruption rather than leaving a split host/helper state.
 
-The helper is needed for capabilities that Android does not expose through ordinary ADB alone:
+Default roots are `%LOCALAPPDATA%\Codex\android-use` on Windows,
+`~/Library/Application Support/android-use` on macOS, and
+`${XDG_DATA_HOME:-~/.local/share}/android-use` on Linux. `AU_INSTALL_ROOT` and
+`AU_STATE_ROOT` are explicit overrides. macOS/Linux link the managed binary
+from `~/.local/bin`; setup adds one marked PATH line to `.zprofile` or
+`.profile` and never overwrites a non-owned link.
 
-- accessibility-based semantic UI actions;
-- camera and microphone capture;
-- notification access;
-- mock-location testing.
+Official platform-tools archives are managed on Windows x64, macOS universal,
+and Linux x64. Windows ARM64 and Linux ARM64 use an existing compatible `adb`
+from `ANDROID_SDK_ROOT`, `ANDROID_HOME`, a standard SDK location, or PATH.
 
-Build it from the repository when needed:
+## Runtime-free packages
+
+Tagged releases are prepared with per-user Windows x64/ARM64 MSI installers,
+portable Windows ZIPs, macOS Intel/Apple Silicon tarballs, Linux x64/ARM64
+tarballs, Debian packages, RPM packages, a Homebrew-ready formula, and a
+Winget-ready three-file manifest. The portable archives and OS packages contain
+the native host, the signed helper APK, license/notices, and a digest manifest;
+they do not bundle Google platform-tools. MSI install/uninstall and user-PATH
+ownership are release-gated. The NPX entrypoint remains the full resumable
+bootstrapper when managed platform-tools and agent-skill installation are
+desired.
+
+## Helper
+
+Build the helper with:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-helper.ps1 -Release
-au app install PATH_TO_APK
 ```
 
-Grant only the capabilities required for the current task. The helper does not open its own network service; it communicates through the authenticated ADB-forwarded path owned by `au`.
+The first build creates a persistent machine-local signing key under `%LOCALAPPDATA%\Codex\android-use\keys`, outside the checkout. Install the APK with `au app install PATH_TO_APK`, then grant only the capabilities required for the current task: Accessibility for semantic UI; camera/microphone runtime permissions for media; notification access for notifications; and mock-location authorization for location tests.
 
-## 5. Verify the first session
+## ADB setup
 
-```powershell
-au ui snap --compact --frontier
-au ui find "text~Allow,clickable=true#0"
+Enable USB debugging or Wireless debugging on the Android device, authorize the host, then:
+
+```sh
+au d
+au u SERIAL_OR_ENDPOINT
 ```
 
-If the helper is not installed, basic coordinate control and read-only ADB commands can still be used.
+The public project does not assume a particular device. Wi-Fi/mDNS is accepted only after the endpoint reports the same hardware serial as the enrolled endpoint.
 
-## Updating and uninstalling
+## Agent contract
 
-Use the installer commands for lifecycle operations:
+The default agent surface is the one canonical contract shared by Codex, MCP-compatible clients, and generic JSONL agents:
 
-```text
-install | update | doctor | rollback | uninstall | print-path | version
+```sh
+au serve --mcp
+au serve --jsonl
+au schema --json
+au agent configure auto --json
 ```
 
-`uninstall --purge --yes` removes versioned binaries and the installed skill. Use it only when you intentionally want to remove those files. Modified skill files are preserved rather than silently deleted.
-
-## Common first-run problems
-
-- **No device appears:** confirm debugging is enabled, the authorization prompt was accepted, and the device is visible to ADB.
-- **The endpoint changed:** run discovery again and enroll the endpoint only after checking the reported hardware identity.
-- **Semantic actions fail:** install the helper and grant Android Accessibility access.
-- **Media or notification features fail:** check the specific Android permission and whether the OEM permits that capability in the background.
-- **A Wi-Fi endpoint is slow:** use USB when possible. Identity-safe failover does not guarantee identical latency.
-
-For the security model and release verification, see [`security.md`](security.md) and [`supply-chain.md`](supply-chain.md).
-
+The contract is `android.status`, `android.observe`, `android.execute`, `android.artifact`, and `android.recipe`. The compatibility CLI, tape protocol, raw ADB, and raw shell remain available for explicit local use but are not part of the safe contract. See [`docs/agent-contract.md`](agent-contract.md).

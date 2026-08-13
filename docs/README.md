@@ -19,4 +19,3 @@ This directory contains the deeper material behind the short root README. Choose
 - [`security.md`](security.md) — threat boundaries and safe reporting.
 
 The root [`README.md`](../README.md) is the best starting point for a first-time visitor. The files here intentionally stay more precise and implementation-oriented.
-

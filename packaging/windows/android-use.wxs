@@ -1,0 +1,41 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+      ProductCode="*"
+      UpgradeCode="{9C93F5EF-CBBF-49DD-A7F1-87075ECE65A7}"
+      Name="Android Use"
+      Manufacturer="Android Use"
+      Version="$(var.ProductVersion)"
+      Scope="perUser">
+    <MajorUpgrade DowngradeErrorMessage="A newer Android Use version is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <Property Id="ADD_TO_PATH" Secure="yes" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="INSTALLFOLDER" Name="AndroidUse">
+        <Component Id="Host" Guid="*">
+          <File Id="AuExe" Source="$(var.PayloadRoot)\au.exe" KeyPath="yes" />
+        </Component>
+        <Component Id="Bridge" Guid="*">
+          <File Id="BridgeApk" Source="$(var.PayloadRoot)\dev.codex.aubridge.apk" KeyPath="yes" />
+        </Component>
+        <Component Id="LicenseNotice" Guid="*">
+          <File Id="License" Source="$(var.PayloadRoot)\LICENSE" KeyPath="yes" />
+        </Component>
+        <Component Id="ThirdPartyNotice" Guid="*">
+          <File Id="ThirdPartyNotices" Source="$(var.PayloadRoot)\THIRD_PARTY_NOTICES.md" KeyPath="yes" />
+        </Component>
+        <Component Id="UserPath" Guid="{785EACCD-6A9C-4863-8058-8D2981516DE2}" Condition="ADD_TO_PATH">
+          <Environment Id="UserPathEntry" Name="PATH" Action="set" Part="last" Value="[INSTALLFOLDER]" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Complete" Title="Android Use" Level="1">
+      <ComponentRef Id="Host" />
+      <ComponentRef Id="Bridge" />
+      <ComponentRef Id="LicenseNotice" />
+      <ComponentRef Id="ThirdPartyNotice" />
+      <ComponentRef Id="UserPath" />
+    </Feature>
+  </Package>
+</Wix>

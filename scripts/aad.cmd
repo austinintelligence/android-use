@@ -1,6 +1,6 @@
 @echo off
 setlocal
-set "AU=%~dp0..\crates\android-use\target\release\au.exe"
+set "AU=%~dp0..\target\release\au.exe"
 if not exist "%AU%" (
   echo err E_BUILD au.exe is not built; run scripts\build-au.cmd
   exit /b 2

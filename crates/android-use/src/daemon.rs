@@ -22,8 +22,8 @@ use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, FILE_ATTRIBUTE_NORMAL, OPEN_EXISTING, PIPE_ACCESS_DUPLEX,
 };
 use windows_sys::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeServerProcessId, PIPE_READMODE_BYTE,
-    PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    ConnectNamedPipe, CreateNamedPipeW, GetNamedPipeServerProcessId, WaitNamedPipeW,
+    PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
 use windows_sys::Win32::System::Threading::{
     CreateMutexW, CreateProcessW, GetCurrentProcess, OpenProcess, OpenProcessToken,
@@ -41,6 +41,8 @@ use crate::{trace, PROTOCOL_VERSION, VERSION};
 
 const PIPE_NAME: &str = r"\\.\pipe\codex-android-use-v1";
 const MUTEX_NAME: &str = r"Local\codex-android-use-v1-daemon";
+const PIPE_CONNECT_RETRY: Duration = Duration::from_secs(8);
+const PIPE_WAIT_SLICE_MS: u32 = 100;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DaemonState {
@@ -96,11 +98,25 @@ pub fn ensure_started(paths: &AppPaths) -> Result<()> {
     if hello().is_ok() {
         return Ok(());
     }
+    // A single daemon instance intentionally serializes command execution so
+    // its helper/shell/CDP pools remain owner-thread local. A second CLI call
+    // can therefore observe ERROR_PIPE_BUSY while the first call is still
+    // running. If the recorded process is alive, wait for that owner instead
+    // of spawning a child that can only lose the mutex and add more noise.
+    if let Ok(state) = read_state(paths) {
+        if process_is_alive(state.pid) {
+            return wait_for_handshake(paths, PIPE_CONNECT_RETRY);
+        }
+    }
     let executable =
         env::current_exe().map_err(|error| AuError::code("E_DAEMON", error.to_string()))?;
     spawn_daemon(&executable)?;
+    wait_for_handshake(paths, PIPE_CONNECT_RETRY)
+}
+
+fn wait_for_handshake(paths: &AppPaths, timeout: Duration) -> Result<()> {
     let started = Instant::now();
-    while started.elapsed() < Duration::from_millis(900) {
+    while started.elapsed() < timeout {
         if hello().is_ok() {
             return Ok(());
         }
@@ -434,8 +450,9 @@ fn response_to_value(response: Response) -> Result<Value> {
     let error = response.error.unwrap_or(crate::protocol::ProtocolError {
         code: "E_PROTOCOL".into(),
         message: "daemon response omitted error".into(),
+        details: None,
     });
-    Err(AuError::protocol(error.code, error.message))
+    Err(AuError::protocol(error.code, error.message).with_optional_details(error.details))
 }
 
 fn send(request: Request) -> Result<Response> {
@@ -562,6 +579,13 @@ fn open_client_pipe_retry() -> Result<File> {
     loop {
         match open_client_pipe() {
             Ok(pipe) => return Ok(pipe),
+            Err(error) if is_pipe_busy(&error) && started.elapsed() < PIPE_CONNECT_RETRY => {
+                // Waiting on the named pipe avoids turning normal daemon
+                // serialization into a misleading hard failure. The wait is
+                // bounded and remains safe when the daemon is not running.
+                let _ = wait_for_pipe(PIPE_WAIT_SLICE_MS);
+                let _ = error;
+            }
             Err(error) if started.elapsed() < Duration::from_millis(500) => {
                 thread::sleep(Duration::from_millis(5));
                 let _ = error;
@@ -569,6 +593,15 @@ fn open_client_pipe_retry() -> Result<File> {
             Err(error) => return Err(error),
         }
     }
+}
+
+fn is_pipe_busy(error: &AuError) -> bool {
+    error.compact_message().contains("Windows error 231")
+}
+
+fn wait_for_pipe(timeout_ms: u32) -> bool {
+    let name = wide(&pipe_name());
+    unsafe { WaitNamedPipeW(name.as_ptr(), timeout_ms) != 0 }
 }
 
 fn open_client_pipe_for_pid(expected_pid: u32) -> Result<File> {
@@ -649,10 +682,12 @@ mod tests {
             error: Some(ProtocolError {
                 code: "E_STALE".into(),
                 message: "stale node handle".into(),
+                details: Some(serde_json::json!({"next":"observe"})),
             }),
         };
         let error = response_to_value(response).expect_err("action error");
         assert_eq!(error.kind(), "E_STALE");
         assert_eq!(error.compact_message(), "stale node handle");
+        assert_eq!(error.details().expect("details")["next"], "observe");
     }
 }

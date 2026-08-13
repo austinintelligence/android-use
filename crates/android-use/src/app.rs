@@ -97,7 +97,27 @@ fn start(adb: &Adb, serial: &str, args: &[String]) -> Result<Value> {
         ]
     };
     let result = adb.device(serial, &command)?;
-    let proof = text(&result.stdout);
+    let mut proof = text(&result.stdout);
+    let mut strategy = "am";
+    if launch_rejected(&proof) && args.get(1).is_none() {
+        // Some Android/OEM builds reject the package-constrained implicit
+        // launcher intent while the package is still stopped after install.
+        // `monkey -p` asks PackageManager for the same launchable activity and
+        // is a bounded, package-scoped fallback; explicit activity launches
+        // keep their original strict error behavior.
+        let fallback = adb.device(
+            serial,
+            &[
+                "shell".into(),
+                "monkey".into(),
+                "-p".into(),
+                package.clone(),
+                "1".into(),
+            ],
+        )?;
+        proof = text(&fallback.stdout);
+        strategy = "monkey";
+    }
     if launch_rejected(&proof) {
         return Err(AuError::code(
             "E_APP",
@@ -107,7 +127,7 @@ fn start(adb: &Adb, serial: &str, args: &[String]) -> Result<Value> {
             ),
         ));
     }
-    Ok(json!({"package":package,"started":true,"proof":limited(proof, 400)}))
+    Ok(json!({"package":package,"started":true,"strategy":strategy,"proof":limited(proof, 400)}))
 }
 
 fn force_stop(adb: &Adb, serial: &str, package: &str) -> Result<Value> {

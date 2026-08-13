@@ -1,37 +1,116 @@
 name: Release
 
 on:
+  push:
+    tags:
+      - 'v*.*.*'
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Semver tag, for example 1.0.0'
-        required: true
-        type: string
       prerelease:
-        description: 'Mark the GitHub release as prerelease'
+        description: 'Mark the already-selected tag as a prerelease'
         required: true
         default: true
         type: boolean
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  contents: read
 
 jobs:
-  release:
-    runs-on: windows-latest
+  metadata:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+      source_date_epoch: ${{ steps.release.outputs.source_date_epoch }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+      - id: release
+        name: Bind release metadata to the selected immutable tag
+        shell: bash
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          TAG: ${{ github.ref_name }}
+          EVENT_SHA: ${{ github.sha }}
+          PRERELEASE_INPUT: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          [[ "$REF_TYPE" == "tag" ]] || { echo 'Release must run from a pre-created tag.' >&2; exit 1; }
+          [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]] || { echo 'Release tag must be strict vMAJOR.MINOR.PATCH[-PRERELEASE].' >&2; exit 1; }
+          version="${TAG#v}"
+          package_version="$(node -p "require('./packages/installer/package.json').version")"
+          [[ "$version" == "$package_version" ]] || { echo 'Tag and installer package versions differ.' >&2; exit 1; }
+          git fetch --force --tags origin
+          tag_commit="$(git rev-parse "refs/tags/$TAG^{commit}")"
+          event_commit="$(git rev-parse "$EVENT_SHA^{commit}")"
+          head_commit="$(git rev-parse HEAD)"
+          [[ "$tag_commit" == "$event_commit" && "$tag_commit" == "$head_commit" ]] || { echo 'Selected tag, event SHA, and checkout are not the same commit.' >&2; exit 1; }
+          prerelease=false
+          if [[ "$PRERELEASE_INPUT" == "true" || "$version" == *-* ]]; then prerelease=true; fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "source_date_epoch=$(git show -s --format=%ct "$tag_commit")" >> "$GITHUB_OUTPUT"
+
+  host:
+    needs: metadata
+    name: host-${{ matrix.asset }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            asset: au-windows-x64.exe
+            source: target/release/au.exe
+          - runner: windows-11-arm
+            asset: au-windows-arm64.exe
+            source: target/release/au.exe
+          - runner: macos-15-intel
+            asset: au-macos-x64
+            source: target/release/au
+          - runner: macos-15
+            asset: au-macos-arm64
+            source: target/release/au
+          - runner: ubuntu-24.04
+            asset: au-linux-x64
+            source: target/release/au
+          - runner: ubuntu-24.04-arm
+            asset: au-linux-arm64
+            source: target/release/au
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Pin Rust toolchain
+        shell: bash
+        run: rustup toolchain install 1.94.0 --profile minimal && rustup default 1.94.0
+      - name: Test and build native host
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo test --workspace --all-targets
+          cargo build --workspace --release
+      - name: Stage named host asset
+        shell: bash
+        run: mkdir -p release-host && cp '${{ matrix.source }}' 'release-host/${{ matrix.asset }}'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-${{ matrix.asset }}
+          path: release-host/${{ matrix.asset }}
+          if-no-files-found: error
+
+  helper:
+    needs: metadata
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
         with:
           distribution: temurin
           java-version: '17'
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: '24.14.0'
-          cache: npm
-      - run: npm ci
       - name: Require owner-managed helper signing material
         shell: powershell
         env:
@@ -45,51 +124,212 @@ jobs:
           $key = Join-Path $state 'keys\aubridge.keystore'
           [IO.File]::WriteAllBytes($key, [Convert]::FromBase64String($env:AUBRIDGE_KEYSTORE_B64))
           @("storeFile=$key", "storePassword=$env:AUBRIDGE_STORE_PASSWORD", 'keyAlias=aubridge', "keyPassword=$env:AUBRIDGE_KEY_PASSWORD") | Set-Content -LiteralPath (Join-Path $state 'signing.properties') -Encoding Ascii
-      - name: Build host
-        run: cargo build --workspace --release
-      - name: Build signed helper
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-helper.ps1 -Release
-      - name: Prepare release assets and manifest
+      - name: Build and validate signed helper
+        shell: powershell
+        run: |
+          $expectedSigner = (Get-Content -LiteralPath android/aubridge/release-signer.sha256 -Raw).Trim()
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-helper.ps1 -Release -ExpectedReleaseSignerSha256 $expectedSigner
+      - name: Stage helper
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force release-helper | Out-Null
+          Copy-Item android/aubridge/app/build/outputs/apk/release/app-release.apk release-helper/dev.codex.aubridge.apk
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-helper
+          path: release-helper/dev.codex.aubridge.apk
+          if-no-files-found: error
+
+  packages:
+    needs: [metadata, host, helper]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.14.0'
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: release-*
+          path: package-inputs
+          merge-multiple: true
+      - name: Install native packaging tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends rpm
+          dpkg-deb --version
+          rpmbuild --version
+      - name: Build and inspect portable, Debian, RPM, and Homebrew artifacts
+        shell: bash
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+          SOURCE_DATE_EPOCH: ${{ needs.metadata.outputs.source_date_epoch }}
+        run: |
+          set -euo pipefail
+          node scripts/package-release.mjs --version "$VERSION" --assets package-inputs --output release-packages --repository . --github-repository "$GITHUB_REPOSITORY" --source-date-epoch "$SOURCE_DATE_EPOCH"
+          tar -tzf "release-packages/android-use-$VERSION-linux-x64.tar.gz" | sort
+          unzip -t "release-packages/android-use-$VERSION-windows-x64.zip"
+          dpkg-deb --contents "release-packages/android-use_${VERSION}-1_amd64.deb"
+          rpm -qpl "release-packages/android-use-${VERSION}-1.x86_64.rpm"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-portable-native-packages
+          path: release-packages/*
+          if-no-files-found: error
+
+  msi:
+    needs: [metadata, host, helper]
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            host_asset: au-windows-x64.exe
+            smoke: true
+          - arch: arm64
+            host_asset: au-windows-arm64.exe
+            smoke: false
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: release-${{ matrix.host_asset }}
+          path: host
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: release-helper
+          path: helper
+      - name: Stage MSI payload and install pinned WiX v4
         shell: powershell
         env:
-          GH_TOKEN: ${{ github.token }}
+          HOST_ASSET: ${{ matrix.host_asset }}
         run: |
-          $version = '${{ inputs.version }}'
-          $packageVersion = (Get-Content packages/installer/package.json -Raw | ConvertFrom-Json).version
-          if ($version -ne $packageVersion) { throw "Release input $version must match installer package version $packageVersion" }
-          $tag = "v$version"
-          $dir = Join-Path $PWD 'release\assets'
-          New-Item -ItemType Directory -Force -Path $dir | Out-Null
-          Copy-Item crates/android-use/target/release/au.exe (Join-Path $dir 'au-windows-x64.exe') -Force
-          Copy-Item android/aubridge/app/build/outputs/apk/release/app-release.apk (Join-Path $dir 'dev.codex.aubridge.apk') -Force
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-release-manifest.ps1 -Version $version -ReleaseBaseUrl "https://github.com/${{ github.repository }}/releases/download/$tag" -HostBinary (Join-Path $dir 'au-windows-x64.exe') -HelperApk (Join-Path $dir 'dev.codex.aubridge.apk') -Output (Join-Path $dir 'release-manifest.json')
-          node scripts/generate-sbom.mjs $dir
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-checksums.ps1 -Directory $dir -Output (Join-Path $dir 'checksums.txt')
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-public.ps1
-      - name: Attest host and helper artifacts
+          $payload = Join-Path $env:RUNNER_TEMP 'android-use-msi-payload'
+          $tools = Join-Path $env:RUNNER_TEMP 'wix'
+          New-Item -ItemType Directory -Force -Path $payload,$tools | Out-Null
+          Copy-Item (Join-Path 'host' $env:HOST_ASSET) (Join-Path $payload 'au.exe')
+          Copy-Item 'helper\dev.codex.aubridge.apk' $payload
+          Copy-Item 'LICENSE','THIRD_PARTY_NOTICES.md' $payload
+          dotnet tool install --tool-path $tools wix --version 4.0.6
+          $actual = & (Join-Path $tools 'wix.exe') --version
+          if ($actual -notmatch '^4\.0\.6') { throw "Unexpected WiX version: $actual" }
+      - name: Build MSI
+        shell: powershell
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+          MSI_ARCH: ${{ matrix.arch }}
+        run: |
+          $productVersion = ($env:VERSION -split '-', 2)[0]
+          $payload = Join-Path $env:RUNNER_TEMP 'android-use-msi-payload'
+          $output = Join-Path $env:RUNNER_TEMP "android-use-$($env:VERSION)-windows-$($env:MSI_ARCH).msi"
+          & (Join-Path $env:RUNNER_TEMP 'wix\wix.exe') build -arch $env:MSI_ARCH -d "ProductVersion=$productVersion" -d "PayloadRoot=$payload" -o $output packaging/windows/android-use.wxs
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $output)) { throw 'WiX MSI build failed.' }
+      - name: Install and uninstall x64 MSI
+        if: matrix.smoke
+        shell: powershell
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          $msi = Join-Path $env:RUNNER_TEMP "android-use-$($env:VERSION)-windows-x64.msi"
+          $installDir = Join-Path $env:LOCALAPPDATA 'AndroidUse'
+          $process = Start-Process msiexec.exe -Wait -PassThru -WindowStyle Hidden -ArgumentList @('/i', $msi, '/qn', '/norestart', 'ADD_TO_PATH=1', '/L*V', (Join-Path $env:RUNNER_TEMP 'msi-install.log'))
+          if ($process.ExitCode -notin @(0,3010)) { throw "MSI install failed: $($process.ExitCode)" }
+          if (-not (Test-Path (Join-Path $installDir 'au.exe')) -or -not (Test-Path (Join-Path $installDir 'dev.codex.aubridge.apk'))) { throw 'MSI payload was not installed.' }
+          $process = Start-Process msiexec.exe -Wait -PassThru -WindowStyle Hidden -ArgumentList @('/x', $msi, '/qn', '/norestart', '/L*V', (Join-Path $env:RUNNER_TEMP 'msi-uninstall.log'))
+          if ($process.ExitCode -notin @(0,3010)) { throw "MSI uninstall failed: $($process.ExitCode)" }
+          if (Test-Path -LiteralPath $installDir) { throw 'MSI install directory remained after uninstall.' }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-msi-${{ matrix.arch }}
+          path: ${{ runner.temp }}/android-use-${{ needs.metadata.outputs.version }}-windows-${{ matrix.arch }}.msi
+          if-no-files-found: error
+
+  publish:
+    needs: [metadata, host, helper, packages, msi]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.14.0'
+          cache: npm
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: release-*
+          path: release/assets
+          merge-multiple: true
+      - name: Validate version and package
+        shell: bash
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+          npm ci
+          test "$VERSION" = "$(node -p "require('./packages/installer/package.json').version")"
+          npm test --workspace packages/installer
+          npm run lint --workspace packages/installer
+          npm run test:packages --workspace packages/installer
+          npm run test:tarball --workspace packages/installer
+          npm run docs:check
+          npm pack --workspace packages/installer --dry-run
+      - name: Build manifest, SBOMs, and checksums
+        shell: bash
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+          REPOSITORY: ${{ github.repository }}
+          RELEASE_MANIFEST_PRIVATE_KEY_B64: ${{ secrets.RELEASE_MANIFEST_PRIVATE_KEY_B64 }}
+        run: |
+          set -euo pipefail
+          [[ -n "$RELEASE_MANIFEST_PRIVATE_KEY_B64" ]] || { echo 'Owner action required: configure RELEASE_MANIFEST_PRIVATE_KEY_B64.' >&2; exit 1; }
+          signing_key="$RUNNER_TEMP/release-manifest-ed25519.pem"
+          trap 'rm -f "$signing_key"' EXIT
+          printf '%s' "$RELEASE_MANIFEST_PRIVATE_KEY_B64" | base64 --decode > "$signing_key"
+          chmod 600 "$signing_key"
+          base="https://github.com/$REPOSITORY/releases/download/$TAG"
+          helper_signer="$(tr -d '[:space:]' < android/aubridge/release-signer.sha256)"
+          node scripts/generate-package-metadata.mjs --version "$VERSION" --assets release/assets --output-directory release/assets/winget --repository "$REPOSITORY"
+          mv release/assets/winget/*.yaml release/assets/
+          rmdir release/assets/winget
+          node scripts/build-release-manifest.mjs --version "$VERSION" --base-url "$base" --directory release/assets --output release/assets/release-manifest.json --signature-output release/assets/release-manifest.json.sig --signing-key "$signing_key" --public-key packages/installer/release-public-key.pem --helper-signer "$helper_signer"
+          node scripts/generate-sbom.mjs release/assets
+          (cd release/assets && find . -maxdepth 1 -type f ! -name checksums.txt -printf '%f\n' | sort | xargs sha256sum) > release/assets/checksums.txt
+          pwsh -NoProfile -File scripts/generate-skill.ps1 -Check
+          pwsh -NoProfile -File scripts/sync-public-skill.ps1 -Check
+          pwsh -NoProfile -File scripts/check-contract-generated.ps1
+          pwsh -NoProfile -File scripts/check-public.ps1
+      - name: Attest all published artifacts
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d
         with:
           subject-path: 'release/assets/**'
-      - name: Publish immutable-ready draft release
-        shell: powershell
+      - name: Publish immutable GitHub release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+          PRERELEASE: ${{ needs.metadata.outputs.prerelease }}
         run: |
-          $version = '${{ inputs.version }}'
-          $tag = "v$version"
-          $dir = Join-Path $PWD 'release\assets'
-          gh release create $tag --draft --title "android-use $tag" --notes-file CHANGELOG.md $(if ('${{ inputs.prerelease }}' -eq 'true') { '--prerelease' })
-          gh release upload $tag (Get-ChildItem -LiteralPath $dir -File | Select-Object -ExpandProperty FullName) --clobber
-          gh release edit $tag --draft=false
+          set -euo pipefail
+          args=("$TAG" --verify-tag --target "$GITHUB_SHA" --draft --title "android-use $TAG" --notes-file CHANGELOG.md)
+          if [[ "$PRERELEASE" == "true" ]]; then args+=(--prerelease); fi
+          gh release create "${args[@]}"
+          gh release upload "$TAG" release/assets/*
+          gh release edit "$TAG" --draft=false
       - name: Publish installer with provenance
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        shell: powershell
+        shell: bash
         run: |
-          # Trusted publishing uses GitHub OIDC when configured on npm. The
-          # token branch remains available for owners who manage NPM_TOKEN.
-          if (-not [string]::IsNullOrWhiteSpace($env:NPM_TOKEN)) {
-            npm config set //registry.npmjs.org/:_authToken=$env:NPM_TOKEN
-          }
+          set -euo pipefail
+          [[ -n "$NPM_TOKEN" ]] || { echo 'Owner action required: configure NPM_TOKEN.' >&2; exit 1; }
+          npm config set //registry.npmjs.org/:_authToken="$NPM_TOKEN"
           npm publish packages/installer --access public --provenance

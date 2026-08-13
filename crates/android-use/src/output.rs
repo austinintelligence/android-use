@@ -60,6 +60,8 @@ struct JsonError<'a> {
     ok: bool,
     code: &'a str,
     message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    details: Option<&'a Value>,
 }
 
 pub fn emit_success(mode: OutputMode, success: Success) {
@@ -90,7 +92,7 @@ fn format_success(mode: OutputMode, success: Success) -> String {
             }
         }
         serde_json::to_string(&Value::Object(value))
-            .unwrap_or_else(|_| wire_error("E_JSON", "serialization failed", 0))
+            .unwrap_or_else(|_| wire_error("E_JSON", "serialization failed", 0, None))
     } else if mode.compact {
         let mut value = serde_json::Map::new();
         value.insert("o".into(), json!(1));
@@ -110,7 +112,7 @@ fn format_success(mode: OutputMode, success: Success) -> String {
             }
         }
         serde_json::to_string(&Value::Object(value))
-            .unwrap_or_else(|_| wire_error("E_JSON", "serialization failed", 0))
+            .unwrap_or_else(|_| wire_error("E_JSON", "serialization failed", 0, None))
     } else if mode.json {
         let value = match success {
             Success::Ok => json!({"ok":true}),
@@ -142,29 +144,42 @@ pub fn emit_error(mode: OutputMode, error: &AuError) {
         "output.error",
         json!({"e":error.kind(),"json":mode.json,"compact":mode.compact,"wire":mode.wire}),
     );
+    println!("{}", format_error(mode, error));
+}
+
+fn format_error(mode: OutputMode, error: &AuError) -> String {
     let message = bounded_message(error.compact_message());
-    if mode.wire {
-        println!("{}", wire_error(error.kind(), &message, message.len()));
-        return;
-    }
-    if mode.compact {
-        println!("{}", json!({"o":0,"e":error.kind(),"m":message}));
-        return;
-    }
-    if mode.json {
+    let details = error.details();
+    let line = if mode.wire {
+        wire_error(error.kind(), &message, message.len(), details)
+    } else if mode.compact {
+        let mut value = serde_json::Map::new();
+        value.insert("o".into(), json!(0));
+        value.insert("e".into(), json!(error.kind()));
+        value.insert("m".into(), json!(message));
+        if let Some(details) = details {
+            value.insert("d".into(), details.clone());
+        }
+        serde_json::to_string(&Value::Object(value))
+            .unwrap_or_else(|_| wire_error("E_JSON", "serialization failed", 0, None))
+    } else if mode.json {
         let value = JsonError {
             ok: false,
             code: error.kind(),
             message,
+            details,
         };
-        println!(
-            "{}",
-            serde_json::to_string(&value).unwrap_or_else(|_| {
-                "{\"ok\":false,\"code\":\"E_JSON\",\"message\":\"serialization failed\"}".into()
-            })
-        );
+        serde_json::to_string(&value).unwrap_or_else(|_| {
+            "{\"ok\":false,\"code\":\"E_JSON\",\"message\":\"serialization failed\"}".into()
+        })
     } else {
-        println!("err {} {}", error.kind(), message);
+        format!("err {} {}", error.kind(), message)
+    };
+
+    if line.len() <= MAX_OUTPUT_BYTES || !mode.json && !mode.wire {
+        line
+    } else {
+        wire_or_json_overflow(mode, line.len())
     }
 }
 
@@ -172,8 +187,17 @@ fn bounded_message(message: String) -> String {
     message.chars().take(512).collect()
 }
 
-fn wire_error(code: &str, message: &str, bytes: usize) -> String {
-    serde_json::to_string(&json!({"v":1,"o":0,"e":code,"m":message,"b":bytes}))
+fn wire_error(code: &str, message: &str, bytes: usize, details: Option<&Value>) -> String {
+    let mut value = serde_json::Map::new();
+    value.insert("v".into(), json!(1));
+    value.insert("o".into(), json!(0));
+    value.insert("e".into(), json!(code));
+    value.insert("m".into(), json!(message));
+    value.insert("b".into(), json!(bytes));
+    if let Some(details) = details {
+        value.insert("d".into(), details.clone());
+    }
+    serde_json::to_string(&Value::Object(value))
         .unwrap_or_else(|_| "{\"v\":1,\"o\":0,\"e\":\"E_JSON\"}".into())
 }
 
@@ -183,6 +207,7 @@ fn wire_or_json_overflow(mode: OutputMode, bytes: usize) -> String {
             "E_OUTPUT_LIMIT",
             "structured output exceeds transcript bound; use --out",
             bytes,
+            None,
         )
     } else if mode.compact {
         serde_json::to_string(&json!({
@@ -205,7 +230,8 @@ fn wire_or_json_overflow(mode: OutputMode, bytes: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_success, OutputMode, Success};
+    use super::{format_error, format_success, OutputMode, Success};
+    use crate::error::AuError;
     use serde_json::json;
 
     #[test]
@@ -245,5 +271,45 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&line).expect("overflow proof");
         assert_eq!(parsed["e"], "E_OUTPUT_LIMIT");
         assert!(line.len() < 512);
+    }
+
+    #[test]
+    fn structured_errors_preserve_recovery_details_in_compact_and_wire_modes() {
+        let error = AuError::code("E_PARTIAL", "step failed")
+            .with_details(json!({"failed_index":2,"next":"observe"}));
+        let compact: serde_json::Value = serde_json::from_str(&format_error(
+            OutputMode {
+                compact: true,
+                ..OutputMode::default()
+            },
+            &error,
+        ))
+        .expect("compact error");
+        assert_eq!(compact["d"]["failed_index"], 2);
+
+        let wire: serde_json::Value = serde_json::from_str(&format_error(
+            OutputMode {
+                wire: true,
+                ..OutputMode::default()
+            },
+            &error,
+        ))
+        .expect("wire error");
+        assert_eq!(wire["d"]["next"], "observe");
+    }
+
+    #[test]
+    fn json_errors_preserve_recovery_details_without_forcing_expanded_output() {
+        let error = AuError::code("E_UNKNOWN_COMMIT", "observe first")
+            .with_details(json!({"operation_id":"op-1","next":"observe"}));
+        let value: serde_json::Value = serde_json::from_str(&format_error(
+            OutputMode {
+                json: true,
+                ..OutputMode::default()
+            },
+            &error,
+        ))
+        .expect("json error");
+        assert_eq!(value["details"]["operation_id"], "op-1");
     }
 }

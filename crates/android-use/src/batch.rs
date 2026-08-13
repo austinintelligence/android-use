@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use serde_json::{json, Value};
+
 use crate::adb::{fixed_shell_command, shell_quote};
 use crate::error::{AuError, Result};
 
@@ -22,6 +24,86 @@ pub enum Boundary {
     Semantic,
     Binary,
     Protocol,
+}
+
+#[derive(Clone, Debug)]
+pub struct SemanticRun {
+    pub consumed: usize,
+    pub mutations: usize,
+    pub payload: Value,
+}
+
+/// Fuse an adjacent, ordinary semantic run into the helper's bounded `ui.run`
+/// transaction. Explicit retries/repeats/conditions and cross-family actions
+/// retain their existing per-action semantics and therefore stop the run.
+pub fn compile_semantic_run(actions: &[BatchAction]) -> Option<SemanticRun> {
+    let mut steps = Vec::new();
+    let mut mutations = 0usize;
+    for action in actions.iter().take(32) {
+        if action.command != "ui" || action.repeat != 1 || action.retries != 0 {
+            break;
+        }
+        let op = action.args.first()?.as_str();
+        let id = format!("b{}", steps.len());
+        let mut step = json!({"id":id});
+        match op {
+            "tap" => {
+                step["op"] = json!("tap");
+                step["target"] = json!(action.args.get(1)?);
+                mutations += 1;
+            }
+            "set" => {
+                step["op"] = json!("text");
+                step["target"] = json!(action.args.get(1)?);
+                step["text"] = json!(action.args.get(2)?);
+                mutations += 1;
+            }
+            "scroll" => {
+                step["op"] = json!("scroll");
+                step["target"] = json!(action.args.get(1)?);
+                step["direction"] =
+                    json!(action.args.get(2).map(String::as_str).unwrap_or("forward"));
+                mutations += 1;
+            }
+            "find" => {
+                // The bounded device plan has no separate find opcode. A
+                // one-millisecond visibility wait preserves the immediate
+                // query semantics while keeping a common find->act sequence
+                // inside one authenticated helper frame.
+                step["op"] = json!("wait.visible");
+                step["selector"] = json!(action.args.get(1)?);
+                step["timeout_ms"] = json!(1);
+            }
+            "wait" | "assert" => {
+                step["op"] = json!(if op == "wait" {
+                    "wait.visible"
+                } else {
+                    "assert.visible"
+                });
+                step["selector"] = json!(action.args.get(1)?);
+                if let Some(timeout) = action.args.get(2) {
+                    step["timeout_ms"] = json!(timeout.parse::<u64>().ok()?);
+                }
+            }
+            "global" if action.args.get(1).map(String::as_str) == Some("back") => {
+                step["op"] = json!("back");
+                mutations += 1;
+            }
+            _ => break,
+        }
+        if mutations > 16 {
+            break;
+        }
+        steps.push(step);
+    }
+    if steps.len() < 2 {
+        return None;
+    }
+    Some(SemanticRun {
+        consumed: steps.len(),
+        mutations,
+        payload: json!({"operations":steps}),
+    })
 }
 
 /// Tokenize a bounded semicolon/newline program without assigning meaning to
@@ -645,7 +727,8 @@ pub fn tokenize(input: &str) -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        boundary, lower_shell, lower_shell_with_delay, parse, semantic_shorthand, Boundary,
+        boundary, compile_semantic_run, lower_shell, lower_shell_with_delay, parse,
+        semantic_shorthand, Boundary,
     };
 
     #[test]
@@ -801,5 +884,37 @@ mod tests {
         assert!(lowered.contains("KEYCODE_HOME") && lowered.contains("KEYCODE_BACK"));
         assert!(lowered.contains("&&"));
         assert!(!lowered.contains("; input keyevent"));
+    }
+
+    #[test]
+    fn adjacent_semantic_actions_fuse_into_one_bounded_run() {
+        let actions =
+            parse("ui set desc=Editor#0 hello; ui tap text=Save#0; ui assert text=Saved#0 2000")
+                .expect("batch");
+        let run = compile_semantic_run(&actions).expect("fused run");
+        assert_eq!(run.consumed, 3);
+        assert_eq!(run.mutations, 2);
+        assert_eq!(run.payload["operations"][0]["text"], "hello");
+        assert_eq!(run.payload["operations"][2]["timeout_ms"], 2000);
+        let validated = crate::plan::validate_payload(run.payload).expect("plan-compatible run");
+        assert_eq!(validated.payload["operations"][0]["op"], "text");
+        assert_eq!(validated.payload["operations"][1]["op"], "tap");
+        assert_eq!(validated.payload["operations"][2]["op"], "assert.visible");
+    }
+
+    #[test]
+    fn find_then_tap_fuses_into_a_valid_visibility_and_action_plan() {
+        let actions = parse("ui find text=Ready; ui tap text=Go").expect("batch");
+        let run = compile_semantic_run(&actions).expect("fused run");
+        let validated = crate::plan::validate_payload(run.payload).expect("plan-compatible run");
+        assert_eq!(validated.payload["operations"][0]["op"], "wait.visible");
+        assert_eq!(validated.payload["operations"][0]["timeout_ms"], 1);
+        assert_eq!(validated.payload["operations"][1]["op"], "tap");
+    }
+
+    #[test]
+    fn explicit_retry_stops_semantic_fusion() {
+        let actions = parse("ui find text=Ready; retry 1 ui wait text=Done 500").expect("batch");
+        assert!(compile_semantic_run(&actions).is_none());
     }
 }

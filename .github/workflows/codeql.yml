@@ -43,7 +43,7 @@ jobs:
       - name: Build Android helper for CodeQL
         if: matrix.language == 'java-kotlin'
         shell: powershell
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-helper.ps1 -Release
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-helper.ps1 -Release -BenchmarkFixture
       - uses: github/codeql-action/analyze@f205ea1c3313d32999d8d6a48b4f6530d4437b38
         with:
           category: /language:${{ matrix.language }}

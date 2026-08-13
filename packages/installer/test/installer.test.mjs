@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { access, cp, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -75,6 +75,47 @@ test("reports version without contacting the release endpoint", async () => {
   assert.deepEqual(JSON.parse(result.stdout), { ok: true, version: "1.0.0" });
 });
 
+test("selects a portable host asset and Unix executable name", async () => {
+  const f = await fixture();
+  try {
+    const raw = JSON.parse(await readFile(f.manifestPath, "utf8"));
+    raw.assets.host_linux_arm64 = raw.assets.host_windows_x64;
+    await writeFile(f.manifestPath, JSON.stringify(raw));
+    const result = await run([
+      "install", "--dry-run", "--manifest", f.manifestPath,
+      "--install-root", f.installRoot, "--json",
+    ], { AU_PLATFORM: "linux", AU_ARCH: "arm64", CODEX_HOME: f.codexHome });
+    assert.equal(result.code, 0, result.stdout + result.stderr);
+    const value = JSON.parse(result.stdout);
+    assert.equal(value.platform, "linux-arm64");
+    assert.equal(value.executable, join(f.installRoot, "bin", "au"));
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test("plans one-command setup without invoking an unstaged host", async () => {
+  const f = await fixture();
+  try {
+    const result = await run([
+      "setup", "--dry-run", "--manifest", f.manifestPath, "--agent", "auto",
+      "--install-root", f.installRoot, "--json",
+    ], { CODEX_HOME: f.codexHome });
+    assert.equal(result.code, 0, result.stdout + result.stderr);
+    const value = JSON.parse(result.stdout);
+    assert.equal(value.dry_run, true);
+    assert.equal(value.install_required, true);
+    assert.equal(value.helper_install_requested, true);
+    assert.equal(value.path_update, true);
+    assert.equal(value.executable, join(f.installRoot, "bin", "au.exe"));
+    assert.equal(value.helper, join(f.installRoot, "versions", "1.0.0", "dev.codex.aubridge.apk"));
+    assert.equal(value.skill, join(f.codexHome, "skills", "android-use"));
+    assert.deepEqual(await readdir(f.installRoot).catch(() => []), []);
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
 test("installs and removes a skill-only payload without touching the network", async () => {
   const f = await fixture();
   try {
@@ -138,6 +179,56 @@ test("rejects a local manifest supplied through the network override", async () 
   }
 });
 
+test("verifies a detached Ed25519 manifest before trusting its asset hashes", async () => {
+  const f = await fixture();
+  try {
+    const signedCli = await packageCli(f.root, "1.0.0-signed-test");
+    const packageFile = join(dirname(signedCli), "package.json");
+    const packageValue = JSON.parse(await readFile(packageFile, "utf8"));
+    packageValue.version = "1.0.0";
+    await writeFile(packageFile, `${JSON.stringify(packageValue)}\n`);
+    const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+    await writeFile(
+      join(dirname(signedCli), "release-public-key.pem"),
+      publicKey.export({ format: "pem", type: "spki" }),
+    );
+    const keyId = createHash("sha256")
+      .update(publicKey.export({ format: "der", type: "spki" }))
+      .digest("hex");
+    const manifest = JSON.parse(await readFile(f.manifestPath, "utf8"));
+    manifest.signing_key_id = keyId;
+    manifest.helper_signer_sha256 = "a".repeat(64);
+    const encoded = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
+    await writeFile(f.manifestPath, encoded);
+    const signaturePath = `${f.manifestPath}.sig`;
+    await writeFile(signaturePath, `${JSON.stringify({
+      schema: 1,
+      algorithm: "ed25519",
+      key_id: keyId,
+      signature: sign(null, encoded, privateKey).toString("base64"),
+    })}\n`);
+    const verified = await runWith(signedCli, [
+      "install", "--dry-run", "--manifest", f.manifestPath,
+      "--manifest-signature", signaturePath,
+      "--install-root", f.installRoot, "--json",
+    ], { CODEX_HOME: f.codexHome });
+    assert.equal(verified.code, 0, verified.stdout + verified.stderr);
+    assert.equal(JSON.parse(verified.stdout).manifest_authenticated, true);
+
+    manifest.version = "1.0.0-tampered";
+    await writeFile(f.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    const rejected = await runWith(signedCli, [
+      "install", "--dry-run", "--manifest", f.manifestPath,
+      "--manifest-signature", signaturePath,
+      "--install-root", f.installRoot, "--json",
+    ], { CODEX_HOME: f.codexHome });
+    assert.equal(rejected.code, 2);
+    assert.match(rejected.stdout, /E_SIGNATURE/);
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
 test("updates, rolls back, preserves skill state, and purges only with confirmation", async () => {
   const first = await fixture({ version: "1.0.0", hostText: "host-v1" });
   const second = await fixture({ version: "1.0.1", hostText: "host-v2" });
@@ -195,6 +286,79 @@ test("leaves the active install unchanged after a staged update fails", async ()
     assert.equal(state.current.version, "1.0.0");
     assert.deepEqual(await readFile(join(first.installRoot, "bin", "au.exe")), Buffer.from("host-v1"));
     assert.deepEqual(await readdir(join(first.installRoot, "staging")), []);
+  } finally {
+    await rm(first.root, { recursive: true, force: true });
+    await rm(second.root, { recursive: true, force: true });
+  }
+});
+
+test("recovers the whole prior install after a process dies during activation", async () => {
+  const first = await fixture({ version: "1.0.0", hostText: "host-v1" });
+  const second = await fixture({ version: "1.0.1", hostText: "host-v2" });
+  try {
+    const cliV2 = await packageCli(first.root, "1.0.1");
+    const installed = await run([
+      "install", "--manifest", first.manifestPath,
+      "--install-root", first.installRoot, "--json",
+    ], { CODEX_HOME: first.codexHome });
+    assert.equal(installed.code, 0, installed.stdout + installed.stderr);
+
+    const crashed = await runWith(cliV2, [
+      "update", "--manifest", second.manifestPath,
+      "--install-root", first.installRoot, "--json",
+    ], {
+      CODEX_HOME: first.codexHome,
+      AU_TEST_CRASH_INSTALL_PHASE: "after-host",
+    });
+    assert.equal(crashed.code, 97);
+    assert.deepEqual(await readFile(join(first.installRoot, "bin", "au.exe")), Buffer.from("host-v2"));
+
+    const bad = JSON.parse(await readFile(second.manifestPath, "utf8"));
+    bad.assets.host_windows_x64.sha256 = "0".repeat(64);
+    await writeFile(second.manifestPath, JSON.stringify(bad));
+    const resumed = await runWith(cliV2, [
+      "update", "--manifest", second.manifestPath,
+      "--install-root", first.installRoot, "--json",
+    ], { CODEX_HOME: first.codexHome });
+    assert.equal(resumed.code, 2);
+    assert.match(resumed.stdout, /E_HASH/);
+    assert.deepEqual(await readFile(join(first.installRoot, "bin", "au.exe")), Buffer.from("host-v1"));
+    assert.equal(JSON.parse(await readFile(join(first.installRoot, "current.json"), "utf8")).version, "1.0.0");
+    assert.equal(await access(join(first.installRoot, "install-transaction.json")).then(() => true).catch(() => false), false);
+  } finally {
+    await rm(first.root, { recursive: true, force: true });
+    await rm(second.root, { recursive: true, force: true });
+  }
+});
+
+test("fails closed on tampered rollback bytes and out-of-root skill ownership", async () => {
+  const first = await fixture({ version: "1.0.0", hostText: "host-v1" });
+  const second = await fixture({ version: "1.0.1", hostText: "host-v2" });
+  try {
+    const cliV2 = await packageCli(first.root, "1.0.1");
+    const installed = await run(["install", "--manifest", first.manifestPath, "--install-root", first.installRoot, "--json"], { CODEX_HOME: first.codexHome });
+    assert.equal(installed.code, 0, installed.stdout + installed.stderr);
+    const updated = await runWith(cliV2, ["update", "--manifest", second.manifestPath, "--install-root", first.installRoot, "--json"], { CODEX_HOME: first.codexHome });
+    assert.equal(updated.code, 0, updated.stdout + updated.stderr);
+
+    await writeFile(join(first.installRoot, "versions", "1.0.0", "au.exe"), "tampered");
+    const rollback = await runWith(cliV2, ["rollback", "--install-root", first.installRoot, "--json"], { CODEX_HOME: first.codexHome });
+    assert.equal(rollback.code, 2);
+    assert.match(rollback.stdout, /E_ROLLBACK/);
+    assert.deepEqual(await readFile(join(first.installRoot, "bin", "au.exe")), Buffer.from("host-v2"));
+
+    const outside = join(first.root, "outside-skill");
+    await writeFile(join(first.installRoot, "current.json"), JSON.stringify({
+      product: "android-use",
+      version: "1.0.1",
+      host: true,
+      skill: outside,
+      skill_hashes: {},
+    }));
+    const uninstall = await runWith(cliV2, ["uninstall", "--install-root", first.installRoot, "--json"], { CODEX_HOME: first.codexHome });
+    assert.equal(uninstall.code, 2);
+    assert.match(uninstall.stdout, /E_OWNERSHIP/);
+    assert.equal(await access(join(first.installRoot, "bin", "au.exe")).then(() => true).catch(() => false), true);
   } finally {
     await rm(first.root, { recursive: true, force: true });
     await rm(second.root, { recursive: true, force: true });

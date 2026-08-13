@@ -10,29 +10,26 @@
     "cli.mjs",
     "skill/**",
     "LICENSE",
+    "release-public-key.pem",
     "release-manifest.example.json"
   ],
   "engines": {
     "node": ">=20.11"
   },
-  "os": [
-    "win32"
-  ],
-  "cpu": [
-    "x64"
-  ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/drperky20/android-use.git"
+    "url": "git+https://github.com/austinintelligence/android-use.git"
   },
-  "homepage": "https://github.com/drperky20/android-use",
+  "homepage": "https://github.com/austinintelligence/android-use",
   "bugs": {
-    "url": "https://github.com/drperky20/android-use/issues"
+    "url": "https://github.com/austinintelligence/android-use/issues"
   },
   "license": "MIT",
   "scripts": {
-    "lint": "node --check cli.mjs",
-    "test": "node --test"
+    "lint": "node --check cli.mjs && node --check ../../scripts/package-release.mjs && node --check ../../scripts/generate-package-metadata.mjs",
+    "test": "node --test",
+    "test:packages": "node ../../scripts/test-package-release.mjs",
+    "test:tarball": "node ../../scripts/test-installer-tarball.mjs"
   },
   "publishConfig": {
     "access": "public"

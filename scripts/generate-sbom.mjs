@@ -57,7 +57,7 @@ function cargoSpdx(metadata, commit) {
       creators: ["Tool: android-use/scripts/generate-sbom.mjs"],
     },
     name: "android-use Rust host dependency inventory",
-    documentNamespace: `https://github.com/drperky20/android-use/sbom/cargo/${commit}`,
+    documentNamespace: `https://github.com/austinintelligence/android-use/sbom/cargo/${commit}`,
     dataLicense: "CC0-1.0",
     packages,
     relationships,

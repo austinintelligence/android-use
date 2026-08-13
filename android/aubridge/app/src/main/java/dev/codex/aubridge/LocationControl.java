@@ -1,9 +1,11 @@
 package dev.codex.aubridge;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.location.Location;
 import android.location.LocationManager;
+import android.location.provider.ProviderProperties;
 import android.os.SystemClock;
 
 import org.json.JSONArray;
@@ -68,10 +70,21 @@ final class LocationControl {
         throw new BridgeServer.BridgeError("E_ARGS", "unknown location operation " + operation);
     }
 
+    @SuppressLint("InlinedApi") // ProviderProperties integer constants are compile-time inlined on API 26-30.
     private static void ensureProvider(LocationManager manager, SharedPreferences prefs, String provider) throws Exception {
         if (!prefs.getBoolean("owned_" + provider, false)) {
             try {
-                manager.addTestProvider(provider, false, false, false, false, true, true, true, 1, 1);
+                manager.addTestProvider(
+                        provider,
+                        false,
+                        false,
+                        false,
+                        false,
+                        true,
+                        true,
+                        true,
+                        ProviderProperties.POWER_USAGE_LOW,
+                        ProviderProperties.ACCURACY_FINE);
                 prefs.edit().putBoolean("owned_" + provider, true).apply();
             } catch (IllegalArgumentException existingProvider) {
                 throw new BridgeServer.BridgeError("E_LOCATION", "cannot claim existing provider " + provider);

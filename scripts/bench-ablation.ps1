@@ -60,7 +60,7 @@ $rows = @(
 
 $report = [pscustomobject]@{
   generated_at = (Get-Date).ToUniversalTime().ToString('o')
-  candidate_binary_sha256 = (Get-FileHash -LiteralPath (Join-Path $Root 'crates\android-use\target\release\au.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
+  candidate_binary_sha256 = (Get-FileHash -LiteralPath (Join-Path $Root 'target\release\au.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
   tokenizer = 'exact GPT-5.6 Luna tokenizer unavailable; PROXY_ONLY values use artifacts/final/codec-evaluation.json'
   required_fields = @('correctness','first_pass','median','p95','cold_penalty','warm_performance','model_turns','tool_calls','exact_tokens','process_count','adb_count','socket_count','bytes','retries','recovery','unintended_side_effects','cleanup','regression_status')
   experiments = $rows
