@@ -1,6 +1,6 @@
 # Android Use installer
 
-This small npm package is only a friendly launcher. It selects the bundled platform binary, verifies the bundled binary and helper APK when the release manifest is present, and lets the Rust-owned lifecycle do the real device work.
+This package gives people one setup command. It selects and verifies the files for their computer, then opens the Android screens that still need the owner's approval.
 
 Normal commands:
 
@@ -12,4 +12,4 @@ npx android-use update
 npx android-use uninstall
 ```
 
-Platform bundles place the signed `au` binary and `aubridge.apk` under `bin/PLATFORM-ARCH/`. `AU_BIN` is available for a trusted local development binary. The launcher never modifies `PATH`, downloads an archive, or creates a second installer state machine.
+`npx android-use setup` is reserved for the published package and must not be documented as available until npm publication succeeds. Developers can set `AU_BIN` to a trusted local build.

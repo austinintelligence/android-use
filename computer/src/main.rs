@@ -12,7 +12,7 @@ use std::{env, io::IsTerminal, path::Path};
 fn main() {
     let human = env::args().any(|arg| arg == "--human") || (!env::args().any(|arg| arg == "--json") && std::io::stdout().is_terminal());
     let command = env::args().skip(1).find(|arg| arg != "--json" && arg != "--human").unwrap_or_else(|| "help".into());
-    match run() {
+    match run(human) {
         Ok(value) => {
             if human {
                 println!("{}", human_value(&command, &value));
@@ -30,7 +30,7 @@ fn main() {
         }
     }
 }
-fn run() -> Result<Value> {
+fn run(human: bool) -> Result<Value> {
     let a: Vec<String> = env::args().skip(1).filter(|arg| arg != "--json" && arg != "--human").collect();
     let out = match a.first().map(String::as_str).unwrap_or("help") {
         "serve" => {
@@ -82,8 +82,8 @@ fn run() -> Result<Value> {
             adapter::one_read(&mut Engine::open()?, "artifact", None, 0, Some(id), range)?
         }
         "enroll" => install::enroll(a.get(1).ok_or_else(|| Error::new(Code::Args, "enroll requires an ADB endpoint"))?)?,
-        "setup" | "repair" => install::setup(a.get(1).map(Path::new))?,
-        "update" => install::update(a.get(1).map(Path::new))?,
+        "setup" | "repair" => install::setup(a.get(1).map(Path::new), human)?,
+        "update" => install::update(a.get(1).map(Path::new), human)?,
         "doctor" => install::doctor()?,
         "uninstall" => install::uninstall()?,
         "version" | "--version" => serde_json::json!({"version":env!("CARGO_PKG_VERSION")}),
@@ -138,6 +138,9 @@ fn human_value(command: &str, value: &Value) -> String {
                 out.push_str("\n✓ Accessibility enabled");
             } else {
                 out.push_str("\n! Accessibility still needs your approval");
+            }
+            if value.get("settings_opened").and_then(Value::as_u64) == Some(1) && !ready {
+                out.push_str("\n✓ Opened the right Android settings screen");
             }
             if let Some(next) = value.get("next").and_then(Value::as_str) {
                 out.push_str("\n\nAction needed:\n");

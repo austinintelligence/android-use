@@ -19,7 +19,7 @@ pub fn devices() -> Result<Value> {
     let devices = adb.devices_all()?.into_iter().map(|d| json!({"endpoint":d.endpoint,"state":d.state})).collect::<Vec<_>>();
     Ok(json!({"ok":1,"devices":devices}))
 }
-pub fn setup(apk: Option<&Path>) -> Result<Value> {
+pub fn setup(apk: Option<&Path>, wait_for_approval: bool) -> Result<Value> {
     let paths = Paths::discover()?;
     let adb = Adb::discover()?;
     let (device, enrolled_now) = adb.resolve_or_enroll(&paths)?;
@@ -30,9 +30,17 @@ pub fn setup(apk: Option<&Path>) -> Result<Value> {
     adb.install(&device, &apk)?;
     adb.start_helper(&device)?;
     let installed = adb.package_installed(&device, "dev.codex.aubridge")?;
-    let accessibility = adb.accessibility_enabled(&device).unwrap_or(false);
+    let mut accessibility = adb.accessibility_enabled(&device).unwrap_or(false);
+    let mut settings_opened = false;
+    if !accessibility {
+        adb.open_accessibility_settings(&device)?;
+        settings_opened = true;
+        if wait_for_approval {
+            accessibility = adb.wait_for_accessibility(&device, std::time::Duration::from_secs(60))?;
+        }
+    }
     Ok(
-        json!({"ok":1,"installed":installed as u8,"enrolled":enrolled_now as u8,"device":device.hardware,"accessibility":accessibility as u8,"ready":(installed&&accessibility) as u8,"next":(!accessibility).then_some("On Android, open Settings → Accessibility → Android Use → turn it on") }),
+        json!({"ok":1,"installed":installed as u8,"enrolled":enrolled_now as u8,"device":device.hardware,"accessibility":accessibility as u8,"settings_opened":settings_opened as u8,"ready":(installed&&accessibility) as u8,"next":(!accessibility).then_some("Android Use opened Accessibility settings on your device. Tap Android Use, turn it on, then run au setup again.") }),
     )
 }
 pub fn doctor() -> Result<Value> {
@@ -89,8 +97,8 @@ pub fn doctor() -> Result<Value> {
     let ready_all = enrolled && device.is_some() && helper && accessibility;
     Ok(json!({"ok":1,"ready":ready_all as u8,"checks":checks,"journal_bytes":journal_bytes}))
 }
-pub fn update(apk: Option<&Path>) -> Result<Value> {
-    let mut value = setup(apk)?;
+pub fn update(apk: Option<&Path>, wait_for_approval: bool) -> Result<Value> {
+    let mut value = setup(apk, wait_for_approval)?;
     value["updated"] = json!(1);
     Ok(value)
 }

@@ -181,6 +181,20 @@ impl Adb {
     pub fn accessibility_enabled(&self, d: &Device) -> Result<bool> {
         self.secure_setting_contains(d, "enabled_accessibility_services", "dev.codex.aubridge")
     }
+    pub fn open_accessibility_settings(&self, d: &Device) -> Result<()> {
+        self.run(Some(&d.endpoint), &["shell", "am", "start", "-a", "android.settings.ACCESSIBILITY_SETTINGS"], Duration::from_secs(8))?;
+        Ok(())
+    }
+    pub fn wait_for_accessibility(&self, d: &Device, timeout: Duration) -> Result<bool> {
+        let started = Instant::now();
+        while started.elapsed() < timeout {
+            if self.accessibility_enabled(d).unwrap_or(false) {
+                return Ok(true);
+            }
+            thread::sleep(Duration::from_millis(500));
+        }
+        Ok(false)
+    }
     pub fn notifications_enabled(&self, d: &Device) -> Result<bool> {
         self.secure_setting_contains(d, "enabled_notification_listeners", "dev.codex.aubridge")
     }

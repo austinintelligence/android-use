@@ -1,18 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc">
   <title id="title">Android Use social preview</title><desc id="desc">Give AI an Android device.</desc>
-  <rect width="1280" height="640" fill="#0b1220"/>
-  <circle cx="1130" cy="-20" r="330" fill="#14233a"/><circle cx="75" cy="665" r="260" fill="#14233a"/>
-  <g transform="translate(100 102)">
-    <rect width="268" height="436" rx="70" fill="#111827" stroke="#31415d" stroke-width="4"/>
-    <rect x="28" y="32" width="212" height="346" rx="42" fill="none" stroke="#8cf2c1" stroke-width="12"/>
-    <path d="M76 248c38-62 78-62 116 0" fill="none" stroke="#8cf2c1" stroke-width="14" stroke-linecap="round"/>
-    <circle cx="90" cy="176" r="13" fill="#f8fafc"/><circle cx="178" cy="176" r="13" fill="#f8fafc"/>
-    <path d="M108 408h52" stroke="#8cf2c1" stroke-width="11" stroke-linecap="round"/>
+  <rect width="1280" height="640" fill="#0B1220"/>
+  <circle cx="1130" cy="-20" r="330" fill="#14233A"/><circle cx="75" cy="665" r="260" fill="#14233A"/>
+  <g transform="translate(106 102) scale(3.38)">
+    <rect width="128" height="128" rx="30" fill="#101827" stroke="#31415D" stroke-width="1.5"/>
+    <path d="M39 39 31 27M89 39l8-12" stroke="#3DDC84" stroke-width="6" stroke-linecap="round"/>
+    <path d="M28 61c0-22 16-37 36-37s36 15 36 37v8H28z" fill="#3DDC84"/>
+    <rect x="28" y="73" width="72" height="39" rx="13" fill="#3DDC84"/>
+    <circle cx="49" cy="52" r="5" fill="#101827"/><path d="M73 53c4-4 8-4 12 0" fill="none" stroke="#101827" stroke-width="5" stroke-linecap="round"/>
+    <path d="m45 85 8 7-8 7M61 99h18" fill="none" stroke="#101827" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M28 70h72" stroke="#101827" stroke-width="5"/>
   </g>
-  <text x="460" y="155" fill="#8cf2c1" font-family="system-ui,Segoe UI,sans-serif" font-size="34" font-weight="700">android-use</text>
-  <text x="460" y="255" fill="#f8fafc" font-family="system-ui,Segoe UI,sans-serif" font-size="72" font-weight="750">Give AI an</text>
-  <text x="460" y="338" fill="#f8fafc" font-family="system-ui,Segoe UI,sans-serif" font-size="72" font-weight="750">Android device.</text>
-  <text x="464" y="405" fill="#aab8cc" font-family="system-ui,Segoe UI,sans-serif" font-size="29">See the interface. Use apps. Control Chrome.</text>
-  <rect x="460" y="454" width="275" height="76" rx="16" fill="#8cf2c1"/>
-  <text x="494" y="503" fill="#0b1220" font-family="ui-monospace,Consolas,monospace" font-size="28" font-weight="700">$ au setup</text>
+  <text x="580" y="164" fill="#3DDC84" font-family="system-ui,Segoe UI,sans-serif" font-size="36" font-weight="750">android-use</text>
+  <text x="580" y="267" fill="#F8FAFC" font-family="system-ui,Segoe UI,sans-serif" font-size="76" font-weight="760">Give AI an</text>
+  <text x="580" y="353" fill="#F8FAFC" font-family="system-ui,Segoe UI,sans-serif" font-size="76" font-weight="760">Android device.</text>
+  <text x="584" y="420" fill="#B7C4D7" font-family="system-ui,Segoe UI,sans-serif" font-size="28">See the screen. Use apps. Browse Chrome.</text>
+  <rect x="580" y="468" width="272" height="72" rx="16" fill="#3DDC84"/>
+  <text x="614" y="515" fill="#0B1220" font-family="ui-monospace,Consolas,monospace" font-size="27" font-weight="700">$ au setup</text>
 </svg>

@@ -7,7 +7,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - run: rustup toolchain install 1.94.0 --profile minimal
+      - run: rustup toolchain install 1.94.0 --profile minimal --component rustfmt --component clippy
       - run: cargo +1.94.0 test --workspace --all-targets
       - run: cargo +1.94.0 build --profile dist -p au
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

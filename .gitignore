@@ -25,6 +25,7 @@
 *.jpeg
 *.png
 !/images/*.png
+!/images/demos/*.png
 
 # Local installer and package-manager state.
 node_modules/

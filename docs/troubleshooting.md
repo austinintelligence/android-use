@@ -20,9 +20,9 @@ It separates required checks from optional capabilities and tells you the next A
 
 Disconnect extras or explicitly run `au enroll ENDPOINT`. A server session remains fixed to the enrolled hardware identity.
 
-## Helper installed, but not ready
+## Setup opened Accessibility but did not finish
 
-Open **Settings → Accessibility → Android Use → On**. Android may move this setting under **Installed apps** or **Downloaded apps**.
+On the Android screen that setup opened, tap **Android Use**, turn it on, and approve Android's warning. If your device moved the page, look under **Installed apps** or **Downloaded apps**, then run `au setup` once more.
 
 ## Chrome is unavailable
 

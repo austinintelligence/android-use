@@ -5,7 +5,7 @@ edition = "2021"
 rust-version = "1.94"
 description = "A small typed Android control engine for agents"
 license = "MIT"
-repository = "https://github.com/drperky20/android-use"
+repository = "https://github.com/austinintelligence/android-use"
 publish = false
 
 [[bin]]

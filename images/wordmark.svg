@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
-  <title id="title">Android Use Prompt Droid</title><desc id="desc">A friendly Android-inspired agent with a command prompt on its chest.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 128" role="img" aria-labelledby="title desc">
+  <title id="title">Android Use wordmark</title><desc id="desc">Prompt Droid beside the Android Use name.</desc>
   <rect width="128" height="128" rx="30" fill="#101827"/>
   <path d="M39 39 31 27M89 39l8-12" stroke="#3DDC84" stroke-width="6" stroke-linecap="round"/>
   <path d="M28 61c0-22 16-37 36-37s36 15 36 37v8H28z" fill="#3DDC84"/>
@@ -7,4 +7,5 @@
   <circle cx="49" cy="52" r="5" fill="#101827"/><path d="M73 53c4-4 8-4 12 0" fill="none" stroke="#101827" stroke-width="5" stroke-linecap="round"/>
   <path d="m45 85 8 7-8 7M61 99h18" fill="none" stroke="#101827" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
   <path d="M28 70h72" stroke="#101827" stroke-width="5"/>
+  <text x="158" y="82" fill="#101827" font-family="system-ui,Segoe UI,sans-serif" font-size="62" font-weight="760">android-use</text>
 </svg>

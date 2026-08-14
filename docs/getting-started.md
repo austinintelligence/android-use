@@ -1,79 +1,83 @@
-# Human Quickstart
+# Get Android Use ready
 
-This takes one Android device from “plugged in” to “ready for an AI agent.”
+The goal is simple: connect one Android device, approve two Android prompts, and let `au setup` handle the rest.
 
-## Before you start
+## What you need
 
-You need:
+- A phone or tablet running Android 8 or newer.
+- A USB cable that carries data.
+- A Windows, macOS, or Linux computer.
+- Permission to change developer and accessibility settings on the Android device.
 
-- Android 8 or newer.
-- A Windows, macOS, or Linux computer with a release package available.
-- A USB cable that carries data, not only power.
-- Permission to enable Developer options, USB debugging, and the Android Use accessibility service.
+> Android Use v3 packages are not published yet. This page describes the finished package flow. If you are working from the current repository, [build it from source](development.md) first.
 
-On Android, open **Settings → About phone** and tap **Build number** seven times. Then open **System → Developer options** and turn on **USB debugging**. Names vary slightly by device maker.
+## 1. Turn on USB debugging
 
-## 1. Connect the device
+This is the only setting Android Use cannot open before the computer is trusted.
 
-Unlock Android, connect the cable, and approve **Allow USB debugging?**. Select “Always allow” only if you trust this computer.
+On Android:
 
-```console
-au devices
-```
+1. Open **Settings → About phone**.
+2. Tap **Build number** seven times.
+3. Go back and open **Developer options**.
+4. Turn on **USB debugging**.
 
-You should see one ready endpoint. If not, run `au doctor`.
+The wording can vary slightly on Samsung, Pixel, and other devices. Search Settings for “Build number” or “USB debugging” if needed.
 
-## 2. Let Android Use finish setup
+## 2. Plug in and approve
 
-Keep the device unlocked:
+Connect the unlocked device. When Android asks **Allow USB debugging?**, tap **Allow**.
+
+Only choose **Always allow from this computer** when it is your computer.
+
+## 3. Run setup
+
+From the unzipped Android Use package:
 
 ```console
 au setup
 ```
 
-The command remembers the physical device, installs the Android Use helper, and starts it. Android Use cannot approve accessibility on your behalf. When prompted, open:
+Keep the device unlocked. Setup will:
+
+- find and remember the connected device;
+- install the Android Use helper;
+- open the correct Accessibility screen;
+- wait while you turn on **Android Use**;
+- confirm when the device is ready.
+
+You should finish on:
 
 ```text
-Settings → Accessibility → Android Use → On
+Android Use is ready
 ```
 
-Return to the terminal and run:
+That is it. You do not need to run a separate status or doctor command when setup succeeds.
 
-```console
-au status
-```
+## Connect your AI agent
 
-## 3. Read the screen
-
-```console
-au observe
-```
-
-This returns a compact semantic frontier: a generation number plus visible labels, roles, and integer references. Machine-readable JSON is the default when output is redirected; add `--human` for friendly terminal output or `--json` to force JSON.
-
-## 4. Connect your agent
-
-Use MCP when the client supports it:
+Use Android Use as a local MCP server:
 
 ```console
 au serve --mcp
 ```
 
-Otherwise use one typed request per line:
+Then ask your agent:
 
-```console
-au serve --jsonl
+```text
+Check the connected Android device and tell me what is on screen. Do not change anything yet.
 ```
 
-Continue with the [Agent Quickstart](agents/quickstart.md) or [examples](../examples/README.md).
+See the [Agent Quickstart](agents/quickstart.md) for client setup.
 
-## Optional permissions
+## If setup stops
 
-Camera, microphone, notifications, location, screenshots, and screen recording are not required for normal UI control. Android owns their permission screens. Check current support with:
+Run:
 
 ```console
-au capabilities
 au doctor
 ```
 
-Enable only what your task needs.
+It tells you what is missing in plain language. The most common causes are a charge-only cable, a locked device, a USB debugging prompt waiting on Android, or Accessibility not yet approved.
+
+Camera, microphone, notifications, location, and screen recording are optional. Normal app control does not require them.

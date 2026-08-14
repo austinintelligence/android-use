@@ -2,7 +2,7 @@
 
 <h1 align="center">android-use</h1>
 <p align="center"><strong>Give AI an Android device.</strong></p>
-<p align="center">Connect a phone or tablet. Let your agent see the interface, use apps, control Chrome, and work with supported device capabilities through one small, local interface.</p>
+<p align="center">Plug in a phone or tablet. Your AI can see the screen, tap, type, open apps, and use Chrome on the real device.</p>
 
 <p align="center">
   <a href="docs/getting-started.md"><strong>Get started</strong></a> ·
@@ -18,69 +18,59 @@
   <a href="https://github.com/austinintelligence/android-use/releases"><img alt="GitHub release" src="https://img.shields.io/github/v/release/austinintelligence/android-use?include_prereleases"></a>
 </p>
 
-## Android, in the agent's toolbelt
+## Your AI can use a real Android device
 
-Ask an agent to open an app, find a setting, enter text, read a page, or inspect device state. Android Use turns the visible interface into a compact semantic view, then accepts short generation-checked action plans. Screenshots and media stay behind private artifact handles instead of flooding the model context.
+Android Use connects the AI agent on your computer to the Android device in your hand. Ask normally:
+
+- “Open Settings and check the battery.”
+- “Search for Yellowstone in Chrome and show me what you find.”
+- “Open this app and go to the account screen.”
+- “Tell me which Wi-Fi network is connected.”
+
+The agent reads the same labels and controls you see, then taps, types, scrolls, and checks its work.
 
 <img src="images/demos/yellowstone-browser.png" alt="A real Android Chrome page captured after Android Use navigated to Yellowstone National Park" width="100%">
 
-> **Real device demo:** Android Use selected a live Chrome tab over USB, navigated to the National Park Service, waited for “Yellowstone,” and returned this screenshot as a private artifact.
+> **Real device, real result.** Android Use opened this National Park Service page in Chrome on a connected Android tablet and confirmed that Yellowstone loaded.
 
 ```text
 You: Open Chrome, find Yellowstone, and show me the page.
 
-Agent: ✓ Selected Chrome  ✓ Navigated  ✓ Verified “Yellowstone”
-       Screenshot saved as a private artifact
+Agent: Opened Chrome, loaded Yellowstone, and confirmed the page.
 ```
 
-## What it can do
+## What it lets an agent do
 
 | | Capability | What that means |
 | --- | --- | --- |
-| 👁 | **Understand the screen** | Read labels, controls, roles, and interaction references without processing a full screenshot every step. |
-| 👆 | **Use Android apps** | Tap, type, scroll, press system keys, perform gestures, launch apps, wait, and verify. |
-| 🌐 | **Control Chrome** | Inspect tabs and page structure, navigate, click, focus, type, scroll, reload, and capture a page. |
-| 📱 | **Inspect the device** | Read readiness, supported capabilities, location, and notifications where Android permission is enabled. |
-| 📷 | **Capture when asked** | Create bounded screenshots, camera images, microphone clips, and screen recordings when the device grants the required permission. |
-| 🔌 | **Connect your agent** | Use two MCP tools—`android.read` and `android.act`—or the equivalent typed JSONL stream. |
+| 👁 | **See what is on screen** | Understand visible text, buttons, fields, lists, and menus. |
+| 👆 | **Use your apps** | Tap, type, scroll, go back, return home, and open apps. |
+| 🌐 | **Browse with Chrome** | Open pages, follow links, fill fields, read results, and take page screenshots. |
+| 📱 | **Check the device** | Read supported device information, location, and notifications when you allow it. |
+| 📷 | **Capture when you ask** | Take screenshots or use supported camera, microphone, and screen recording with Android's permission. |
+| 🔌 | **Work with your agent** | Connect Codex, Claude Code, Cursor, or another MCP-compatible agent. |
 
 [See the verified capability details →](docs/capabilities.md)
 
-## Start in three steps
+## Setup is one guided command
 
-You need Android 8 or newer, a data-capable USB cable, and Windows, macOS, or Linux. Enable **Developer options → USB debugging** on Android first.
+You need Android 8 or newer, a data-capable USB cable, and Windows, macOS, or Linux.
 
-1. Download the release archive for your computer and extract it.
-2. Connect and unlock one Android device. Approve the **Allow USB debugging?** prompt.
-3. Run:
+1. Download the package for your computer from [Releases](https://github.com/austinintelligence/android-use/releases) and unzip it.
+2. Connect and unlock your Android device.
+3. Run one command:
 
 ```console
 au setup
 ```
 
-Android Use installs its helper and opens the one Android setting it cannot approve for you:
-
-```text
-Settings → Accessibility → Android Use → On
-```
-
-Then confirm:
-
-```console
-au status
-```
+Android Use checks the cable, remembers the device, installs its small helper, and opens the right Android permission screen. Approve the prompts on the device and leave the command running. It finishes when everything is ready.
 
 ```text
 Android Use is ready
-
-✓ Android helper connected
-✓ UI generation 402
-✓ Capability mask 7
 ```
 
-The release archive includes `au`, the Android helper, and the required Android platform tool. No Rust, Java, Gradle, or Android Studio is needed.
-
-> Packages are published per platform. If your platform is not listed on the latest release, build from source; do not install an archive for a different operating system.
+> **Current availability:** v3 packages have not been published yet. The setup above is the finished release flow; developers can use [the source build](docs/development.md) today. The README will not pretend an unpublished npm package exists.
 
 [Full human quickstart →](docs/getting-started.md) · [Troubleshooting →](docs/troubleshooting.md)
 
@@ -92,10 +82,10 @@ If your client supports MCP, configure it to run:
 au serve --mcp
 ```
 
-The agent receives two tools:
+The agent receives two focused tools:
 
-- `android.read` observes Android, Chrome, capabilities, notifications, location, visuals, and private artifacts.
-- `android.act` runs a short bounded plan against the generation the agent just observed.
+- `android.read` sees what is happening.
+- `android.act` performs the next small action.
 
 Coding agents can start with [AGENTS.md](AGENTS.md). It contains the whole operating loop and recovery rules in one page. For Codex, Claude Code, Cursor, and similar clients, see the [Agent Quickstart](docs/agents/quickstart.md).
 
@@ -103,7 +93,7 @@ Coding agents can start with [AGENTS.md](AGENTS.md). It contains the whole opera
 
 <img src="images/how-it-works.svg" alt="Agent to Android Use to Android device workflow" width="100%">
 
-Normal control stays between your computer and the enrolled device. The helper has no Android internet permission. Its local socket is reachable only through an Android Debug Bridge forward created for the selected device, and every session is authenticated. [Read the security model →](SECURITY.md)
+Normal control stays between your computer and the connected device. Android still owns every sensitive permission prompt, and the helper cannot use the internet on its own. [Read the security model →](SECURITY.md)
 
 ## Choose your path
 
