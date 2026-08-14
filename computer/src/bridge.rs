@@ -36,7 +36,9 @@ impl Drop for Bridge {
 impl Bridge {
     pub fn connect(adb: Adb, device: Device) -> Result<Self> {
         adb.start_helper(&device)?;
-        let bootstrap = adb.forward(&device, "localabstract:aubridge-bootstrap")?;
+        // These abstract-socket names are a deployed wire-protocol identifier, not a public product version.
+        // Keep them stable so a v1 host can reconnect to an already-installed helper.
+        let bootstrap = adb.forward(&device, "localabstract:aubridge-bootstrap-v3")?;
         let auth = (|| {
             let mut s = connect(bootstrap, Duration::from_secs(8))?;
             send(&mut s, &json!([0, "bootstrap"]))?;
@@ -55,7 +57,7 @@ impl Bridge {
             }
         };
         adb.remove_forward(&device, bootstrap);
-        let command = adb.forward(&device, "localabstract:aubridge")?;
+        let command = adb.forward(&device, "localabstract:aubridge-v3")?;
         let result = (|| {
             let mut stream = connect(command, Duration::from_secs(5))?;
             send(&mut stream, &json!([0, "hello", token, nonce]))?;
