@@ -1,6 +1,6 @@
 {
   "name": "android-use",
-  "version": "3.0.0",
+  "version": "1.0.0",
   "description": "Give AI agents fast, bounded access to an Android device",
   "type": "module",
   "bin": { "android-use": "cli.mjs" },

@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, writeFile, copyFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 const exec=promisify(execFile),cli=join(dirname(fileURLToPath(import.meta.url)),"..","cli.mjs");
-test("reports v3 without network access",async()=>{const r=await exec(process.execPath,[cli,"--version"]);assert.equal(r.stdout.trim(),"3.0.0")});
+test("reports the package version without network access",async()=>{const r=await exec(process.execPath,[cli,"--version"]);assert.equal(r.stdout.trim(),"1.0.0")});
 test("explains the Rust-owned setup",async()=>{const r=await exec(process.execPath,[cli,"--help"]);assert.match(r.stdout,/platform binary|au binary/)});
 test("fails closed when a platform binary is absent",async()=>{await assert.rejects(exec(process.execPath,[cli,"doctor"],{env:{...process.env,AU_BIN:""}}),e=>/binary is missing/.test(e.stderr))});
 test("fails closed when a bundled binary is tampered",async()=>{const root=await mkdtemp(join(tmpdir(),"android-use-test-"));try{const platform=`${process.platform}-${process.arch}`,name=process.platform==="win32"?"au.exe":"au",bin=join(root,"bin",platform,name),key=`bin/${platform}/${name}`;await mkdir(join(root,"bin",platform),{recursive:true});await copyFile(cli,join(root,"cli.mjs"));await writeFile(bin,"tampered");await writeFile(join(root,"manifest.json"),JSON.stringify({files:{[key]:createHash("sha256").update("trusted").digest("hex")}}));await assert.rejects(exec(process.execPath,[join(root,"cli.mjs"),"doctor"]),e=>/integrity check/.test(e.stderr))}finally{await rm(root,{recursive:true,force:true})}});

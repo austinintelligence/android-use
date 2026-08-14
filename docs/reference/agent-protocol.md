@@ -33,7 +33,7 @@ Every plan includes:
 
 Android operations include `tap`, `long`, `text`, `scroll`, `key`, `gesture`, `launch`, `wait`, `assert`, screen/camera/microphone/screen-record capture, and notification actions.
 
-A browser plan adds `"target":"browser"` and uses browser generation. It supports `navigate`, `back`, `forward`, `reload`, `click`, `focus`, `text`, `key`, `scroll`, `wait`, bounded `eval`, `screenshot`, `select`, `close`, and `new`.
+A browser plan adds `"target":"browser"` and uses browser generation. It supports `navigate`, `back`, `forward`, `reload`, `click`, `focus`, `text`, `key`, `scroll`, `wait`, `screenshot`, `select`, `close`, and `new`. Arbitrary page JavaScript evaluation is intentionally unavailable.
 
 A visual plan adds `"target":"visual"` and performs one bounded crop of a host PNG artifact.
 

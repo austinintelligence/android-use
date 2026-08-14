@@ -2,6 +2,10 @@
 
 <!-- Describe the user-visible contract and why it is needed. -->
 
+## Why
+
+<!-- What problem does this solve? -->
+
 ## Safety and compatibility
 
 - [ ] No device-specific serials, tokens, private paths, media, or signing material are included.
@@ -17,6 +21,11 @@
 - [ ] `cargo build --workspace --release`
 - [ ] `npm test --workspace install`
 - [ ] `npm run lint --workspace install`
+
+## Release impact
+
+- [ ] No breaking change.
+- [ ] Breaking change documented in the changelog and migration guidance.
 
 Live-device evidence is required for changes to transport, helper, media,
 location, web, or cleanup behavior. Redact serials and private artifacts.

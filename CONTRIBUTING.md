@@ -23,6 +23,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-targets
 npm test
 npm run lint
+cargo xtask verify
 ```
 
 If you changed the Android helper, build it with `cargo xtask android` or `cargo xtask package` and run the real-device suite with `cargo xtask live`. Live-device tests must use a harmless fixture or test activity, finite capture durations, temporary artifact storage, and independent cleanup proof. Do not manipulate a personal app merely to demonstrate a feature.
@@ -37,3 +38,7 @@ Explain:
 - Android versions, device makers, or capabilities you could not test.
 
 Keep generated build output and local state out of the commit. A reviewer should be able to understand the contract change without reading benchmark archives or private device evidence.
+
+## Release maintenance
+
+`VERSION` is the public version source of truth. Do not edit package, CLI, or Android version strings independently; `cargo xtask version` checks that every shipped surface agrees. A stable `vX.Y.Z` tag runs the release workflow. It builds the supported host archives, verifies the pinned Android helper signer, publishes SHA-256 checksums and an SPDX SBOM, and attests the assets.

@@ -2,7 +2,11 @@ plugins {
     id "com.android.application"
 }
 
-def signingPropertiesFile = file(System.getenv("LOCALAPPDATA") + "/Codex/android-use/signing.properties")
+def releaseVersion = file("../../VERSION").text.trim()
+def signingPropertiesPath = System.getenv("AUBRIDGE_SIGNING_PROPERTIES")
+def localAppData = System.getenv("LOCALAPPDATA")
+def defaultSigningPropertiesFile = localAppData ? file(localAppData + "/Codex/android-use/signing.properties") : file(System.getProperty("user.home") + "/.android-use/signing.properties")
+def signingPropertiesFile = signingPropertiesPath ? file(signingPropertiesPath) : defaultSigningPropertiesFile
 def signingProperties = new Properties()
 if (signingPropertiesFile.exists()) {
     signingPropertiesFile.withInputStream { signingProperties.load(it) }
@@ -17,8 +21,8 @@ android {
         applicationId = "dev.codex.aubridge"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "3.0.2"
+        versionCode = 1_000_000
+        versionName = releaseVersion
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

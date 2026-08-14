@@ -6,10 +6,10 @@ The goal is simple: connect one Android device, approve two Android prompts, and
 
 - A phone or tablet running Android 8 or newer.
 - A USB cable that carries data.
-- A Windows, macOS, or Linux computer.
+- A Windows x86_64, macOS Apple Silicon, or Linux x86_64 computer. See [Releases](https://github.com/austinintelligence/android-use/releases) for the current archive list.
 - Permission to change developer and accessibility settings on the Android device.
 
-> Android Use v3 packages are not published yet. This page describes the finished package flow. If you are working from the current repository, [build it from source](development.md) first.
+Download and unzip the matching Android Use release archive before starting. It contains both `au` and the matching Android helper. Keep those files together.
 
 ## 1. Turn on USB debugging
 

@@ -5,6 +5,7 @@ use crate::{
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{json, Value};
+use sha1::{Digest, Sha1};
 use std::{
     io::{Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
@@ -170,10 +171,6 @@ impl Browser {
                     thread::sleep(Duration::from_millis(50));
                 }
                 Err("timeout")
-            }
-            BrowserOp::Eval(expression) => {
-                let _ = self.eval_value(expression)?;
-                Ok(())
             }
             BrowserOp::Screenshot => {
                 let target = self.selected.clone();
@@ -437,7 +434,9 @@ impl Cdp {
         let mut stream = TcpStream::connect_timeout(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port), Duration::from_secs(3))?;
         stream.set_read_timeout(Some(Duration::from_secs(8)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
-        let key = STANDARD.encode(nonce().to_le_bytes());
+        let mut key_bytes = [0u8; 16];
+        getrandom::fill(&mut key_bytes).map_err(|_| Error::new(Code::Io, "could not generate a Chrome WebSocket key"))?;
+        let key = STANDARD.encode(key_bytes);
         write!(
             stream,
             "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
@@ -451,8 +450,18 @@ impl Cdp {
                 break;
             }
         }
-        if !String::from_utf8_lossy(&header).starts_with("HTTP/1.1 101") {
+        let header_text = String::from_utf8_lossy(&header);
+        if !header_text.starts_with("HTTP/1.1 101") {
             return Err(Error::new(Code::Helper, "Chrome refused WebSocket upgrade"));
+        }
+        let mut accept = Sha1::new();
+        accept.update(key.as_bytes());
+        accept.update(b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+        let expected_accept = STANDARD.encode(accept.finalize());
+        let actual_accept =
+            header_text.lines().find_map(|line| line.split_once(':').filter(|(name, _)| name.eq_ignore_ascii_case("sec-websocket-accept")).map(|(_, value)| value.trim()));
+        if actual_accept != Some(expected_accept.as_str()) {
+            return Err(Error::new(Code::Protocol, "Chrome WebSocket upgrade was not authenticated"));
         }
         Ok(Self { stream, id: 0 })
     }
@@ -527,11 +536,17 @@ fn read_http(stream: &mut TcpStream) -> Result<Vec<u8>> {
 }
 
 fn write_ws(stream: &mut TcpStream, text: &str) -> Result<()> {
-    let payload = text.as_bytes();
+    write_ws_frame(stream, 0x1, text.as_bytes())
+}
+
+fn write_ws_frame(stream: &mut TcpStream, opcode: u8, payload: &[u8]) -> Result<()> {
     if payload.len() > MAX_CDP {
         return Err(Error::new(Code::Bounds, "CDP request exceeded 1 MiB"));
     }
-    let mut frame = vec![0x81];
+    if opcode >= 0x8 && payload.len() > 125 {
+        return Err(Error::new(Code::Protocol, "Chrome WebSocket control frame was too large"));
+    }
+    let mut frame = vec![0x80 | opcode];
     let n = payload.len();
     if n < 126 {
         frame.push(0x80 | n as u8);
@@ -542,8 +557,9 @@ fn write_ws(stream: &mut TcpStream, text: &str) -> Result<()> {
         frame.push(0x80 | 127);
         frame.extend_from_slice(&(n as u64).to_be_bytes());
     }
-    let mask = nonce().to_le_bytes();
-    frame.extend_from_slice(&mask[..4]);
+    let mut mask = [0u8; 4];
+    getrandom::fill(&mut mask).map_err(|_| Error::new(Code::Io, "could not generate a Chrome WebSocket mask"))?;
+    frame.extend_from_slice(&mask);
     frame.extend(payload.iter().enumerate().map(|(i, b)| b ^ mask[i % 4]));
     stream.write_all(&frame)?;
     stream.flush()?;
@@ -608,11 +624,7 @@ fn read_ws(stream: &mut TcpStream) -> Result<Vec<u8>> {
                 }
             }
             0x8 => return Err(Error::new(Code::Helper, "Chrome WebSocket closed")),
-            0x9 => {
-                let mut pong = vec![0x8a, payload.len() as u8];
-                pong.extend_from_slice(&payload);
-                stream.write_all(&pong)?;
-            }
+            0x9 => write_ws_frame(stream, 0xA, &payload)?,
             _ => {}
         }
     }
@@ -625,7 +637,12 @@ fn clean_page_text(raw: &str) -> String {
     limit(&serde_json::from_str::<String>(raw).unwrap_or_else(|_| raw.to_owned()), MAX_TEXT)
 }
 fn nonce() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as u64 ^ ((std::process::id() as u64) << 32)
+    let mut bytes = [0u8; 8];
+    if getrandom::fill(&mut bytes).is_ok() {
+        u64::from_le_bytes(bytes)
+    } else {
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as u64 ^ ((std::process::id() as u64) << 32)
+    }
 }
 
 #[cfg(test)]

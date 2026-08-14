@@ -35,6 +35,8 @@ fn run() -> Result<(), String> {
             verify(&root)?;
             package(&root)
         }
+        "version" => version(&root),
+        "release-manifest" => release_manifest(&root, env::args().nth(2).as_deref()),
         "manifest" => manifest(&root),
         "verify" => verify(&root),
         "benchmark" => benchmark(&root),
@@ -44,12 +46,13 @@ fn run() -> Result<(), String> {
         "size" => size(&root).map(|_| ()),
         "docs" => docs(&root),
         _ => {
-            println!("cargo xtask check|test|android|package|release|manifest|verify|benchmark|benchmark-live|stress-live|live|size|docs");
+            println!("cargo xtask check|test|android|package|release|version|release-manifest DIR|manifest|verify|benchmark|benchmark-live|stress-live|live|size|docs");
             Ok(())
         }
     }
 }
 fn verify(root: &Path) -> Result<(), String> {
+    version(root)?;
     cmd(root, "cargo", &["fmt", "--all", "--", "--check"])?;
     cmd(root, "cargo", &["clippy", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings"])?;
     cmd(root, "cargo", &["test", "--workspace", "--all-targets"])?;
@@ -559,6 +562,7 @@ fn size(root: &Path) -> Result<(usize, usize, usize), String> {
     Ok((rust, java, automation))
 }
 fn gate(root: &Path) -> Result<(), String> {
+    version(root)?;
     for p in ["crates", "packages", "wire", "android", "xtask", "scripts", "packaging"] {
         if root.join(p).is_dir() {
             return Err(format!("old wrapper folder remains: {p}"));
@@ -576,6 +580,74 @@ fn gate(root: &Path) -> Result<(), String> {
         }
     }
     size(root).map(|_| ())
+}
+fn version(root: &Path) -> Result<(), String> {
+    let version = fs::read_to_string(root.join("VERSION")).map_err(ioe)?;
+    let version = version.trim();
+    if version.split('.').count() != 3 || version.split('.').any(|part| part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit())) {
+        return Err("VERSION must contain a stable numeric semantic version".into());
+    }
+    if version != env!("CARGO_PKG_VERSION") {
+        return Err(format!("tools version {} does not match VERSION {version}", env!("CARGO_PKG_VERSION")));
+    }
+    for manifest in ["computer/Cargo.toml", "tools/Cargo.toml"] {
+        let text = fs::read_to_string(root.join(manifest)).map_err(ioe)?;
+        if !text.contains("version.workspace = true") {
+            return Err(format!("{manifest} must inherit the workspace version"));
+        }
+    }
+    let installer: Value = serde_json::from_slice(&fs::read(root.join("install/package.json")).map_err(ioe)?).map_err(|e| e.to_string())?;
+    if installer.get("version").and_then(Value::as_str) != Some(version) {
+        return Err("install/package.json does not match VERSION".into());
+    }
+    let lock: Value = serde_json::from_slice(&fs::read(root.join("package-lock.json")).map_err(ioe)?).map_err(|e| e.to_string())?;
+    if lock.pointer("/packages/install/version").and_then(Value::as_str) != Some(version) {
+        return Err("package-lock.json does not match VERSION".into());
+    }
+    let installer_cli = fs::read_to_string(root.join("install/cli.mjs")).map_err(ioe)?;
+    if !installer_cli.contains(&format!("const version=\"{version}\";")) {
+        return Err("install/cli.mjs does not match VERSION".into());
+    }
+    let gradle = fs::read_to_string(root.join("device/app/build.gradle")).map_err(ioe)?;
+    if !gradle.contains("def releaseVersion = file(\"../../VERSION\").text.trim()") || !gradle.contains("versionName = releaseVersion") {
+        return Err("Android helper must read its version from VERSION".into());
+    }
+    for path in ["README.md", "docs/getting-started.md", "install/README.md", "skills/android-use/SKILL.md"] {
+        let text = fs::read_to_string(root.join(path)).map_err(ioe)?;
+        if text.contains("v3") || text.contains("v2") {
+            return Err(format!("stale product version marker in {path}"));
+        }
+    }
+    println!("version={version}");
+    Ok(())
+}
+fn release_manifest(root: &Path, directory: Option<&str>) -> Result<(), String> {
+    version(root)?;
+    let directory = directory.map(PathBuf::from).ok_or_else(|| "release-manifest requires a directory".to_owned())?;
+    let directory = if directory.is_absolute() { directory } else { root.join(directory) };
+    if !directory.is_dir() {
+        return Err(format!("release directory does not exist: {}", directory.display()));
+    }
+    let mut files = fs::read_dir(&directory).map_err(ioe)?.map(|entry| entry.map(|entry| entry.path()).map_err(ioe)).collect::<std::result::Result<Vec<_>, _>>()?;
+    files.retain(|path| path.is_file() && !matches!(path.file_name().and_then(|name| name.to_str()), Some("SHA256SUMS" | "release-manifest.json")));
+    files.sort();
+    if files.is_empty() {
+        return Err("release directory has no files to checksum".into());
+    }
+    let mut assets = serde_json::Map::new();
+    let mut sums = String::new();
+    for path in files {
+        let name = path.file_name().and_then(|name| name.to_str()).ok_or_else(|| "release asset name was not UTF-8".to_owned())?;
+        let bytes = fs::read(&path).map_err(ioe)?;
+        let digest = hex(&Sha256::digest(&bytes));
+        sums.push_str(&format!("{digest}  {name}\n"));
+        assets.insert(name.to_owned(), json!({"bytes":bytes.len(),"sha256":digest}));
+    }
+    fs::write(directory.join("SHA256SUMS"), sums).map_err(ioe)?;
+    let commit = env::var("GITHUB_SHA").unwrap_or_else(|_| "local".into());
+    let version = fs::read_to_string(root.join("VERSION")).map_err(ioe)?.trim().to_owned();
+    let manifest = json!({"schema":1,"product":"android-use","version":version,"commit":commit,"assets":assets});
+    fs::write(directory.join("release-manifest.json"), serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?).map_err(ioe)
 }
 fn docs(root: &Path) -> Result<(), String> {
     for p in [

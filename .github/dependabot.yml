@@ -1,7 +1,7 @@
 version: 2
 updates:
   - package-ecosystem: cargo
-    directory: /computer
+    directory: /
     schedule:
       interval: monthly
   - package-ecosystem: npm
@@ -10,5 +10,9 @@ updates:
       interval: monthly
   - package-ecosystem: gradle
     directory: /device
+    schedule:
+      interval: monthly
+  - package-ecosystem: github-actions
+    directory: /
     schedule:
       interval: monthly

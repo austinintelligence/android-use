@@ -1,15 +1,15 @@
 # Android Use installer
 
-This package gives people one setup command. It selects and verifies the files for their computer, then opens the Android screens that still need the owner's approval.
+The official installation path is the matching archive from [GitHub Releases](https://github.com/austinintelligence/android-use/releases). It gives people one setup command, verifies the bundled files for their computer, then opens the Android screens that still need the owner's approval.
 
 Normal commands:
 
 ```text
-npx android-use setup
-npx android-use status
-npx android-use doctor
-npx android-use update
-npx android-use uninstall
+au setup
+au status
+au doctor
+au update
+au uninstall
 ```
 
-`npx android-use setup` is reserved for the published package and must not be documented as available until npm publication succeeds. Developers can set `AU_BIN` to a trusted local build.
+This directory is the optional npm launcher source. It is not the primary install route until the package is published by its owner. Developers can set `AU_BIN` to a trusted local build when testing it.

@@ -40,7 +40,7 @@ fn rpc(engine: &mut Engine, v: Value) -> Option<Value> {
     let method = v.get("method").and_then(Value::as_str).unwrap_or("");
     id.as_ref()?;
     let result = match method {
-        "initialize" => Ok(json!({"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"android-use","version":"3.0.0"}})),
+        "initialize" => Ok(json!({"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"android-use","version":env!("CARGO_PKG_VERSION")}})),
         "tools/list" => Ok(json!({"tools":tool_schemas()})),
         "tools/call" => {
             let p = v.get("params").cloned().unwrap_or(Value::Null);

@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/austinintelligence/android-use/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/austinintelligence/android-use/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-8CF2C1"></a>
-  <a href="https://github.com/austinintelligence/android-use/releases"><img alt="GitHub release" src="https://img.shields.io/github/v/release/austinintelligence/android-use?include_prereleases"></a>
+  <a href="https://github.com/austinintelligence/android-use/releases"><img alt="GitHub release" src="https://img.shields.io/github/v/release/austinintelligence/android-use"></a>
 </p>
 
 ## Your AI can use a real Android device
@@ -54,9 +54,9 @@ Agent: Opened Chrome, loaded Yellowstone, and confirmed the page.
 
 ## Setup is one guided command
 
-You need Android 8 or newer, a data-capable USB cable, and Windows, macOS, or Linux.
+You need Android 8 or newer, a data-capable USB cable, and a supported release host: Windows x86_64, macOS Apple Silicon, or Linux x86_64.
 
-1. Download the package for your computer from [Releases](https://github.com/austinintelligence/android-use/releases) and unzip it.
+1. Download the archive for your computer from [Releases](https://github.com/austinintelligence/android-use/releases) and unzip it.
 2. Connect and unlock your Android device.
 3. Run one command:
 
@@ -70,7 +70,7 @@ Android Use checks the cable, remembers the device, installs its small helper, a
 Android Use is ready
 ```
 
-> **Current availability:** v3 packages have not been published yet. The setup above is the finished release flow; developers can use [the source build](docs/development.md) today. The README will not pretend an unpublished npm package exists.
+The release archive contains `au` and the Android Use helper together. Keep them in the same folder; `au setup` installs the matching helper automatically.
 
 [Full human quickstart →](docs/getting-started.md) · [Troubleshooting →](docs/troubleshooting.md)
 
@@ -122,6 +122,6 @@ Normal control stays between your computer and the connected device. Android sti
 
 ## Project status
 
-Android Use is an early open-source release. The typed interface, bounded execution model, helper authentication, Chrome control, and local artifact system are implemented and tested. Platform packages and optional Android capabilities may differ by release and device; `au doctor` is the authority for the connected setup.
+Android Use 1.0.0 is the supported release line. The typed interface, bounded execution model, helper authentication, Chrome control, and local artifact system are implemented and tested. Optional Android capabilities vary by device; `au doctor` is the authority for the connected setup.
 
 MIT licensed. Contributions are welcome—start with [CONTRIBUTING.md](CONTRIBUTING.md).

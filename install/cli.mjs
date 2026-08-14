@@ -6,7 +6,7 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here=dirname(fileURLToPath(import.meta.url));
-const version="3.0.0";
+const version="1.0.0";
 const command=process.argv[2]||"setup";
 if(command==="--version"||command==="version"){console.log(version);process.exit(0)}
 if(command==="--help"||command==="help"){console.log("Android Use\n\n  npx android-use setup       Connect and prepare one Android device\n  npx android-use status      Show readiness\n  npx android-use doctor      Explain anything that needs attention\n  npx android-use update      Update the Android helper\n  npx android-use uninstall   Remove Android Use from the enrolled device\n\nThe platform binary owns device setup. Use --json for machine output.");process.exit(0)}

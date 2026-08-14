@@ -12,7 +12,7 @@ Plans support tap, long press, text entry, scroll, system keys, gestures, app la
 
 ## Use Chrome
 
-Chrome control can list and select tabs; observe page titles, text, and interactive elements; navigate; click; focus; type; send keys; scroll; wait; reload; go back or forward; run bounded evaluation; and capture a page screenshot. Chrome must expose its Android debugging socket. Browser evaluation rejects network-capable JavaScript.
+Chrome control can list and select tabs; observe page titles, text, and interactive elements; navigate; click; focus; type; send keys; scroll; wait; reload; go back or forward; and capture a page screenshot. Chrome must expose its Android debugging socket. Android Use does not expose arbitrary page JavaScript evaluation to agents.
 
 ## Inspect supported device state
 

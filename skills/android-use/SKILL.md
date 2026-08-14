@@ -1,6 +1,6 @@
 ---
 name: android-use
-description: Fast bounded semantic Android control through Android Use v3.
+description: Fast bounded semantic Android control through Android Use.
 ---
 
 # Android Use

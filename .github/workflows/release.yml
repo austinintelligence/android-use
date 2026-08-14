@@ -1,48 +1,205 @@
 name: Release
-on: { push: { tags: ['v3.*'] } }
-permissions: { contents: write }
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
 jobs:
-  computer:
-    strategy: { matrix: { os: [ubuntu-24.04, windows-2022, macos-15] } }
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - run: rustup toolchain install 1.94.0 --profile minimal --component rustfmt --component clippy
-      - run: cargo +1.94.0 test --workspace --all-targets
-      - run: cargo +1.94.0 build --profile dist -p au
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with: { name: 'au-${{ matrix.os }}', path: 'target/dist/au*' }
-  helper:
+  validate:
+    name: Validate release source and helper
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Validate immutable release version
+        shell: bash
+        run: |
+          version="$(tr -d '\r\n' < VERSION)"
+          test "$GITHUB_REF_NAME" = "v$version"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '20.11.1'
+          cache: npm
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
-        with: { distribution: temurin, java-version: '17' }
+        with:
+          distribution: temurin
+          java-version: '17'
       - uses: gradle/actions/setup-gradle@ac638b010cf58a27ee6c972d7336334ccaf61c96
-        with: { gradle-version: '9.1.0' }
-      - name: Require owner helper signer
-        shell: pwsh
+        with:
+          gradle-version: '9.1.0'
+      - name: Install Rust release toolchain
+        run: rustup toolchain install 1.94.0 --profile minimal --component rustfmt --component clippy; rustup default 1.94.0
+      - name: Configure the pinned Android helper signer
+        shell: bash
         env:
           AUBRIDGE_KEYSTORE_B64: ${{ secrets.AUBRIDGE_KEYSTORE_B64 }}
           AUBRIDGE_STORE_PASSWORD: ${{ secrets.AUBRIDGE_STORE_PASSWORD }}
           AUBRIDGE_KEY_PASSWORD: ${{ secrets.AUBRIDGE_KEY_PASSWORD }}
         run: |
-          if (!$env:AUBRIDGE_KEYSTORE_B64 -or !$env:AUBRIDGE_STORE_PASSWORD -or !$env:AUBRIDGE_KEY_PASSWORD) { throw 'Owner helper signing secrets are required.' }
-          $state = Join-Path $env:LOCALAPPDATA 'Codex/android-use'
-          New-Item -ItemType Directory -Force (Join-Path $state 'keys') | Out-Null
-          $key = Join-Path $state 'keys/aubridge.keystore'
-          [IO.File]::WriteAllBytes($key,[Convert]::FromBase64String($env:AUBRIDGE_KEYSTORE_B64))
-          @("storeFile=$key","storePassword=$env:AUBRIDGE_STORE_PASSWORD",'keyAlias=aubridge',"keyPassword=$env:AUBRIDGE_KEY_PASSWORD") | Set-Content (Join-Path $state 'signing.properties')
-      - run: gradle --no-daemon :app:testDebugUnitTest :app:assembleRelease
-        working-directory: device
-      - name: Verify pinned helper signer
+          test -n "$AUBRIDGE_KEYSTORE_B64"
+          test -n "$AUBRIDGE_STORE_PASSWORD"
+          test -n "$AUBRIDGE_KEY_PASSWORD"
+          key_dir="$RUNNER_TEMP/android-use-signing"
+          mkdir -p "$key_dir"
+          printf '%s' "$AUBRIDGE_KEYSTORE_B64" | base64 --decode > "$key_dir/aubridge.keystore"
+          {
+            printf 'storeFile=%s\n' "$key_dir/aubridge.keystore"
+            printf 'storePassword=%s\n' "$AUBRIDGE_STORE_PASSWORD"
+            printf 'keyAlias=aubridge\n'
+            printf 'keyPassword=%s\n' "$AUBRIDGE_KEY_PASSWORD"
+          } > "$key_dir/signing.properties"
+          chmod 600 "$key_dir"/*
+          printf 'AUBRIDGE_SIGNING_PROPERTIES=%s\n' "$key_dir/signing.properties" >> "$GITHUB_ENV"
+      - name: Run the complete release validation gate
+        run: cargo +1.94.0 xtask verify
+      - name: Verify the helper signing identity
+        shell: bash
+        run: |
+          apk=device/app/build/outputs/apk/release/app-release.apk
+          signer="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n1)"
+          test -n "$signer"
+          actual="$($signer verify --print-certs "$apk" | sed -n 's/.*SHA-256 digest: *//p' | head -n1 | tr '[:upper:]' '[:lower:]')"
+          expected="$(tr -d '\r\n' < device/release-signer.sha256 | tr '[:upper:]' '[:lower:]')"
+          test "$actual" = "$expected"
+      - name: Stage the signed Android helper
+        shell: bash
+        run: |
+          version="$(tr -d '\r\n' < VERSION)"
+          mkdir release-helper
+          cp device/app/build/outputs/apk/release/app-release.apk "release-helper/android-use-v$version-android.apk"
+      - name: Generate the SPDX software bill of materials
+        uses: anchore/sbom-action@43a17d6e7add2b5535efe4dcae9952337c479a93
+        with:
+          path: .
+          format: spdx-json
+          output-file: android-use.spdx.json
+      - name: Stage the SBOM
+        shell: bash
+        run: |
+          test -s android-use.spdx.json
+          mkdir release-sbom
+          mv android-use.spdx.json release-sbom/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0
+        with:
+          name: release-helper
+          path: release-helper/android-use-*-android.apk
+          if-no-files-found: error
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0
+        with:
+          name: release-sbom
+          path: release-sbom/android-use.spdx.json
+          if-no-files-found: error
+
+  host-archives:
+    name: Build ${{ matrix.label }} archive
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            label: Windows x86_64
+            artifact: release-windows-x86_64
+            binary: au.exe
+            archive: zip
+          - os: macos-15
+            label: macOS Apple Silicon
+            artifact: release-macos-aarch64
+            binary: au
+            archive: tar.gz
+          - os: ubuntu-24.04
+            label: Linux x86_64
+            artifact: release-linux-x86_64
+            binary: au
+            archive: tar.gz
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install Rust release toolchain
+        run: rustup toolchain install 1.94.0 --profile minimal; rustup default 1.94.0
+      - name: Verify release version
+        run: cargo +1.94.0 xtask version
+      - name: Build the host binary
+        run: cargo +1.94.0 build --profile dist -p au
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: release-helper
+          path: helper
+      - name: Package Windows archive
+        if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          $apk = 'device/app/build/outputs/apk/release/app-release.apk'
-          $tool = Get-ChildItem "$env:ANDROID_HOME/build-tools/*/apksigner" | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
-          $text = (& $tool verify --print-certs $apk | Out-String)
-          $actual = [regex]::Match($text,'SHA-256 digest:\s*([0-9a-fA-F]+)').Groups[1].Value.ToLowerInvariant()
-          $expected = (Get-Content device/release-signer.sha256 -Raw).Trim().ToLowerInvariant()
-          if ($actual -ne $expected) { throw 'Helper signer does not match the pinned release signer.' }
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with: { name: aubridge, path: device/app/build/outputs/apk/release/app-release.apk }
+          $version = (Get-Content VERSION -Raw).Trim()
+          $stage = Join-Path $env:RUNNER_TEMP "android-use-$version-windows-x86_64"
+          $out = Join-Path $PWD 'release'
+          New-Item -ItemType Directory -Force $stage, $out | Out-Null
+          Copy-Item target/dist/au.exe (Join-Path $stage 'au.exe')
+          Copy-Item helper/*android.apk (Join-Path $stage 'aubridge.apk')
+          Copy-Item README.md, LICENSE, SECURITY.md $stage
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath (Join-Path $out "android-use-v$version-windows-x86_64.zip") -Force
+      - name: Package Unix archive
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          version="$(tr -d '\r\n' < VERSION)"
+          mkdir -p stage release
+          cp "target/dist/${{ matrix.binary }}" stage/au
+          cp helper/*android.apk stage/aubridge.apk
+          cp README.md LICENSE SECURITY.md stage/
+          case "${{ matrix.artifact }}" in
+            release-macos-aarch64) name="android-use-v$version-macos-aarch64.tar.gz" ;;
+            release-linux-x86_64) name="android-use-v$version-linux-x86_64.tar.gz" ;;
+          esac
+          tar -C stage -czf "release/$name" au aubridge.apk README.md LICENSE SECURITY.md
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0
+        with:
+          name: ${{ matrix.artifact }}
+          path: release/*
+          if-no-files-found: error
+
+  publish:
+    name: Attest and publish GitHub Release
+    needs: [validate, host-archives]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      attestations: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+      - name: Install Rust release toolchain
+        run: rustup toolchain install 1.94.0 --profile minimal
+      - name: Generate checksums and release manifest
+        run: cargo +1.94.0 xtask release-manifest release
+      - name: Verify the complete release set
+        shell: bash
+        run: |
+          version="$(tr -d '\r\n' < VERSION)"
+          test -s "release/android-use-v$version-windows-x86_64.zip"
+          test -s "release/android-use-v$version-macos-aarch64.tar.gz"
+          test -s "release/android-use-v$version-linux-x86_64.tar.gz"
+          test -s "release/android-use-v$version-android.apk"
+          test -s release/android-use.spdx.json
+          test -s release/SHA256SUMS
+          test -s release/release-manifest.json
+          (cd release && sha256sum --check SHA256SUMS)
+      - name: Attest release assets
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: release/*
+      - name: Create the stable GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          version="$(tr -d '\r\n' < VERSION)"
+          gh release create "$GITHUB_REF_NAME" release/* --verify-tag --title "android-use v$version" --notes-file .github/release-notes.md

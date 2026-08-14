@@ -10,7 +10,7 @@ Changed observations are `{"o":"8","g":42,"n":[[3,"Save","b",3]]}`. Node tuples 
 
 `android.act` accepts `id`, generation `g`, and plan `p`, plus optional `deadline_ms` and `max_mutations`. Operations are `tap`, `long`, `text`, `scroll`, `key`, `gesture`, `wait`, `assert`, `launch`, `capture`, `camera`, `microphone`, `screen_record`, `notification_open`, `notification_dismiss`, and `notification_action`. Predicates are `exists`, `missing`, `text`, and `generation_after`. Plans have at most 32 operations, 16 mutations, and a 30-second deadline. Camera, microphone, and screen-record actions require explicit user grants and return private artifact handles.
 
-Set `target:"browser"` for CDP plans. Browser operations are `navigate`, `back`, `forward`, `reload`, `click`, `focus`, `text`, `key`, `scroll`, `wait`, `eval`, `screenshot`, `select`, `close`, and `new`. Browser plans use the same 32-operation, 16-mutation, 30-second limits and host journal; screenshots become private artifact handles.
+Set `target:"browser"` for CDP plans. Browser operations are `navigate`, `back`, `forward`, `reload`, `click`, `focus`, `text`, `key`, `scroll`, `wait`, `screenshot`, `select`, `close`, and `new`. Arbitrary page JavaScript evaluation is intentionally unavailable. Browser plans use the same 32-operation, 16-mutation, 30-second limits and host journal; screenshots become private artifact handles.
 
 Set `target:"visual"` for one bounded `crop` operation: `["crop","h...",x,y,w,h]`. It returns a private host artifact handle.
 

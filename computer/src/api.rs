@@ -180,7 +180,6 @@ pub enum BrowserOp {
     Key(Box<str>),
     Scroll(i32),
     Wait(BrowserPredicate, u16),
-    Eval(Box<str>),
     Screenshot,
     Select(Box<str>),
     Close(Box<str>),
@@ -381,7 +380,6 @@ impl BrowserOp {
             Self::Key(key) => json!(["key", key]),
             Self::Scroll(px) => json!(["scroll", px]),
             Self::Wait(p, ms) => json!(["wait", p.wire(), ms]),
-            Self::Eval(expression) => json!(["eval", expression]),
             Self::Screenshot => json!(["screenshot"]),
             Self::Select(id) => json!(["select", id]),
             Self::Close(id) => json!(["close", id]),
@@ -536,15 +534,6 @@ fn parse_browser_op(v: &Value) -> Result<BrowserOp> {
                 return Err(Error::new(Code::Bounds, "wait timeout exceeds 30000"));
             }
             Ok(BrowserOp::Wait(predicate, ms as u16))
-        }
-        "eval" => {
-            exact(2)?;
-            let expression = string(Some(&a[1]), "expression", 4096)?;
-            let lower = expression.to_ascii_lowercase();
-            if ["fetch(", "xmlhttprequest", "websocket", "document.cookie", "localstorage", "sessionstorage"].iter().any(|bad| lower.contains(bad)) {
-                return Err(Error::new(Code::Unsupported, "browser expression uses a restricted capability"));
-            }
-            Ok(BrowserOp::Eval(expression.into_boxed_str()))
         }
         "select" | "close" => {
             exact(2)?;
@@ -879,7 +868,7 @@ mod tests {
         let plan = BrowserPlan::parse(json!({"target":"browser","id":"b1","g":4,"p":[["navigate","https://example.com"],["wait",["text","Example Domain"],1000]]})).unwrap();
         assert_eq!(plan.ops.len(), 2);
         assert_eq!(plan.wire(9)[1], "browser");
-        assert_eq!(BrowserPlan::parse(json!({"target":"browser","id":"b2","g":4,"p":[["eval","fetch('https://x')"]]})).unwrap_err().code, Code::Unsupported);
+        assert_eq!(BrowserPlan::parse(json!({"target":"browser","id":"b2","g":4,"p":[["eval","1+1"]]})).unwrap_err().code, Code::Unsupported);
         assert_eq!(Plan::parse(json!({"id":"m1","g":1,"p":[["camera","rear"],["microphone",1],["notification_dismiss","n"]]})).unwrap().ops.len(), 3);
         let visual = VisualPlan::parse(json!({"target":"visual","id":"v1","g":0,"p":[["crop","habc",0,0,1,1]]})).unwrap();
         assert_eq!(visual.wire(1)[1], "visual");

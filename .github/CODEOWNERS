@@ -1,0 +1,10 @@
+# Release and security-sensitive surfaces require maintainer review.
+* @austinintelligence
+
+/.github/ @austinintelligence
+/Cargo.toml @austinintelligence
+/Cargo.lock @austinintelligence
+/computer/ @austinintelligence
+/device/ @austinintelligence
+/install/ @austinintelligence
+/SECURITY.md @austinintelligence

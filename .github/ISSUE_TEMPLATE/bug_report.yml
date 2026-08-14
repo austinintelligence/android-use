@@ -15,10 +15,32 @@ body:
     validations:
       required: true
   - type: input
-    id: environment
+    id: host
     attributes:
-      label: Windows and Android environment
-      placeholder: "Windows/macOS/Linux and x64/ARM64; Android/OEM version"
+      label: Computer and Android Use version
+      placeholder: "Windows/macOS/Linux and x64/ARM64; au version"
+    validations:
+      required: true
+  - type: input
+    id: android
+    attributes:
+      label: Android device and version
+      placeholder: "Android version and device model; omit serials"
+    validations:
+      required: true
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Connection
+      options: [USB, Wireless ADB, Other]
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command or agent request
+      description: Remove secrets, account data, serials, and private URLs.
+      placeholder: "au doctor"
     validations:
       required: true
   - type: textarea
@@ -34,3 +56,8 @@ body:
       label: Expected and actual result
     validations:
       required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Safe diagnostics
+      description: Paste redacted `au doctor --json` output or error text. Do not attach captures, recordings, tokens, or account data.

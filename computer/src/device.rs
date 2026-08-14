@@ -206,7 +206,7 @@ impl Adb {
         Ok(())
     }
     pub(crate) fn forward(&self, d: &Device, remote: &str) -> Result<u16> {
-        if !matches!(remote, "localabstract:aubridge-v3" | "localabstract:aubridge-bootstrap-v3" | "localabstract:chrome_devtools_remote") {
+        if !matches!(remote, "localabstract:aubridge" | "localabstract:aubridge-bootstrap" | "localabstract:chrome_devtools_remote") {
             return Err(Error::new(Code::Protocol, "refusing unknown helper socket"));
         }
         let out = self.run(Some(&d.endpoint), &["forward", "tcp:0", remote], Duration::from_secs(5))?;
