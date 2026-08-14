@@ -81,12 +81,12 @@ jobs:
           test -s android-use.spdx.json
           mkdir release-sbom
           mv android-use.spdx.json release-sbom/
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-helper
           path: release-helper/android-use-*-android.apk
           if-no-files-found: error
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-sbom
           path: release-sbom/android-use.spdx.json
@@ -155,7 +155,7 @@ jobs:
             release-linux-x86_64) name="android-use-v$version-linux-x86_64.tar.gz" ;;
           esac
           tar -C stage -czf "release/$name" au aubridge.apk README.md LICENSE SECURITY.md
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ matrix.artifact }}
           path: release/*
