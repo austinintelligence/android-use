@@ -15,9 +15,8 @@
 - [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
 - [ ] `cargo test --workspace --all-targets`
 - [ ] `cargo build --workspace --release`
-- [ ] `npm test --workspace packages/installer`
-- [ ] `npm run docs:check`
-- [ ] `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-public.ps1`
+- [ ] `npm test --workspace install`
+- [ ] `npm run lint --workspace install`
 
 Live-device evidence is required for changes to transport, helper, media,
 location, web, or cleanup behavior. Redact serials and private artifacts.

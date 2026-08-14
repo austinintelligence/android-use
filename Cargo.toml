@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/android-use"]
+members = ["computer", "tools"]
 resolver = "2"
 
 [profile.release]
@@ -8,3 +8,9 @@ lto = "thin"
 codegen-units = 1
 strip = true
 panic = "abort"
+
+[profile.dist]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+strip = "symbols"

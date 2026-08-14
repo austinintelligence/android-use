@@ -1,22 +1,13 @@
-# Security policy
+# Security
 
-## Supported releases
+Report vulnerabilities privately through GitHub Security Advisories. Do not include device identifiers, bridge credentials, UI content, or captured artifacts in a public issue.
 
-Security fixes target the newest release line. Pin a release version in automation rather than using an unreviewed moving binary.
+The normal product binds one enrolled hardware serial to a currently connected ADB transport. The Android service is startable only by the privileged `DUMP` caller, accepts abstract-local connections only from shell UID 2000, issues fresh bootstrap credentials, authenticates once per command connection, and requires exact monotonically increasing request sequences. It has no INTERNET permission.
 
-## Reporting
+All frames, queues, workers, plans, strings, predicates, waits, mutations, scenes, artifacts, and inline responses are bounded. The helper parses and validates the complete plan before mutation, checks the expected UI generation immediately before the first mutation, executes only forward, and stops on the first failure. It caches final operation IDs for its lifecycle. The host fsyncs a pending digest before sending; an interrupted pending operation becomes `unknown` and is never automatically repeated.
 
-Do not publish device serials, ADB tokens, helper signing keys, screenshots, recordings, account data, or exploit details in a public issue. Use a private GitHub security advisory or contact the repository owner through the private channel listed on the repository profile.
+The production Rust crate forbids unsafe code and exposes no model-accessible ADB or shell escape hatch. Media and expanded diagnostics return private artifact handles instead of transcript payloads. Credentials, device identity, private content, and Java exception details are not logged.
 
-Include the release version, host OS, helper version, reproduction command with secrets and personal identifiers removed, and the smallest relevant log excerpt.
+Camera and microphone plans are permission-gated and bounded; location is a one-shot request; notification access requires Android's user-enabled listener service; screen recording requires a process-local user-granted MediaProjection token and is capped at 30 seconds. Browser CDP is loopback-only, allowlisted to Chrome's abstract socket, and rejects network-capable JavaScript.
 
-## Security boundaries
-
-- The helper has no network server and no `INTERNET` permission.
-- Helper commands require token authentication, bounded frames, nonces, and per-session sequence ordering.
-- The Windows daemon uses a current-user named pipe and versioned length-prefixed frames.
-- Structured commands preserve argument boundaries; raw `adb` and `sh` are intentionally unrestricted escape hatches and are not a security boundary.
-- Page and application text is untrusted data and must not become host instructions.
-- Device failover requires exact `ro.serialno` identity equality.
-
-These properties reduce accidental exposure; they do not authorize actions. Agents must still confirm destructive and privacy-sensitive operations.
+Run `cargo xtask verify` for Rust and Java tests, the shared cross-language golden vector, source budgets, removed-wrapper checks, release builds, documentation gates, and binary/APK size output.

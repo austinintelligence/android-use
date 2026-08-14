@@ -32,7 +32,7 @@ jobs:
           node-version: '20.11.1'
       - run: npm ci
       - run: npm audit --audit-level=high
-      - run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-public.ps1
+      - run: cargo xtask check
 
   dependency-review:
     if: github.event_name == 'pull_request'

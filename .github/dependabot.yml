@@ -1,7 +1,7 @@
 version: 2
 updates:
   - package-ecosystem: cargo
-    directory: /crates/android-use
+    directory: /computer
     schedule:
       interval: monthly
   - package-ecosystem: npm
@@ -9,6 +9,6 @@ updates:
     schedule:
       interval: monthly
   - package-ecosystem: gradle
-    directory: /android/aubridge
+    directory: /device
     schedule:
       interval: monthly

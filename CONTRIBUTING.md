@@ -1,6 +1,6 @@
 # Contributing to Android Use
 
-Thanks for helping. Start with the [developer guide](docs/developers/README.md) for the source layout and local setup.
+Thanks for helping. Start with the [project guide](README.md) for the source layout and local setup.
 
 ## Before changing code
 
@@ -22,11 +22,10 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-targets
 npm test
-npm run docs:check
-npm run skill:check
+npm run lint
 ```
 
-If you changed the Android helper, build it and run the APK validator described in the [developer guide](docs/developers/README.md). Live-device tests must use a harmless fixture or test activity, finite capture durations, temporary artifact storage, and independent cleanup proof. Do not manipulate a personal app merely to demonstrate a feature.
+If you changed the Android helper, build it with `cargo xtask android` or `cargo xtask package` and run the real-device suite with `cargo xtask live`. Live-device tests must use a harmless fixture or test activity, finite capture durations, temporary artifact storage, and independent cleanup proof. Do not manipulate a personal app merely to demonstrate a feature.
 
 ## Open a pull request
 

@@ -1,0 +1,1 @@
+{"plan":{"id":"9","g":44,"p":[["text",2,"Austin"],["tap",5],["wait",["text","Welcome"],2000]]},"frame":[17,"run",44,"9",8000,16,[["text",2,"Austin"],["tap",5],["wait",["text","Welcome"],2000]]],"success":[17,0,45,2],"stale":[17,1,45,0,0]}

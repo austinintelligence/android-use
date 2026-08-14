@@ -1,20 +1,20 @@
 /target/
-/crates/android-use/target/
-/android/aubridge/.gradle/
-/android/aubridge/build/
-/android/aubridge/app/build/
-/android/aubridge/fixture/build/
+/device/.gradle/
+/device/build/
+/device/app/build/
+/device/example/build/
 /artifacts/raw/
+/dist/
 
 # Local release state, device evidence, and private signing material.
 /artifacts/
-/android/aubridge/gradle-*/
-/android/aubridge/*.keystore
-/android/aubridge/*.jks
-/android/aubridge/signing.properties
+/device/gradle-*/
+/device/*.keystore
+/device/*.jks
+/device/signing.properties
 *.token
 *.pem
-!/packages/installer/release-public-key.pem
+!/install/release-public-key.pem
 *.p12
 *.jks
 *.keystore
@@ -24,7 +24,7 @@
 *.jpg
 *.jpeg
 *.png
-!/assets/*.png
+!/images/*.png
 
 # Local installer and package-manager state.
 node_modules/

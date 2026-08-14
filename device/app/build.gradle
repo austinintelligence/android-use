@@ -1,0 +1,66 @@
+plugins {
+    id "com.android.application"
+}
+
+def signingPropertiesFile = file(System.getenv("LOCALAPPDATA") + "/Codex/android-use/signing.properties")
+def signingProperties = new Properties()
+if (signingPropertiesFile.exists()) {
+    signingPropertiesFile.withInputStream { signingProperties.load(it) }
+}
+
+android {
+    namespace = "dev.codex.aubridge"
+    compileSdk = 36
+    buildToolsVersion = "36.0.0"
+
+    defaultConfig {
+        applicationId = "dev.codex.aubridge"
+        minSdk = 26
+        targetSdk = 36
+        versionCode = 5
+        versionName = "3.0.2"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        persistent {
+            if (signingPropertiesFile.exists()) {
+                storeFile = file(signingProperties.getProperty("storeFile"))
+                storePassword = signingProperties.getProperty("storePassword")
+                keyAlias = signingProperties.getProperty("keyAlias")
+                keyPassword = signingProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            if (signingPropertiesFile.exists()) {
+                signingConfig = signingConfigs.persistent
+            }
+        }
+        release {
+            debuggable = false
+            minifyEnabled = true
+            shrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (signingPropertiesFile.exists()) {
+                signingConfig = signingConfigs.persistent
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    testImplementation "junit:junit:4.13.2"
+    testImplementation "org.json:json:20250517"
+    androidTestImplementation "androidx.test.ext:junit:1.2.1"
+    androidTestImplementation "androidx.test:runner:1.6.2"
+    androidTestImplementation "androidx.test:core:1.6.1"
+    androidTestImplementation "androidx.test.espresso:espresso-core:3.6.1"
+}

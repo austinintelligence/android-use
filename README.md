@@ -1,100 +1,115 @@
-<p align="center">
-  <img src="assets/wordmark.svg" alt="Android Use" width="720">
-</p>
+# Android Use
 
-# Give your agent an Android device
+**Give AI an Android device.**
 
-Android Use lets AI agents see and control Android phones, tablets, emulators, and Android-based devices. It turns the screen into small, meaningful observations and uses bounded, verifiable actions instead of flooding the agent with screenshots or raw ADB output.
+Android Use lets an AI see and control an Android phone or tablet using the same apps, buttons, text fields, and browser pages you use.
 
-## Set it up
+## What you need
 
-Install the agent skill with one copy-and-paste command:
+- An Android phone or tablet.
+- A USB cable and permission to approve this computer on the device.
+- A Windows, macOS, or Linux computer.
 
-```sh
-npx skills add austinintelligence/android-use --skill android-use -g -a codex -y
-```
+You do not need to install Rust, Java, Gradle, or the Android SDK when using a release package.
 
-Then tell the agent: **“Use Android Use to set up this computer and my connected Android device. Walk me through anything you cannot safely automate.”** The skill checks the available release path, handles the computer-side work it can verify, and gives plain-language directions for the Android steps.
+## Install and connect
 
-The guided NPX installer is built and tested in this repository but is not yet published to npm. Do not use `npx android-use@latest` until the package is published. The current GitHub prerelease only contains the Windows x64 host and helper; the agent will explain that limitation instead of pretending a missing package exists.
-
-Android will ask you to approve a few things on the device. Accept the USB debugging prompt. When AU Bridge opens, enable Accessibility so the agent can understand the screen. Camera, microphone, notifications, and location stay off until you choose to enable them.
-
-When a supported host is installed, check the connection:
-
-```sh
-au ready
-```
-
-If it is not ready, run:
-
-```sh
-au doctor --repair
-```
-
-See the [step-by-step setup guide](docs/people/getting-started.md) for pictures-in-words instructions and common fixes.
-
-## Copy this to an agent
+Download the Android Use release package for your computer, then run:
 
 ```text
-Set up Android Use from https://github.com/austinintelligence/android-use.
-First install the skill with:
-npx skills add austinintelligence/android-use --skill android-use -g -a codex -y
-Then use $android-use. Verify which public installer or release assets are
-actually available before running them. Do everything you safely can on the
-computer. Pause only when Android needs me
-to unlock the device, approve USB debugging, or enable an AU Bridge permission.
-After each pause, tell me exactly what to tap in plain language, then continue.
-Finish by running `au ready --json` when `au` is installed, and explain any
-capability or release asset that is not ready.
-Do not bypass Android security prompts or change unrelated device settings.
+android-use setup
 ```
 
-## What agents can do
+The setup assistant finds one connected device, installs the Android Use helper, and checks that it is ready. If Android asks whether to trust this computer, unlock the device and tap **Allow**.
 
-- Read the visible interface as compact labels, controls, and stable references.
-- Tap, type, scroll, swipe, use system buttons, and wait for a result.
-- Open and manage apps, links, browser tabs, files, and notifications.
-- Capture bounded screenshots, recordings, camera, microphone, and location data after approval.
-- Reuse a warm connection for fast multi-step work and multiple devices.
-- Prove outcomes with assertions and receipts instead of assuming a tap worked.
+Android Use will tell you exactly when one approval is still needed:
 
-The user remains in control. Android Use does not bypass USB authorization, Accessibility consent, runtime permissions, lock screens, enterprise policy, or app security.
+```text
+Settings → Accessibility → Android Use → On
+```
 
-## Choose your documentation
+Check the result at any time:
 
-- [People](docs/people/README.md): setup, daily use, permissions, and troubleshooting in plain language.
-- [Agents](docs/agents/README.md): the operating loop, contract, safety rules, recipes, and adapter setup.
-- [Developers](docs/developers/README.md): source layout, architecture, testing, and releases.
-- [Skill source](skills/android-use/SKILL.md): the compact instructions installed into compatible agents.
+```text
+android-use status
+android-use doctor
+```
 
-## How it works
+Useful maintenance commands are:
 
-The native `au` command keeps ADB, the Android helper, and optional browser sessions warm. An agent observes the current screen, executes one bounded semantic plan, then verifies the postcondition. Large files and media stay in managed artifact storage instead of being copied into chat.
+```text
+android-use update
+android-use uninstall
+```
 
-For MCP-compatible tools and generic agents:
+`uninstall` removes the Android Use helper and Android Use's own local state. It does not remove unrelated Android tools or files.
 
-```sh
+If you are using the npm release, the same commands are available through `npx android-use setup`. A release archive is the easiest option until the npm package is published for your platform.
+
+## Privacy and permissions
+
+Android Use keeps normal control local to your computer and the connected device. It does not need Android internet access. Camera, microphone, location, notifications, screenshots, and screen recording are bounded and permission-aware. Android always controls the final permission prompt; Android Use never bypasses it.
+
+Optional permissions stay optional. `android-use doctor` shows what is ready and what still needs attention.
+
+## Using an AI agent
+
+Start one of the agent transports when your client asks for it:
+
+```text
 au serve --mcp
-# or
 au serve --jsonl
 ```
 
-The stable methods are `android.status`, `android.observe`, `android.execute`, `android.artifact`, and `android.recipe`.
+The agent has two small tools:
 
-## Supported systems
+- `android.read` — status, semantic screen state, browser state, capabilities, notifications, location, artifacts, and visual hashes.
+- `android.act` — short, generation-checked plans for Android, browser, and visual actions.
 
-Android Use ships native host builds for Windows, macOS, and Linux on x64 and ARM64. Managed Android platform tools are available on Windows x64, macOS, and Linux x64. Windows ARM64 and Linux ARM64 use a compatible existing ADB installation.
+The safe loop is simple: read state, act with the returned generation, then verify when the task needs confirmation. Stale results must be observed again. An uncertain mutation is never replayed automatically.
 
-The AU Bridge helper supports Android 8 and newer. Device makers customize Android, so individual media, notification, browser, and location features can vary. `au doctor --json` reports the capabilities available on the connected device.
+Browser control uses a bounded Chrome connection. It returns compact tabs, page text, and interactive references instead of dumping raw HTML. Large screenshots, camera captures, audio, video, and diagnostics stay behind private artifact handles.
 
-## Build from source
+## Capabilities
 
-You need Rust, Node.js, JDK 17, and the Android SDK. Start with the [developer guide](docs/developers/README.md), then run:
+| Area | Available |
+| --- | --- |
+| Android UI | Semantic observation, taps, text, scroll, keys, gestures, waits, assertions, app launch |
+| Browser | Chrome tabs, navigation, page text, interactive elements, click/focus/type/key/scroll, waits, reload, back/forward, bounded evaluation |
+| Media | Camera snapshots and microphone WAV artifacts when permission is granted |
+| Device state | Location and compact notification reads; safe notification actions where Android exposes them |
+| Screen recording | Bounded MP4 artifact after Android MediaProjection approval |
+| Visual tools | Screenshot artifacts, bounded crop, structural hash, sampled diff |
+| Interfaces | MCP, JSONL, and a small command-line interface |
 
-```sh
-cargo test --workspace --all-targets
-npm test
+## Project layout
+
+The source tree is intentionally small and readable:
+
+```text
+computer/       computer-side Rust engine
+device/         Android helper and example app
+tools/          build, test, package, and release commands
+install/        npm bootstrap package
+skills/         agent instructions
+images/         checked-in project images
 ```
 
-Android Use is available under the [MIT License](LICENSE). Security issues should be reported through [the private security process](SECURITY.md).
+Build output, local device state, and captures are ignored. They are not part of the release source tree.
+
+## Developer checks
+
+From a checkout with the development tools installed:
+
+```text
+cargo xtask verify
+cargo xtask package
+cargo xtask live
+cargo xtask stress-live
+cargo xtask benchmark
+cargo xtask benchmark-live
+```
+
+`cargo xtask live` uses harmless Settings and Chrome flows. Privacy-sensitive capture tests require explicit permission on the connected device.
+
+Read [SECURITY.md](SECURITY.md) before changing trust boundaries and [CONTRIBUTING.md](CONTRIBUTING.md) before sending a change.

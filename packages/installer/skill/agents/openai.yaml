@@ -1,4 +1,0 @@
-interface:
-  display_name: "Android Use"
-  short_description: "Set up and safely control Android devices"
-  default_prompt: "Use $android-use to set up and operate my authorized Android device. Automate the computer-side setup, guide me through Android prompts in plain language, use compact semantic observations and bounded plans, verify the real outcome, and clean up only resources created for the task."
