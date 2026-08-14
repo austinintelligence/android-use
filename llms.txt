@@ -1,0 +1,13 @@
+# Android Use
+
+> Give AI an Android device through a bounded semantic interface.
+
+Start: README.md
+Agent quickstart: docs/agents/quickstart.md
+Agent contract: AGENTS.md
+CLI reference: docs/reference/cli.md
+Agent protocol: docs/reference/agent-protocol.md
+Capabilities: docs/capabilities.md
+Security: SECURITY.md
+Troubleshooting: docs/troubleshooting.md
+Development: docs/development.md

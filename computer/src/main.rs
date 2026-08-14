@@ -42,6 +42,7 @@ fn run() -> Result<Value> {
             }
         }
         "status" => adapter::one_read(&mut Engine::open()?, "status", None, 0, None, None)?,
+        "devices" => install::devices()?,
         "observe" => {
             let base = a.get(1).filter(|s| s.as_str() != "--detail").map(String::as_str);
             let detail = u8::from(a.iter().any(|s| s == "--detail"));
@@ -87,9 +88,9 @@ fn run() -> Result<Value> {
         "uninstall" => install::uninstall()?,
         "version" | "--version" => serde_json::json!({"version":env!("CARGO_PKG_VERSION")}),
         "help" | "--help" | "-h" => {
-            serde_json::json!({"commands":["setup [APK]","status","doctor","update [APK]","uninstall","enroll ENDPOINT","repair [APK]","serve --mcp|--jsonl","observe [BASE] [--detail]","browser tabs|observe|text","capabilities","location","notifications","visual hash|diff","act JSON","artifact ID [START END]"]})
+            serde_json::json!({"commands":["devices","setup [APK]","status","doctor","update [APK]","uninstall","enroll ENDPOINT","repair [APK]","serve --mcp|--jsonl","observe [BASE] [--detail]","browser tabs|observe|text","capabilities","location","notifications","visual hash|diff","act JSON","artifact ID [START END]"]})
         }
-        _ => return Err(Error::new(Code::Args, "unknown command")),
+        _ => return Err(Error::new(Code::Args, format!("unknown command: {}", a[0]))),
     };
     Ok(out)
 }
@@ -99,13 +100,31 @@ fn parse(s: &str) -> Result<u64> {
 
 fn human_value(command: &str, value: &Value) -> String {
     match command {
-        "help" | "--help" | "-h" => "Android Use — Give AI an Android device.\n\nStart here:\n  au setup       Connect and prepare one Android device\n  au status      Show whether Android Use is ready\n  au doctor      Explain anything that needs attention\n  au update      Update the helper on the connected device\n  au uninstall   Remove Android Use from the enrolled device\n\nAdvanced:\n  au serve --mcp|--jsonl\n  au observe, au act, au browser, au artifact\n\nUse --json for machine-readable output.".into(),
+        "help" | "--help" | "-h" => "Android Use — Give AI an Android device.\n\nGet connected:\n  au devices      List connected Android devices\n  au setup        Prepare and remember one device\n  au status       Check whether Android Use is ready\n  au doctor       Explain anything that needs attention\n\nUse the device:\n  au observe      Read the visible interface\n  au browser      Read Chrome tabs or page state\n  au capabilities Show optional device capabilities\n  au notifications Read available notifications\n  au location     Read the current location\n\nConnect an agent:\n  au serve --mcp   Model Context Protocol over stdio\n  au serve --jsonl Typed JSON Lines over stdio\n\nMaintenance:\n  au update       Update the Android helper\n  au uninstall    Remove Android Use and its local state\n\nRun `au help --json` for the complete machine-readable command list.".into(),
         "version" | "--version" => format!("Android Use {}", value.get("version").and_then(Value::as_str).unwrap_or(env!("CARGO_PKG_VERSION"))),
         "status" => {
             if value.get("ok").and_then(Value::as_u64) == Some(1) {
                 format!("Android Use is ready\n\n✓ Android helper connected\n✓ UI generation {}\n✓ Capability mask {}", value["g"], value["cap"])
             } else {
                 "Android Use is not ready.\nRun: au doctor".into()
+            }
+        }
+        "devices" => {
+            let devices = value.get("devices").and_then(Value::as_array);
+            match devices {
+                Some(items) if !items.is_empty() => {
+                    let mut out = format!("Connected Android devices ({})", items.len());
+                    for item in items {
+                        out.push_str("\n\n✓ ");
+                        out.push_str(item.get("endpoint").and_then(Value::as_str).unwrap_or("Android device"));
+                        if let Some(state) = item.get("state").and_then(Value::as_str) {
+                            out.push_str(" — ");
+                            out.push_str(state);
+                        }
+                    }
+                    out
+                }
+                _ => "No ready Android device found.\n\nConnect and unlock one device, enable USB debugging, then approve this computer on Android.".into(),
             }
         }
         "setup" | "repair" | "update" => {

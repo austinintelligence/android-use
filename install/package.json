@@ -1,12 +1,15 @@
 {
   "name": "android-use",
   "version": "3.0.0",
-  "description": "Bootstrap the typed Android Use v3 engine",
+  "description": "Give AI agents fast, bounded access to an Android device",
   "type": "module",
   "bin": { "android-use": "cli.mjs" },
   "files": ["cli.mjs", "bin/**", "manifest.json", "LICENSE"],
   "engines": { "node": ">=20.11" },
-  "repository": { "type": "git", "url": "git+https://github.com/drperky20/android-use.git" },
+  "repository": { "type": "git", "url": "git+https://github.com/austinintelligence/android-use.git" },
+  "homepage": "https://github.com/austinintelligence/android-use#readme",
+  "bugs": { "url": "https://github.com/austinintelligence/android-use/issues" },
+  "keywords": ["android", "ai-agent", "mcp", "automation", "adb", "accessibility"],
   "license": "MIT",
   "scripts": { "lint": "node --check cli.mjs", "test": "node --test" },
   "publishConfig": { "access": "public" }

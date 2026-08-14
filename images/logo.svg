@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Android Use mark</title><desc id="desc">A phone-shaped portal with two agent signal dots.</desc>
+  <rect width="64" height="64" rx="16" fill="#111827"/>
+  <rect x="17" y="10" width="30" height="44" rx="8" fill="none" stroke="#8CF2C1" stroke-width="4"/>
+  <path d="M24 36c5-8 11-8 16 0" fill="none" stroke="#8CF2C1" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="26" cy="27" r="3" fill="#F8FAFC"/><circle cx="38" cy="27" r="3" fill="#F8FAFC"/>
+  <path d="M28 47h8" stroke="#8CF2C1" stroke-width="3" stroke-linecap="round"/>
+</svg>

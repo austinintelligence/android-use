@@ -14,6 +14,11 @@ pub fn enroll(endpoint: &str) -> Result<Value> {
     let _ = adb.enroll(&paths, endpoint)?;
     Ok(json!({"ok":1,"enrolled":1}))
 }
+pub fn devices() -> Result<Value> {
+    let adb = Adb::discover()?;
+    let devices = adb.devices_all()?.into_iter().map(|d| json!({"endpoint":d.endpoint,"state":d.state})).collect::<Vec<_>>();
+    Ok(json!({"ok":1,"devices":devices}))
+}
 pub fn setup(apk: Option<&Path>) -> Result<Value> {
     let paths = Paths::discover()?;
     let adb = Adb::discover()?;

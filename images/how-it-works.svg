@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 280" role="img" aria-labelledby="title desc">
+  <title id="title">How Android Use works</title><desc id="desc">An agent reads a compact semantic view, sends a bounded action, and receives verified updated state from an Android device over ADB and the authenticated helper.</desc>
+  <style>.bg{fill:#0b1220}.card{fill:#121d30;stroke:#31415d;stroke-width:2}.h{fill:#f8fafc;font:700 22px system-ui}.p{fill:#aab8cc;font:15px system-ui}.a{stroke:#8cf2c1;stroke-width:4;fill:none;marker-end:url(#m)}.tag{fill:#8cf2c1;font:700 14px system-ui}</style>
+  <defs><marker id="m" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0l8 4-8 4z" fill="#8cf2c1"/></marker></defs>
+  <rect class="bg" width="1040" height="280" rx="24"/>
+  <rect class="card" x="48" y="62" width="220" height="150" rx="18"/><text class="h" x="76" y="104">AI agent</text><text class="p" x="76" y="137">Codex, Claude Code,</text><text class="p" x="76" y="161">Cursor, or your app</text>
+  <rect class="card" x="410" y="40" width="220" height="200" rx="18"/><text class="h" x="438" y="82">android-use</text><text class="p" x="438" y="115">MCP or JSONL</text><text class="p" x="438" y="145">Semantic state</text><text class="p" x="438" y="170">Bounded plans</text><text class="p" x="438" y="195">Private artifacts</text>
+  <rect class="card" x="772" y="62" width="220" height="150" rx="18"/><text class="h" x="800" y="104">Android device</text><text class="p" x="800" y="137">ADB transport</text><text class="p" x="800" y="161">Authenticated helper</text><text class="p" x="800" y="185">System interfaces</text>
+  <path class="a" d="M268 105h130"/><text class="tag" x="299" y="90">read / act</text><path class="a" d="M630 105h130"/><text class="tag" x="665" y="90">USB</text>
+  <path class="a" d="M772 190H642"/><text class="tag" x="660" y="218">updated state</text><path class="a" d="M410 190H280"/><text class="tag" x="300" y="218">compact result</text>
+</svg>

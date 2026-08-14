@@ -559,7 +559,7 @@ fn size(root: &Path) -> Result<(usize, usize, usize), String> {
     Ok((rust, java, automation))
 }
 fn gate(root: &Path) -> Result<(), String> {
-    for p in ["crates", "packages", "wire", "android", "xtask", "scripts", "docs", "packaging"] {
+    for p in ["crates", "packages", "wire", "android", "xtask", "scripts", "packaging"] {
         if root.join(p).is_dir() {
             return Err(format!("old wrapper folder remains: {p}"));
         }
@@ -580,7 +580,16 @@ fn gate(root: &Path) -> Result<(), String> {
 fn docs(root: &Path) -> Result<(), String> {
     for p in [
         "README.md",
+        "AGENTS.md",
+        "llms.txt",
         "SECURITY.md",
+        "docs/README.md",
+        "docs/getting-started.md",
+        "docs/agents/quickstart.md",
+        "docs/reference/cli.md",
+        "docs/reference/agent-protocol.md",
+        "docs/troubleshooting.md",
+        "examples/README.md",
         "skills/android-use/SKILL.md",
         "skills/android-use/references/protocol.md",
         "skills/android-use/references/safety.md",
