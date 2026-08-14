@@ -2,6 +2,8 @@
 
 `au` is friendly in a terminal and JSON-first when piped to software. Use `--human` or `--json` to choose explicitly.
 
+From a release archive, run `.\au.exe` in Windows PowerShell or `./au` on macOS/Linux. The shorter `au` examples below assume the archive folder has been added to your `PATH`.
+
 ## First-day commands
 
 | Command | Purpose |

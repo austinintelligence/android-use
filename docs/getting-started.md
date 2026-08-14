@@ -32,10 +32,16 @@ Only choose **Always allow from this computer** when it is your computer.
 
 ## 3. Run setup
 
-From the unzipped Android Use package:
+Open a terminal in the unzipped Android Use package, then run one of these:
 
-```console
-au setup
+```powershell
+# Windows PowerShell
+.\au.exe setup
+```
+
+```sh
+# macOS or Linux
+./au setup
 ```
 
 Keep the device unlocked. Setup will:
@@ -75,7 +81,8 @@ See the [Agent Quickstart](agents/quickstart.md) for client setup.
 Run:
 
 ```console
-au doctor
+.\au.exe doctor # Windows PowerShell
+# or: ./au doctor  # macOS or Linux
 ```
 
 It tells you what is missing in plain language. The most common causes are a charge-only cable, a locked device, a USB debugging prompt waiting on Android, or Accessibility not yet approved.

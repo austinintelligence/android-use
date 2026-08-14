@@ -58,10 +58,16 @@ You need Android 8 or newer, a data-capable USB cable, and a supported release h
 
 1. Download the archive for your computer from [Releases](https://github.com/austinintelligence/android-use/releases) and unzip it.
 2. Connect and unlock your Android device.
-3. Run one command:
+3. Open a terminal in the unzipped folder, then run:
 
-```console
-au setup
+```powershell
+# Windows PowerShell
+.\au.exe setup
+```
+
+```sh
+# macOS or Linux
+./au setup
 ```
 
 Android Use checks the cable, remembers the device, installs its small helper, and opens the right Android permission screen. Approve the prompts on the device and leave the command running. It finishes when everything is ready.
@@ -70,7 +76,7 @@ Android Use checks the cable, remembers the device, installs its small helper, a
 Android Use is ready
 ```
 
-The release archive contains `au` and the Android Use helper together. Keep them in the same folder; `au setup` installs the matching helper automatically.
+The release archive contains `au` and the Android Use helper together. Keep them in the same folder; the setup command installs the matching helper automatically.
 
 [Full human quickstart →](docs/getting-started.md) · [Troubleshooting →](docs/troubleshooting.md)
 
