@@ -2,6 +2,8 @@
 
 `au` is friendly in a terminal and JSON-first when piped to software. Use `--human` or `--json` to choose explicitly.
 
+Setup and doctor JSON responses include `phase` and `next_step`. The next step has a `kind` (`agent`, `computer`, `user`, or `ready`), an ordered `steps` list, and a `resume` command so an agent can pause for an Android-owned approval and continue without guessing.
+
 From a release archive, run `.\au.exe` in Windows PowerShell or `./au` on macOS/Linux. The shorter `au` examples below assume the archive folder has been added to your `PATH`.
 
 ## First-day commands

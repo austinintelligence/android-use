@@ -8,6 +8,8 @@ au doctor
 
 It separates required checks from optional capabilities and tells you the next Android-side action.
 
+Agents should use `au doctor --json`. The response includes a `phase`, a machine-readable `next_step`, and the exact `resume` command for the next setup boundary.
+
 ## No device appears
 
 - Use a data-capable cable and unlock Android.

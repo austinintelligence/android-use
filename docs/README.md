@@ -6,6 +6,7 @@ Start with the result you want.
 
 - [Human Quickstart](getting-started.md) — connect one device and reach the first successful observation.
 - [Agent Quickstart](agents/quickstart.md) — connect Codex, Claude Code, Cursor, or another MCP client.
+- [Agent installation and recovery](agents/install.md) — copy-paste setup, skill registration, host installation, and resumable Android guidance.
 - [Examples](../examples/README.md) — short, tested workflows.
 
 ## Use Android Use

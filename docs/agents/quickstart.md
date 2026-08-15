@@ -2,6 +2,8 @@
 
 Android Use is a device tool, not an autonomous agent. Connect it to the coding agent you already use.
 
+For a one-paste installation that registers the skill, installs the host runtime, walks through Android permissions, and configures MCP, use the [Agent installation and recovery guide](install.md). The README contains the same copy-paste prompt for people who start there.
+
 ## MCP setup
 
 Add a local stdio MCP server whose command is the absolute path to `au` and whose arguments are:
@@ -18,7 +20,7 @@ Check whether Android Use is ready. Observe the current screen, but do not chang
 
 The agent should call `android.read` with `q=status`, then `q=observe`.
 
-## Copy-paste instruction for an agent
+## Copy-paste instruction for an already installed agent
 
 ```text
 Read AGENTS.md in this repository. Check `au status`, then connect `au serve --mcp` as a local stdio MCP server. Observe the device without changing it. If setup is incomplete, run `au doctor` and tell me exactly which Android-controlled approval remains. Never replay a partial or unknown mutation.
