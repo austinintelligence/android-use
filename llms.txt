@@ -4,6 +4,7 @@
 
 Start: README.md
 Agent quickstart: docs/agents/quickstart.md
+Agent installation and recovery: docs/agents/install.md
 Agent contract: AGENTS.md
 CLI reference: docs/reference/cli.md
 Agent protocol: docs/reference/agent-protocol.md

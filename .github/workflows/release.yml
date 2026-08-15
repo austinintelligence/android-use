@@ -140,6 +140,10 @@ jobs:
           Copy-Item target/dist/au.exe (Join-Path $stage 'au.exe')
           Copy-Item helper/*android.apk (Join-Path $stage 'aubridge.apk')
           Copy-Item README.md, LICENSE, SECURITY.md $stage
+          Copy-Item docs/agents/install.md (Join-Path $stage 'install.md')
+          $skill = Join-Path $stage 'skills/android-use'
+          New-Item -ItemType Directory -Force $skill | Out-Null
+          Copy-Item skills/android-use/* $skill -Recurse
           Compress-Archive -Path (Join-Path $stage '*') -DestinationPath (Join-Path $out "android-use-v$version-windows-x86_64.zip") -Force
       - name: Package Unix archive
         if: matrix.archive == 'tar.gz'
@@ -150,11 +154,14 @@ jobs:
           cp "target/dist/${{ matrix.binary }}" stage/au
           cp helper/*android.apk stage/aubridge.apk
           cp README.md LICENSE SECURITY.md stage/
+          cp docs/agents/install.md stage/install.md
+          mkdir -p stage/skills/android-use
+          cp -R skills/android-use/. stage/skills/android-use/
           case "${{ matrix.artifact }}" in
             release-macos-aarch64) name="android-use-v$version-macos-aarch64.tar.gz" ;;
             release-linux-x86_64) name="android-use-v$version-linux-x86_64.tar.gz" ;;
           esac
-          tar -C stage -czf "release/$name" au aubridge.apk README.md LICENSE SECURITY.md
+          tar -C stage -czf "release/$name" au aubridge.apk README.md LICENSE SECURITY.md install.md skills
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ matrix.artifact }}

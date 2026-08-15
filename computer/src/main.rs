@@ -142,10 +142,7 @@ fn human_value(command: &str, value: &Value) -> String {
             if value.get("settings_opened").and_then(Value::as_u64) == Some(1) && !ready {
                 out.push_str("\n✓ Opened the right Android settings screen");
             }
-            if let Some(next) = value.get("next").and_then(Value::as_str) {
-                out.push_str("\n\nAction needed:\n");
-                out.push_str(next);
-            }
+            out.push_str(&human_next_step(value));
             out
         }
         "doctor" => human_doctor(value),
@@ -171,7 +168,29 @@ fn human_doctor(value: &Value) -> String {
     } else if value.get("error").is_some() {
         out.push_str("\n\n✗ Android device tools need attention.");
     }
+    out.push_str(&human_next_step(value));
     out.push_str(if value.get("ready").and_then(Value::as_u64) == Some(1) { "\n\nOverall: Ready" } else { "\n\nOverall: Needs attention" });
+    out
+}
+
+fn human_next_step(value: &Value) -> String {
+    let Some(step) = value.get("next_step").and_then(Value::as_object) else {
+        return value.get("next").and_then(Value::as_str).map(|next| format!("\n\nAction needed:\n{next}")).unwrap_or_default();
+    };
+    let mut out = String::from("\n\nNext step:");
+    if let Some(title) = step.get("title").and_then(Value::as_str) {
+        out.push_str(&format!("\n{title}"));
+    }
+    if let Some(steps) = step.get("steps").and_then(Value::as_array) {
+        for (index, item) in steps.iter().enumerate() {
+            if let Some(item) = item.as_str() {
+                out.push_str(&format!("\n  {}. {item}", index + 1));
+            }
+        }
+    }
+    if let Some(resume) = step.get("resume").and_then(Value::as_str) {
+        out.push_str(&format!("\nResume: {resume}"));
+    }
     out
 }
 

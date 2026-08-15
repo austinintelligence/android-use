@@ -76,6 +76,8 @@ fn package(root: &Path) -> Result<(), String> {
     let apk = release_apk(root)?;
     copy(&apk, &dist.join("aubridge.apk"))?;
     copy(&root.join("skills/android-use/SKILL.md"), &dist.join("SKILL.md"))?;
+    copy(&root.join("docs/agents/install.md"), &dist.join("install.md"))?;
+    copy_tree(&root.join("skills/android-use"), &dist.join("skills/android-use"))?;
     let bundle = dist.join("npm/android-use");
     copy_tree(&root.join("install"), &bundle)?;
     let bin = bundle.join("bin").join(platform_name());
@@ -657,6 +659,7 @@ fn docs(root: &Path) -> Result<(), String> {
         "SECURITY.md",
         "docs/README.md",
         "docs/getting-started.md",
+        "docs/agents/install.md",
         "docs/agents/quickstart.md",
         "docs/reference/cli.md",
         "docs/reference/agent-protocol.md",
