@@ -6,7 +6,7 @@ jobs:
     strategy: { matrix: { os: [ubuntu-24.04, windows-2022, macos-15] } }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - run: rustup toolchain install 1.94.0 --profile minimal --component rustfmt --component clippy; rustup default 1.94.0
       - run: cargo +1.94.0 xtask check
       - run: cargo +1.94.0 test --workspace --all-targets
@@ -14,7 +14,7 @@ jobs:
   helper:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
         with: { distribution: temurin, java-version: '17' }
       - uses: gradle/actions/setup-gradle@ac638b010cf58a27ee6c972d7336334ccaf61c96
@@ -24,7 +24,7 @@ jobs:
   installer:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with: { node-version: '22.18.0', cache: npm }
       - run: npm ci
