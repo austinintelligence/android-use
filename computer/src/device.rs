@@ -265,9 +265,34 @@ fn run_bounded(program: &Path, args: &[&str], timeout: Duration) -> Result<Vec<u
         return Err(Error::new(Code::Bounds, "adb output exceeded 256 KiB"));
     }
     if !status.success() {
-        return Err(Error::new(Code::Device, format!("adb command failed with {status}")));
+        let detail = sanitize_stderr(&stderr);
+        return Err(Error::new(Code::Device, format!("adb command failed with {status}: {detail}")));
     }
     Ok(stdout)
+}
+
+fn sanitize_stderr(bytes: &[u8]) -> String {
+    let raw: String = String::from_utf8_lossy(bytes).chars().map(|c| if c.is_control() && !matches!(c, '\t' | '\n' | '\r') { ' ' } else { c }).collect();
+    let mut parts = Vec::new();
+    let mut previous = None;
+    for word in raw.split_whitespace().take(32) {
+        let lower = word.to_ascii_lowercase();
+        let safe = if lower.contains("token") || lower.contains("secret") || lower.contains("password") || word.len() > 160 || word.contains(":\\") || word.contains("/") {
+            "<redacted>"
+        } else {
+            word
+        };
+        if previous != Some(safe) {
+            parts.push(safe);
+            previous = Some(safe);
+        }
+    }
+    let text = parts.join(" ");
+    if text.is_empty() {
+        "no diagnostic".into()
+    } else {
+        text.chars().take(512).collect()
+    }
 }
 
 pub fn atomic(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -304,5 +329,14 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let p = Paths::at(d.path().to_path_buf()).unwrap();
         assert!(p.root.starts_with(d.path()));
+    }
+
+    #[test]
+    fn stderr_is_bounded_and_sanitized() {
+        let value = sanitize_stderr(b"\x1b[31mfailed token=secret C:\\Users\\person\\secret\x1b[0m failed failed");
+        assert!(!value.contains('\x1b'));
+        assert!(!value.to_ascii_lowercase().contains("token"));
+        assert!(!value.contains("C:\\"));
+        assert!(value.len() <= 512);
     }
 }

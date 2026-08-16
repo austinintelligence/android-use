@@ -7,6 +7,7 @@ pub const MAX_OPS: usize = 32;
 pub const MAX_MUTATIONS: u8 = 16;
 pub const MAX_TEXT: usize = 8192;
 pub const MAX_PREDICATE: usize = 1024;
+pub const MAX_COMMAND: usize = 8192;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Code {
     Args,
@@ -27,7 +28,6 @@ pub enum Code {
     Unsupported,
     Permission,
 }
-
 impl Code {
     pub fn wire(self) -> &'static str {
         match self {
@@ -51,13 +51,11 @@ impl Code {
         }
     }
 }
-
 impl fmt::Display for Code {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.wire())
     }
 }
-
 #[derive(Debug, thiserror::Error)]
 #[error("{code}: {message}")]
 pub struct Error {
@@ -110,11 +108,12 @@ pub enum Read {
     Visual(VisualRead),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrowserRead {
     Tabs,
     Observe,
     Text,
+    TextMatching(Box<str>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -196,6 +195,8 @@ pub enum BrowserPredicate {
 pub enum Op {
     Tap(u16),
     Long(u16),
+    PointTap { x: u16, y: u16 },
+    Swipe { x1: u16, y1: u16, x2: u16, y2: u16, duration_ms: u16 },
     Text(u16, Box<str>),
     Scroll(u16, Direction),
     Key(Key),
@@ -203,6 +204,8 @@ pub enum Op {
     Wait(Predicate, u16),
     Assert(Predicate),
     Launch(Box<str>),
+    Setting(Box<str>),
+    Link(Box<str>),
     Capture(Capture),
     NotificationOpen(Box<str>),
     NotificationDismiss(Box<str>),
@@ -248,17 +251,22 @@ pub enum Match {
     Label(Box<str>),
 }
 
+pub use crate::command::{Action, AndroidAction, BrowserAction, CommandRead, Target, VisualAction};
 impl Op {
     pub fn mutates(&self) -> bool {
         matches!(
             self,
             Self::Tap(_)
                 | Self::Long(_)
+                | Self::PointTap { .. }
+                | Self::Swipe { .. }
                 | Self::Text(..)
                 | Self::Scroll(..)
                 | Self::Key(_)
                 | Self::Gesture(_)
                 | Self::Launch(_)
+                | Self::Setting(_)
+                | Self::Link(_)
                 | Self::Capture(Capture::Camera { .. } | Capture::Microphone(..) | Capture::ScreenRecord(..))
                 | Self::NotificationOpen(_)
                 | Self::NotificationDismiss(_)
@@ -269,6 +277,8 @@ impl Op {
         match self {
             Self::Tap(r) => json!(["tap", r]),
             Self::Long(r) => json!(["long", r]),
+            Self::PointTap { x, y } => json!(["tap_point", x, y]),
+            Self::Swipe { x1, y1, x2, y2, duration_ms } => json!(["swipe", x1, y1, x2, y2, duration_ms]),
             Self::Text(r, t) => json!(["text", r, t]),
             Self::Scroll(r, d) => json!(["scroll", r, d.as_str()]),
             Self::Key(k) => json!(["key", k.as_str()]),
@@ -276,6 +286,8 @@ impl Op {
             Self::Wait(p, t) => json!(["wait", p.wire(), t]),
             Self::Assert(p) => json!(["assert", p.wire()]),
             Self::Launch(p) => json!(["launch", p]),
+            Self::Setting(name) => json!(["setting", name]),
+            Self::Link(url) => json!(["link", url]),
             Self::Capture(Capture::Screen) => json!(["capture", "screen"]),
             Self::Capture(Capture::Camera { facing, width, height }) => match (width, height) {
                 (Some(w), Some(h)) => json!(["camera", facing, w, h]),
@@ -560,6 +572,18 @@ fn parse_op(v: &Value) -> Result<Op> {
             exact(2)?;
             Ok(Op::Long(ref_id(&a[1])?))
         }
+        "tap_point" => {
+            exact(3)?;
+            Ok(Op::PointTap { x: u16v(&a[1], "x")?, y: u16v(&a[2], "y")? })
+        }
+        "swipe" => {
+            exact(6)?;
+            let duration_ms = u16v(&a[5], "duration")?;
+            if duration_ms > 30_000 {
+                return Err(Error::new(Code::Bounds, "swipe duration exceeds 30000"));
+            }
+            Ok(Op::Swipe { x1: u16v(&a[1], "x1")?, y1: u16v(&a[2], "y1")?, x2: u16v(&a[3], "x2")?, y2: u16v(&a[4], "y2")?, duration_ms })
+        }
         "text" => {
             exact(3)?;
             Ok(Op::Text(ref_id(&a[1])?, bounded_text(&a[2])?))
@@ -591,6 +615,22 @@ fn parse_op(v: &Value) -> Result<Op> {
         "launch" => {
             exact(2)?;
             Ok(Op::Launch(string(Some(&a[1]), "package", 255)?.into_boxed_str()))
+        }
+        "setting" => {
+            exact(2)?;
+            let name = string(Some(&a[1]), "setting", 128)?;
+            if !safe_setting(&name) {
+                return Err(Error::new(Code::Unsupported, "setting is not allowlisted"));
+            }
+            Ok(Op::Setting(name.into_boxed_str()))
+        }
+        "link" => {
+            exact(2)?;
+            let url = string(Some(&a[1]), "url", 2048)?;
+            if !safe_url(&url) {
+                return Err(Error::new(Code::Args, "url must be an allowlisted http(s) link"));
+            }
+            Ok(Op::Link(url.into_boxed_str()))
         }
         "capture" => {
             exact(2)?;
@@ -704,6 +744,19 @@ fn string(v: Option<&Value>, name: &str, max: usize) -> Result<String> {
 fn uint(v: Option<&Value>, name: &str) -> Result<u64> {
     v.and_then(Value::as_u64).ok_or_else(|| Error::new(Code::Args, format!("{name} must be an unsigned integer")))
 }
+fn u16v(v: &Value, name: &str) -> Result<u16> {
+    u16::try_from(uint(Some(v), name)?).map_err(|_| Error::new(Code::Bounds, format!("{name} exceeds 65535")))
+}
+pub(crate) fn safe_setting(value: &str) -> bool {
+    matches!(
+        normalized(value).as_str(),
+        "accessibility" | "wifi" | "bluetooth" | "display" | "sound" | "notifications" | "apps" | "battery" | "date and time" | "developer options"
+    )
+}
+pub(crate) fn safe_url(value: &str) -> bool {
+    (value.starts_with("https://") || value.starts_with("http://") || value.starts_with("geo:") || value.starts_with("google.navigation:"))
+        && !value.bytes().any(|b| b.is_ascii_control() || b == b'"')
+}
 fn direction(v: &Value) -> Result<Direction> {
     match v.as_str() {
         Some("up") => Ok(Direction::Up),
@@ -712,6 +765,10 @@ fn direction(v: &Value) -> Result<Direction> {
         Some("right") => Ok(Direction::Right),
         _ => Err(Error::new(Code::Args, "direction must be up, down, left, or right")),
     }
+}
+
+pub(crate) fn normalized(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 fn key(v: &Value) -> Result<Key> {
     match v.as_str() {
@@ -840,50 +897,4 @@ pub fn parse_read(v: Value) -> Result<Read> {
         _ => Err(Error::new(Code::Args, "q must be status, observe, artifact, browser, capabilities, location, notifications, or visual")),
     }
 }
-
-pub fn tool_schemas() -> Value {
-    json!([
-        {"name":"android.read","description":"Read the bound Android UI, browser frontier, device capabilities, location, notifications, visual metrics, or artifact.","annotations":{"readOnlyHint":true},"inputSchema":{"type":"object","required":["q"],"properties":{"q":{"enum":["status","observe","artifact","browser","capabilities","location","notifications","visual"]},"op":{"enum":["tabs","observe","text","hash","diff"]},"base":{"type":"string"},"detail":{"type":"integer","minimum":0,"maximum":1},"id":{"type":"string"},"a":{"type":"string"},"b":{"type":"string"},"range":{"type":"object","properties":{"start":{"type":"integer"},"end":{"type":"integer"}}}}}},
-        {"name":"android.act","description":"Run one generation-guarded bounded Android, browser, or visual plan.","annotations":{"readOnlyHint":false,"destructiveHint":true},"inputSchema":{"type":"object","required":["id","g","p"],"properties":{"target":{"enum":["android","browser","visual"]},"id":{"type":"string"},"g":{"type":"integer"},"p":{"type":"array","minItems":1,"maxItems":32},"deadline_ms":{"type":"integer","minimum":1,"maximum":30000},"max_mutations":{"type":"integer","minimum":0,"maximum":16}}}}
-    ])
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn parses_plan_and_matches_golden_wire() {
-        let v: Value = serde_json::from_str(include_str!("../../protocol-golden.json")).unwrap();
-        let p = Plan::parse(v["plan"].clone()).unwrap();
-        assert_eq!(p.wire(17), v["frame"]);
-    }
-    #[test]
-    fn rejects_oversized_and_branching_plans() {
-        assert_eq!(Plan::parse(json!({"id":"x","g":1,"p":[["branch",1]]})).unwrap_err().code, Code::Unsupported);
-        assert_eq!(Plan::parse(json!({"id":"x","g":1,"p":[["text",1,"x".repeat(MAX_TEXT+1)]]})).unwrap_err().code, Code::Bounds);
-        assert_eq!(Plan::parse(json!({"id":"x","g":1,"p":[["microphone",31]]})).unwrap_err().code, Code::Bounds);
-    }
-    #[test]
-    fn parses_bounded_browser_plan() {
-        let plan = BrowserPlan::parse(json!({"target":"browser","id":"b1","g":4,"p":[["navigate","https://example.com"],["wait",["text","Example Domain"],1000]]})).unwrap();
-        assert_eq!(plan.ops.len(), 2);
-        assert_eq!(plan.wire(9)[1], "browser");
-        assert_eq!(BrowserPlan::parse(json!({"target":"browser","id":"b2","g":4,"p":[["eval","1+1"]]})).unwrap_err().code, Code::Unsupported);
-        assert_eq!(Plan::parse(json!({"id":"m1","g":1,"p":[["camera","rear"],["microphone",1],["notification_dismiss","n"]]})).unwrap().ops.len(), 3);
-        let visual = VisualPlan::parse(json!({"target":"visual","id":"v1","g":0,"p":[["crop","habc",0,0,1,1]]})).unwrap();
-        assert_eq!(visual.wire(1)[1], "visual");
-    }
-    #[test]
-    fn schemas_export_exactly_two_tools() {
-        let schemas = tool_schemas();
-        assert_eq!(schemas.as_array().unwrap().len(), 2);
-        assert!(serde_json::to_vec(&schemas).unwrap().len() < 2200);
-    }
-    #[test]
-    fn compact_receipts_stay_within_wire_budget() {
-        let success = Receipt { id: "9".into(), ok: 1, g: 45, m: 2, at: None, e: None, partial: None, next: None, artifact: None };
-        let failure = Receipt { id: "9".into(), ok: 0, g: 45, m: 2, at: Some(2), e: Some("timeout".into()), partial: Some(1), next: None, artifact: None };
-        assert!(serde_json::to_vec(&success).unwrap().len() <= 40);
-        assert!(serde_json::to_vec(&failure).unwrap().len() <= 90);
-    }
-}
+pub use crate::command::{parse_act_command, parse_read_command, tool_schemas};

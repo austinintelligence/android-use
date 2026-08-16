@@ -5,7 +5,10 @@ use crate::{
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::fs;
+use std::{
+    fs::{self, File},
+    io::{Read, Seek, SeekFrom},
+};
 
 pub const MAX_ARTIFACT: usize = 16 * 1024 * 1024;
 
@@ -38,12 +41,15 @@ impl Artifacts {
         if !meta.file_type().is_file() || meta.file_type().is_symlink() {
             return Err(Error::new(Code::Artifact, "artifact is not a regular file"));
         }
-        let bytes = fs::read(path)?;
-        let r = range.unwrap_or(Range { start: 0, end: (bytes.len().min(MAX_INLINE)) as u64 }).bounded(bytes.len() as u64)?;
+        let size = usize::try_from(meta.len()).map_err(|_| Error::new(Code::Bounds, "artifact is too large"))?;
+        let r = range.unwrap_or(Range { start: 0, end: size.min(MAX_INLINE) as u64 }).bounded(size as u64)?;
         let start = r.start as u64;
         let end = r.end;
-        let data = STANDARD.encode(&bytes[r]);
-        Ok(json!({"id":id,"size":bytes.len(),"start":start,"data":data,"more":(end<bytes.len()) as u8}))
+        let mut bytes = vec![0; r.len()];
+        let mut file = File::open(path)?;
+        file.seek(SeekFrom::Start(start))?;
+        file.read_exact(&mut bytes)?;
+        Ok(json!({"id":id,"size":size,"start":start,"data":STANDARD.encode(bytes),"more":(end<size) as u8}))
     }
     pub fn bytes(&self, id: &str) -> Result<Vec<u8>> {
         if !valid(id) || !id.starts_with('h') {
@@ -85,6 +91,7 @@ mod tests {
         let first = a.read(&id, None).unwrap();
         assert_eq!(first["size"], crate::api::MAX_FRAME + 1);
         assert_eq!(first["more"], 1);
+        assert_eq!(a.read(&id, Some(Range { start: crate::api::MAX_INLINE as u64, end: crate::api::MAX_INLINE as u64 + 1 })).unwrap()["start"], crate::api::MAX_INLINE);
         assert_eq!(a.bytes(&id).unwrap().len(), crate::api::MAX_FRAME + 1);
     }
 }

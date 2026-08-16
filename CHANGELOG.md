@@ -4,6 +4,15 @@
 
 The first supported public release of Android Use.
 
+### Agent command interface
+
+- Added the bounded model-facing `command` string for the existing `android.read` and `android.act` tools. The host now owns observation generations, operation identity, semantic target resolution, app and tab selection, safety limits, journals, and image content.
+- Added plain-language receipts, ambiguity guidance, filtered page text, direct MCP image content, semantic-miss screenshots, allowlisted settings, safe links, point fallback, and bounded swipes.
+- Kept the structured CLI, JSONL, MCP, golden-wire, helper, artifact, browser, and visual forms operational as a deprecated compatibility path. Raw generations, refs, plans, artifact ranges, and package IDs are legacy-only for ordinary agents.
+- Browser actions reuse the active CDP connection, avoid unnecessary tab-list synchronization, track same-page DOM identity, use framework-friendly value events, and invalidate on meaningful DOM changes. Android text, content-description, and state changes invalidate semantic state.
+- No new runtime dependency or cloud service was added. The helper remains local-only, authenticated, bounded, no-root, and without `INTERNET` permission.
+- The automation source budget is now 1,250 lines (measured baseline 1,202) to cover the repository-owned documentation budget, parser-consistency, benchmark, and evaluation-status gates; production and authored-code limits remain unchanged.
+
 - Control one enrolled Android device through the `au` CLI, MCP, or JSONL.
 - Read compact semantic UI, act through generation-checked plans, control supported Chrome sessions, and keep screenshots and other large results as local artifacts.
 - Install the matching Android helper with `au setup`, then use `au doctor` for clear connection and permission diagnostics.

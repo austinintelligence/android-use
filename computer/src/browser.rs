@@ -1,5 +1,5 @@
 use crate::{
-    api::{BrowserOp, BrowserPlan, BrowserPredicate, BrowserRead, Code, Error, Plan, Range, Result},
+    api::{normalized, BrowserOp, BrowserPlan, BrowserPredicate, BrowserRead, Code, Error, Plan, Range, Result, Target},
     bridge::Bridge,
     device::{Adb, Device},
 };
@@ -18,6 +18,7 @@ const MAX_HTTP: usize = 1_048_576;
 const MAX_TEXT: usize = 12_000;
 const MAX_TABS: usize = 50;
 const MAX_SCREENSHOT: usize = 8 * 1024 * 1024;
+const DOM_SELECTOR: &str = "a,button,input,textarea,select,[role=button],[onclick]";
 
 #[derive(Debug, Clone)]
 struct Tab {
@@ -28,9 +29,6 @@ struct Tab {
     websocket: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-struct Node;
-
 pub struct Browser {
     adb: Adb,
     device: Device,
@@ -40,8 +38,9 @@ pub struct Browser {
     selected: String,
     signature: Option<String>,
     generation: u64,
-    nodes: Vec<Node>,
+    nodes: Vec<u64>,
     nodes_generation: u64,
+    dom_fingerprint: Option<String>,
 }
 
 pub struct Outcome {
@@ -56,7 +55,19 @@ pub struct Outcome {
 impl Browser {
     pub fn connect(adb: Adb, device: Device) -> Result<Self> {
         let port = adb.forward(&device, "localabstract:chrome_devtools_remote")?;
-        let mut browser = Self { adb, device, port, cdp: None, tabs: Vec::new(), selected: String::new(), signature: None, generation: 0, nodes: Vec::new(), nodes_generation: 0 };
+        let mut browser = Self {
+            adb,
+            device,
+            port,
+            cdp: None,
+            tabs: Vec::new(),
+            selected: String::new(),
+            signature: None,
+            generation: 0,
+            nodes: Vec::new(),
+            nodes_generation: 0,
+            dom_fingerprint: None,
+        };
         if let Err(error) = browser.sync() {
             browser.close();
             return Err(error);
@@ -70,11 +81,41 @@ impl Browser {
             BrowserRead::Tabs => Ok(self.tabs_json()),
             BrowserRead::Observe => self.observe(),
             BrowserRead::Text => self.page_text(),
+            BrowserRead::TextMatching(text) => self.page_text_matching(&text),
         }
+    }
+
+    pub fn resolve_tab_target(&self, target: &Target) -> Result<Box<str>> {
+        let needle = normalized(&target.label);
+        let mut matches: Vec<&Tab> = self.tabs.iter().filter(|tab| normalized(&tab.title) == needle || normalized(&tab.url) == needle).collect();
+        if matches.is_empty() {
+            matches = self.tabs.iter().filter(|tab| normalized(&tab.title).starts_with(&needle)).collect();
+        }
+        if matches.is_empty() {
+            return Err(Error::new(Code::Args, "the requested Chrome tab was not found"));
+        }
+        if let Some(ordinal) = target.ordinal {
+            return matches
+                .get(ordinal.saturating_sub(1) as usize)
+                .map(|tab| tab.id.clone().into_boxed_str())
+                .ok_or_else(|| Error::new(Code::Ambiguous, "the requested Chrome tab number is unavailable"));
+        }
+        if matches.len() > 1 {
+            return Err(Error::new(Code::Ambiguous, "the requested Chrome tab is ambiguous; use its numbered title"));
+        }
+        Ok(matches[0].id.clone().into_boxed_str())
     }
 
     pub fn act(&mut self, plan: &BrowserPlan) -> Result<Outcome> {
         self.sync()?;
+        self.act_inner(plan)
+    }
+
+    pub fn act_prepared(&mut self, plan: &BrowserPlan) -> Result<Outcome> {
+        self.act_inner(plan)
+    }
+
+    fn act_inner(&mut self, plan: &BrowserPlan) -> Result<Outcome> {
         if plan.generation != self.generation {
             return Ok(Outcome { generation: self.generation, mutations: 0, at: None, error: Some("stale"), partial: false, artifact: None });
         }
@@ -113,7 +154,14 @@ impl Browser {
                 }
             }
         }
-        let _ = self.sync();
+        let target_changed = plan.ops.iter().any(|op| {
+            matches!(op, BrowserOp::Navigate(_) | BrowserOp::Back | BrowserOp::Forward | BrowserOp::Reload | BrowserOp::Select(_) | BrowserOp::Close(_) | BrowserOp::New(_))
+        });
+        if target_changed {
+            let _ = self.sync();
+        } else {
+            let _ = self.refresh_dom_fingerprint();
+        }
         Ok(Outcome { generation: self.generation, mutations, at: None, error: None, partial: false, artifact })
     }
 
@@ -274,18 +322,22 @@ impl Browser {
 
     fn dom_action(&mut self, index: u16, action: &str, text: Option<&str>) -> std::result::Result<(), &'static str> {
         let index = index as usize;
-        self.sync().map_err(|_| "helper")?;
         if self.nodes_generation != self.generation || index >= self.nodes.len() {
             return Err("stale");
         }
+        self.refresh_dom_fingerprint()?;
+        if self.nodes_generation != self.generation || index >= self.nodes.len() {
+            return Err("stale");
+        }
+        let stable_id = self.nodes[index];
         let value = text.map(|value| serde_json::to_string(value).unwrap_or_else(|_| "\"\"".into())).unwrap_or_else(|| "null".into());
         let command: String = match action {
             "click" => "e.click()".into(),
             "focus" => String::new(),
-            "text" => format!("e.value={value};e.dispatchEvent(new Event('input',{{bubbles:true}}))"),
+            "text" => format!("const p=Object.getPrototypeOf(e);const d=Object.getOwnPropertyDescriptor(p,'value');if(d&&d.set)d.set.call(e,{value});else e.value={value};e.dispatchEvent(new Event('input',{{bubbles:true,composed:true}}));e.dispatchEvent(new Event('change',{{bubbles:true,composed:true}}))"),
             _ => return Err("unsupported"),
         };
-        let expression = format!("(()=>{{const e=[...document.querySelectorAll('a,button,input,textarea,select,[role=button],[onclick]')].slice(0,64)[{index}];if(!e)return false;e.focus();{command};return true}})()" );
+        let expression = dom_action_expression(stable_id, &command);
         let result = self.eval_value(&expression)?;
         if result.as_bool() == Some(true) {
             Ok(())
@@ -310,11 +362,28 @@ impl Browser {
     }
 
     fn observe(&mut self) -> Result<Value> {
-        let value = self.eval_value("JSON.stringify({url:location.href,title:document.title,n:[...document.querySelectorAll('a,button,input,textarea,select,[role=button],[onclick]')].slice(0,64).map((e,i)=>[i,(e.innerText||e.getAttribute('aria-label')||e.getAttribute('placeholder')||e.value||e.tagName||'').slice(0,160),e.matches('input,textarea,select')?'i':e.matches('button,[role=button]')?'b':e.matches('a')?'a':'m',e.disabled?1:3])})").map_err(|_| Error::new(Code::Helper, "Chrome observation failed"))?;
+        let value = self.eval_value(&format!("JSON.stringify((()=>{{const state=window.__androidUseState||(window.__androidUseState={{next:1,ids:new WeakMap()}});const q=[...document.querySelectorAll('{DOM_SELECTOR}')].slice(0,64);const n=q.map((e,i)=>{{let id=state.ids.get(e);if(!id){{id=state.next++;state.ids.set(e,id)}}return [i,id,(e.innerText||e.getAttribute('aria-label')||e.getAttribute('placeholder')||e.value||e.tagName||'').slice(0,160),e.matches('input,textarea,select')?'i':e.matches('button,[role=button]')?'b':e.matches('a')?'a':'m',e.disabled?1:3,e.checked?1:0]}});return {{url:location.href,title:document.title,n,f:n.map(e=>e.slice(1).join('|')).join(';')}}}})())")).map_err(|_| Error::new(Code::Helper, "Chrome observation failed"))?;
         let raw = value.as_str().ok_or_else(|| Error::new(Code::Protocol, "browser observation was not JSON text"))?;
         let parsed: Value = serde_json::from_str(raw).map_err(|_| Error::new(Code::Protocol, "browser observation JSON was invalid"))?;
-        let rows = parsed.get("n").and_then(Value::as_array).cloned().unwrap_or_default();
-        self.nodes = rows.iter().map(|_| Node).collect();
+        let raw_rows = parsed.get("n").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+        let fingerprint = parsed.get("f").and_then(Value::as_str).unwrap_or("").to_owned();
+        if self.dom_fingerprint.as_deref() != Some(&fingerprint) && self.dom_fingerprint.is_some() {
+            self.generation = self.generation.saturating_add(1);
+            self.nodes.clear();
+            self.nodes_generation = 0;
+        }
+        self.dom_fingerprint = Some(fingerprint);
+        self.nodes.clear();
+        let mut rows = Vec::new();
+        for row in raw_rows {
+            let Some(row_values) = row.as_array() else { continue };
+            if row_values.len() != 6 {
+                continue;
+            }
+            let stable_id = row_values.get(1).and_then(Value::as_u64).unwrap_or(0);
+            self.nodes.push(stable_id);
+            rows.push(json!([row_values[0], row_values[2], row_values[3], row_values[4]]));
+        }
         self.nodes_generation = self.generation;
         Ok(
             json!({"o":self.generation.to_string(),"g":self.generation,"url":limit(parsed.get("url").and_then(Value::as_str).unwrap_or(""),512),"title":limit(parsed.get("title").and_then(Value::as_str).unwrap_or(""),160),"n":rows}),
@@ -326,6 +395,14 @@ impl Browser {
         let raw = value.as_str().unwrap_or("");
         let text = clean_page_text(raw);
         Ok(json!({"o":self.generation.to_string(),"g":self.generation,"text":text,"truncated":raw.len()>=MAX_TEXT}))
+    }
+
+    fn page_text_matching(&mut self, needle: &str) -> Result<Value> {
+        let encoded = serde_json::to_string(needle).map_err(|_| Error::new(Code::Args, "page text filter could not be encoded"))?;
+        let expression = format!("(()=>{{const t=document.body?.innerText||'';const n={encoded};const i=t.toLocaleLowerCase().indexOf(n.toLocaleLowerCase());return JSON.stringify(i<0?'':t.slice(Math.max(0,i-400),Math.min(t.length,i+n.length+400)));}})()");
+        let value = self.eval_value(&expression).map_err(|_| Error::new(Code::Helper, "Chrome text read failed"))?;
+        let text = clean_page_text(value.as_str().unwrap_or(""));
+        Ok(json!({"o":self.generation.to_string(),"g":self.generation,"text":text,"matched":!text.is_empty()}))
     }
 
     fn tabs_json(&self) -> Value {
@@ -341,6 +418,7 @@ impl Browser {
             self.signature = Some(signature);
             self.nodes.clear();
             self.nodes_generation = 0;
+            self.dom_fingerprint = None;
         }
         if self.selected != selected.id {
             self.selected = selected.id.clone();
@@ -392,12 +470,24 @@ impl Browser {
     }
 
     fn command(&mut self, method: &str, params: Value) -> std::result::Result<Value, &'static str> {
-        self.sync().map_err(|_| "helper")?;
         let result = self.cdp.as_mut().ok_or("helper")?.command(method, params);
         if result.is_err() {
             self.cdp = None;
         }
         result.map_err(|_| "helper")
+    }
+
+    fn refresh_dom_fingerprint(&mut self) -> std::result::Result<(), &'static str> {
+        let value = self.eval_value(&format!("JSON.stringify((()=>{{const state=window.__androidUseState;if(!state)return '';return [...document.querySelectorAll('{DOM_SELECTOR}')].slice(0,64).map(e=>{{let id=state.ids.get(e);if(!id){{id=state.next++;state.ids.set(e,id)}}return [id,(e.innerText||e.getAttribute('aria-label')||e.getAttribute('placeholder')||e.value||e.tagName||'').slice(0,160),e.matches('input,textarea,select')?'i':e.matches('button,[role=button]')?'b':e.matches('a')?'a':'m',e.disabled?1:3,e.checked?1:0].join('|')}}).join(';')}})())"))?;
+        let fingerprint = value.as_str().unwrap_or("").to_owned();
+        if self.dom_fingerprint.as_deref() == Some(&fingerprint) {
+            return Ok(());
+        }
+        self.dom_fingerprint = Some(fingerprint);
+        self.generation = self.generation.saturating_add(1);
+        self.nodes.clear();
+        self.nodes_generation = 0;
+        Err("stale")
     }
 
     fn eval_value(&mut self, expression: &str) -> std::result::Result<Value, &'static str> {
@@ -414,6 +504,10 @@ impl Browser {
             self.port = 0;
         }
     }
+}
+
+fn dom_action_expression(stable_id: u64, command: &str) -> String {
+    format!("(()=>{{const state=window.__androidUseState;if(!state)return false;const e=[...document.querySelectorAll('{DOM_SELECTOR}')].slice(0,64).find(e=>state.ids.get(e)==={stable_id});if(!e)return false;e.focus();{command};return true}})()")
 }
 
 impl Drop for Browser {
@@ -712,5 +806,16 @@ mod tests {
     fn page_text_unquotes_runtime_json() {
         assert_eq!(clean_page_text(r#""Example Domain\nLearn more""#), "Example Domain\nLearn more");
         assert_eq!(clean_page_text("plain"), "plain");
+    }
+
+    #[test]
+    fn framework_text_entry_uses_native_setter_and_events() {
+        let command = "const p=Object.getPrototypeOf(e);const d=Object.getOwnPropertyDescriptor(p,'value');if(d&&d.set)d.set.call(e,\"TEXT\");e.dispatchEvent(new Event('input'));e.dispatchEvent(new Event('change'))";
+        let expression = dom_action_expression(7, command);
+        assert!(expression.contains("state.ids.get(e)===7"));
+        assert!(expression.contains("Object.getOwnPropertyDescriptor"));
+        assert!(expression.contains("d.set.call"));
+        assert!(expression.contains("input"));
+        assert!(expression.contains("change"));
     }
 }

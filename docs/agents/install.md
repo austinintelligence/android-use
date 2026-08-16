@@ -1,106 +1,37 @@
 # Agent installation and recovery
 
-Use this page for installing Android Use, registering its agent skill, connecting one Android device, and recovering setup. For day-to-day device work, use the installed `android-use` skill instead.
+Use this guide when an agent needs Android Use installed and connected to one device. Keep `au` and `aubridge.apk` together and use absolute paths in agent configuration.
 
-## Copy-paste prompt
-
-Paste this into Codex, Cursor, Claude Code, OpenClaw, Hermes, or another coding agent:
+## Copy-paste setup prompt
 
 ```text
-Set up Android Use for this agent and connect one Android device.
-
-Use https://github.com/austinintelligence/android-use as the source of truth. Work through the setup in order and keep the conversation on rails:
-
-1. Inspect the computer, operating system, CPU architecture, existing `au` installation, Android platform tools, and current agent configuration. Reuse a working installation when possible. Do not delete or overwrite unrelated files, device data, agent settings, credentials, or an existing Android Use enrollment.
-
-2. Register the `android-use` Agent Skill for the agent I am using. Prefer the agent's native skill installer. For a skills.sh-compatible agent, use the matching agent id with:
-   `npx skills add austinintelligence/android-use --skill android-use -g -a <agent-id> --copy -y`
-   For OpenClaw, use:
-   `openclaw skills install git:austinintelligence/android-use@main --global`
-   Replace `<agent-id>` with the real id; do not run it literally. Reload the agent if its skill list is cached.
-
-3. Install the host runtime from an official source. First check whether `android-use` is actually published before using `npx android-use@latest`. If it is not published, download the matching archive from the latest official GitHub release, verify the archive against both `SHA256SUMS` and `release-manifest.json`, and extract it to a durable user-owned directory. Keep `au` and `aubridge.apk` together and use the absolute path to `au`. Do not use an unsigned or unexplained prerelease unless I approve it.
-
-4. Check readiness with `<absolute-au-path> doctor --json`. If Android platform tools are missing, use an already installed trusted `adb` when available; otherwise tell me exactly how to install platform-tools or set `AU_ADB`. If no authorized device is found, do not keep retrying. Tell me, in plain language:
-   - unlock the phone or tablet;
-   - use a USB cable that carries data;
-   - open Settings → About phone and tap Build number seven times if Developer options is not visible;
-   - open Developer options and turn on USB debugging;
-   - reconnect the device and tap Allow on “Allow USB debugging?”; choose Always allow only for my own computer.
-   Then wait for me and rerun `doctor --json`.
-
-5. Run `<absolute-au-path> setup --json` once the device is authorized. If it reports an Android permission step, tell me exactly what to tap: open Settings → Accessibility → Android Use, turn Android Use on, and approve Android's warning. Wait for me, then rerun `setup --json` or `doctor --json` to verify the change. If multiple devices are connected, show me their endpoints and ask me which one to enroll; never guess.
-
-6. When `doctor --json` reports ready, connect the local MCP server using the absolute executable path and the arguments `serve --mcp`. Preserve other MCP entries, keep the server on local stdio, and reload the agent. Then verify with `android.read` using `q=status` followed by `q=observe` without changing the device.
-
-At the end, report: the installed `au` path and version, the registered skill location, the enrolled device identity without exposing secrets, the MCP connection, required checks, optional capabilities, and the exact next action if anything is still waiting on me. If any step fails, read https://github.com/austinintelligence/android-use/blob/main/docs/agents/install.md and resume from the reported phase. Never bypass Android security prompts or replay an unknown device mutation.
+Set up Android Use for this agent and connect one Android device. Inspect the existing installation and preserve unrelated files, credentials, enrollments, and agent settings. Use the official release or repository source, verify checksums when downloading, and run the matching au setup command once. Keep the setup local; do not use raw ADB or bypass Android prompts. If the device is not authorized, tell me to unlock it, enable Developer options and USB debugging, reconnect it, and accept the USB debugging prompt, then wait. When Android asks for accessibility, tell me to open Settings, Accessibility, Android Use, turn it on, and approve the warning; then resume with au doctor. Configure a local stdio MCP server with the absolute au path and arguments serve --mcp. Verify with android.read command status and android.read command screen. Use the new command-string tools for normal work, and never replay a partial or unknown mutation.
 ```
 
-The prompt intentionally separates computer work from Android-owned approvals. The agent should continue automatically after each approval instead of making you repeat the whole installation.
+## Host install
 
-After setup succeeds, tell the agent what you want done on the device, such as: “Open Settings and tell me which Wi-Fi network is connected.”
-
-## What the setup state means
-
-`au doctor --json` and `au setup --json` return a `phase` and a `next_step` object when something still needs attention. `next_step.kind` is one of:
-
-- `agent` — the agent can run the next command itself.
-- `user` — Android or device hardware needs your hands.
-- `computer` — a host dependency such as `adb` needs attention.
-- `ready` — setup is complete and the next command is the local MCP server.
-
-The `next_step` object includes a short title, ordered steps, and a `resume` command. Agents should report those fields instead of inventing a different recovery procedure.
-
-## Manual fallback
-
-If the agent cannot install a host runtime automatically:
-
-1. Open the [official releases](https://github.com/austinintelligence/android-use/releases) page and choose the archive for the computer: Windows x86_64, macOS Apple Silicon, or Linux x86_64.
-2. Download the archive, `SHA256SUMS`, and `release-manifest.json` from the same release.
-3. Verify the archive before extracting it. On Windows PowerShell use `Get-FileHash`; on macOS/Linux use `shasum -a 256`.
-4. Keep `au` and `aubridge.apk` in the same extracted directory.
-5. Run the matching command from that directory:
+From a verified release archive:
 
 ```powershell
-.\au.exe doctor --json
-.\au.exe setup --json
+.\au.exe doctor
+.\au.exe setup
 ```
 
 ```sh
-./au doctor --json
-./au setup --json
+./au doctor
+./au setup
 ```
 
-Do not use `npx android-use@latest` until `npm view android-use version` confirms that the public package exists. The npm launcher in this repository is prepared for publication but is not itself proof that npm publication has happened.
+If the public package is not confirmed, do not guess an npm release. Download the matching official archive, `SHA256SUMS`, and `release-manifest.json`; verify them before extraction. If Platform-Tools are installed elsewhere, set `AU_ADB` to the trusted executable.
 
-If `adb` is missing, install the official [Android SDK Platform-Tools](https://developer.android.com/tools/releases/platform-tools), reopen the agent terminal, and run `au doctor --json` again. If platform-tools already exists somewhere else, point Android Use at it with `AU_ADB` instead of installing a second copy.
+## Device approvals
 
-## Register the skill manually
+The device must be Android 8 or newer, unlocked, USB-debugging authorized, and the only enrolled hardware. `au setup` installs or updates the helper. Android still owns Accessibility, camera, microphone, notifications, location, and screen-recording approvals. Grant optional permissions only when the task needs them.
 
-The skill source is [`skills/android-use/SKILL.md`](../../skills/android-use/SKILL.md). For common agents:
+## Recovery
 
-```console
-# Codex
-npx skills add austinintelligence/android-use --skill android-use -g -a codex --copy -y
+Run `au doctor` after every approval or connection change. Follow its `phase`, `next_step.kind`, ordered steps, and `resume` command. `agent` steps are host work; `user` steps require the Android device; `computer` steps repair a host dependency; `ready` means start the local MCP server. Use `au repair PATH` for a known helper APK and `au update` for a bundled update. Do not repeat an uncertain device mutation.
 
-# Cursor
-npx skills add austinintelligence/android-use --skill android-use -g -a cursor --copy -y
+## Skill and MCP
 
-# Claude Code
-npx skills add austinintelligence/android-use --skill android-use -g -a claude-code --copy -y
-
-# OpenClaw
-openclaw skills install git:austinintelligence/android-use@main --global
-```
-
-Restart or reload the agent after installing the skill. If an agent has no Agent Skills support, keep the skill file in the project and tell the agent to read it before using Android Use.
-
-## Connect MCP manually
-
-Configure a local stdio MCP server with the absolute path to `au` and these arguments:
-
-```text
-serve --mcp
-```
-
-The server must remain local. Do not expose its stdio stream through an unauthenticated network bridge. After reloading the client, ask it to check status and observe without changing anything.
+The source skill is [`skills/android-use/SKILL.md`](../../skills/android-use/SKILL.md). Register that file with the agent's native skill installer, or keep it in the project and tell the agent to read it. Configure a local stdio server with the absolute executable and `serve --mcp`; preserve other MCP entries and reload the client. The server advertises only `android.read` and `android.act`, each with one required `command` string.

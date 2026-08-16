@@ -1,28 +1,9 @@
 # Android Use agent guide
 
-Android Use gives an AI agent bounded control of one enrolled Android device. The preferred interface is the MCP server:
+Use the local MCP server `au serve --mcp`. It exposes exactly two tools, each with one required string: `android.read` for non-mutating commands and `android.act` for bounded actions.
 
-```text
-au serve --mcp
-```
+Read with commands such as `status`, `screen`, `page`, or `page text`. Act with runtime values such as `tap "TARGET"`, `type "TEXT" in "FIELD"`, `open app "DISPLAY NAME"`, or `page click "TARGET"`; nothing is typed unless the command requests it. Join a short sequence with `then`. The host owns observations, identity, target resolution, safety limits, journals, tabs, and image transport.
 
-Use `au serve --jsonl` only when the client does not support MCP. Do not drive the machine through raw ADB when the typed interface can complete the task.
+Read only when state is unknown. Prefer semantic labels. Use screenshots and `tap point X Y` only after a semantic miss. Retry only a stale pre-send failure; after `partial` or `unknown`, read and reconcile before mutating again. Ask before destructive, account, purchase, submission, notification, location, or camera/microphone/recording actions.
 
-## Operating loop
-
-1. Read `android.read` with `q=status`.
-2. Read `q=observe` for the semantic UI frontier.
-3. Act with `android.act`, passing the returned `g` generation and a unique operation `id`.
-4. Prefer integer refs from the latest observation. Keep plans short and linear.
-5. Include an immediate `wait` or `assert` when the outcome matters.
-6. On `stale`, observe and rebuild. On `partial` or `unknown`, observe before doing anything else. Never replay a mutation blindly.
-
-For Chrome content, read `q=browser` with `op=tabs|observe|text`, then use a browser-targeted plan. Use Android UI semantics for Chrome's own toolbar.
-
-Use semantic UI before screenshots. Request a screenshot only when layout, imagery, or an unlabeled control matters. Artifacts are private handles; fetch only the required range.
-
-Ask before deletion, account changes, purchases, submissions, camera or microphone capture, location-sensitive work, notification actions, or screen recording.
-
-Setup and recovery: [docs/agents/quickstart.md](docs/agents/quickstart.md)  
-Typed protocol: [docs/reference/agent-protocol.md](docs/reference/agent-protocol.md)  
-Security boundaries: [SECURITY.md](SECURITY.md)
+For setup see [quickstart](docs/agents/quickstart.md); for grammar see [agent protocol](docs/reference/agent-protocol.md); for security see [SECURITY.md](SECURITY.md).

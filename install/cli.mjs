@@ -29,7 +29,7 @@ if(existsSync(manifest)){
     verify(binary,relative(here,binary).replaceAll("\\","/"));
     const apk=join(dirname(binary),"aubridge.apk");
     verify(apk,relative(here,apk).replaceAll("\\","/"));
-  }catch(error){console.error("The Android Use package manifest could not be verified.");process.exit(1)}
+  }catch{console.error("The Android Use package manifest could not be verified.");process.exit(1)}
 }
 const child=spawn(binary,[command,...process.argv.slice(3)],{stdio:"inherit",windowsHide:true});
 child.on("error",e=>{console.error(e.message);process.exit(1)});

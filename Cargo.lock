@@ -359,6 +359,7 @@ dependencies = [
 name = "tools"
 version = "1.0.0"
 dependencies = [
+ "au",
  "serde_json",
  "sha2",
 ]

@@ -1,44 +1,12 @@
 # Agent protocol
 
-MCP exposes two tools. JSONL accepts the same request objects and returns one bounded JSON response per line.
+MCP advertises exactly two tools. Each new call has one required string argument, `command`:
 
-## `android.read`
+- `android.read` is non-mutating. Commands include `status`, `screen`, focused `screen matching "TEXT"` or `find "TEXT"`, `browser tabs`, `page`, `page text`, `page text matching "TEXT"`, `capabilities`, `location`, `notifications`, and image hash or difference.
+- `android.act` performs bounded actions such as `tap "TARGET"`, `toggle "TARGET"`, `type "TEXT" in "FIELD"`, `open app "DISPLAY NAME"`, `page click "TARGET"`, `wait for text "EXPECTED TEXT" up to 5 seconds`, and `verify text "EXPECTED TEXT" exists`.
 
-Required field: `q`.
+Use straight double quotes for variable text and `then` between short actions. The host owns state, target resolution, operation identity, safety limits, journals, artifacts, and image content. Do not construct generations, refs, package names, tab IDs, or JSON plans for normal calls.
 
-| `q` | Optional fields | Result |
-| --- | --- | --- |
-| `status` | — | Readiness, generation, capability mask. |
-| `observe` | `base`, `detail` | Semantic frontier or bounded delta. |
-| `browser` | `op=tabs|observe|text` | Chrome state. |
-| `capabilities` | — | Optional capability and permission state. |
-| `location` | — | Current bounded location response. |
-| `notifications` | — | Compact notification list. |
-| `visual` | `op=hash|diff`, `a`, `b` | Bounded PNG metrics. |
-| `artifact` | `id`, optional `range` | Base64 artifact bytes for one bounded range. |
+`stale` is safe to retry after a fresh read. `partial` means a mutation already ran. `unknown` means dispatch may have happened. Read and reconcile both before another mutation. A semantic miss may include a current screenshot; coordinates are a bounded fallback only while that screen remains current.
 
-## `android.act`
-
-Every plan includes:
-
-```json
-{"id":"unique-operation-id","g":42,"p":[["tap",7],["wait",["text","Done"],3000]]}
-```
-
-- `id` is unique and stable for that intended operation.
-- `g` is the generation returned by the relevant observation.
-- `p` contains 1–32 forward-only operations and at most 16 mutations.
-- `deadline_ms` may be 1–30000.
-- `max_mutations` can lower the mutation ceiling.
-
-Android operations include `tap`, `long`, `text`, `scroll`, `key`, `gesture`, `launch`, `wait`, `assert`, screen/camera/microphone/screen-record capture, and notification actions.
-
-A browser plan adds `"target":"browser"` and uses browser generation. It supports `navigate`, `back`, `forward`, `reload`, `click`, `focus`, `text`, `key`, `scroll`, `wait`, `screenshot`, `select`, `close`, and `new`. Arbitrary page JavaScript evaluation is intentionally unavailable.
-
-A visual plan adds `"target":"visual"` and performs one bounded crop of a host PNG artifact.
-
-## Outcomes
-
-`ok:1` includes the resulting generation and mutation count. `stale` means no mutation began. `partial` means at least one mutation occurred before failure. `unknown` means the host cannot prove the outcome. Read current state before any recovery action.
-
-For the exact JSON Schema, inspect the tool descriptors returned by MCP initialization. The implementation in `computer/src/api.rs` is the canonical source contract.
+The old structured JSON forms remain accepted during deprecation for CLI, JSONL, MCP, and protocol-golden callers. They are compatibility-only and are not advertised by the new schemas. Full grammar and limits: [the installed protocol reference](../../skills/android-use/references/protocol.md).
