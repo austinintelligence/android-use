@@ -18,7 +18,7 @@ jobs:
         run: |
           version="$(tr -d '\r\n' < VERSION)"
           test "$GITHUB_REF_NAME" = "v$version"
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: '22.18.0'
           cache: npm
