@@ -70,7 +70,7 @@ jobs:
           mkdir release-helper
           cp device/app/build/outputs/apk/release/app-release.apk "release-helper/android-use-v$version-android.apk"
       - name: Generate the SPDX software bill of materials
-        uses: anchore/sbom-action@43a17d6e7add2b5535efe4dcae9952337c479a93
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
         with:
           path: .
           format: spdx-json
