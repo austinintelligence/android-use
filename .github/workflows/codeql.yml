@@ -19,7 +19,7 @@ jobs:
         with: { distribution: temurin, java-version: '17' }
       - uses: gradle/actions/setup-gradle@ac638b010cf58a27ee6c972d7336334ccaf61c96
         with: { gradle-version: '9.1.0' }
-      - uses: github/codeql-action/init@f205ea1c3313d32999d8d6a48b4f6530d4437b38
+      - uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd
         with: { languages: '${{ matrix.language }}', build-mode: '${{ matrix.mode }}' }
       - if: matrix.language == 'java-kotlin'
         run: gradle --no-daemon :app:assembleRelease
