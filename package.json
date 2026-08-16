@@ -11,7 +11,7 @@
     "verify": "cargo xtask verify"
   },
   "engines": {
-    "node": ">=20.19"
+    "node": ">=22.18"
   },
   "devDependencies": {
     "@oxlint/plugins": "1.78.0",

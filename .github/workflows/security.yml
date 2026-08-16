@@ -30,7 +30,7 @@ jobs:
         run: cargo deny check
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: '20.19.0'
+          node-version: '22.18.0'
       - run: npm ci
       - run: npm audit --audit-level=high
       - run: cargo xtask check
