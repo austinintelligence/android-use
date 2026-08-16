@@ -45,8 +45,8 @@ pub fn diff(a: &[u8], b: &[u8]) -> Result<Value> {
     Ok(json!({"changed":u8::from(ratio>0.01),"ratio":ratio,"w":left.w,"h":left.h}))
 }
 
-pub fn crop(bytes: Vec<u8>, x: u32, y: u32, w: u32, h: u32) -> Result<Vec<u8>> {
-    let image = decode(&bytes)?;
+pub fn crop(bytes: &[u8], x: u32, y: u32, w: u32, h: u32) -> Result<Vec<u8>> {
+    let image = decode(bytes)?;
     if w == 0 || h == 0 || x >= image.w || y >= image.h || x.saturating_add(w) > image.w || y.saturating_add(h) > image.h {
         return Err(Error::new(Code::Args, "crop rectangle is outside the image"));
     }
@@ -133,6 +133,6 @@ mod tests {
         let bytes = encode(2, 2, &[255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255]).unwrap();
         assert_eq!(hash(&bytes).unwrap()["w"], 2);
         assert_eq!(diff(&bytes, &bytes).unwrap()["changed"], 0);
-        assert!(crop(bytes, 0, 0, 1, 1).unwrap().len() > 20);
+        assert!(crop(&bytes, 0, 0, 1, 1).unwrap().len() > 20);
     }
 }

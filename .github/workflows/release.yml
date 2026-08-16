@@ -20,7 +20,7 @@ jobs:
           test "$GITHUB_REF_NAME" = "v$version"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: '20.11.1'
+          node-version: '22.18.0'
           cache: npm
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
         with:

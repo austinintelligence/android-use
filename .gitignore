@@ -1,16 +1,31 @@
 /target/
 /device/.gradle/
+/device/.cxx/
+/device/local.properties
 /device/build/
 /device/app/build/
 /device/example/build/
-/artifacts/raw/
 /dist/
+
+# Local IDE, OS, and tool output.
+.gradle/
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.log
+coverage/
+.nyc_output/
+
+# Local agent skill installations.
+/.agents/
 
 # Local release state, device evidence, and private signing material.
 /artifacts/
 /device/gradle-*/
-/device/*.keystore
-/device/*.jks
 /device/signing.properties
 *.token
 *.pem

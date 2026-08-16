@@ -1,14 +1,11 @@
 # Android Use
 
-> Give AI an Android device through a bounded semantic interface.
+> Bounded plain-English control of one enrolled Android device.
 
-Start: README.md
-Agent quickstart: docs/agents/quickstart.md
-Agent installation and recovery: docs/agents/install.md
-Agent contract: AGENTS.md
-CLI reference: docs/reference/cli.md
-Agent protocol: docs/reference/agent-protocol.md
-Capabilities: docs/capabilities.md
-Security: SECURITY.md
-Troubleshooting: docs/troubleshooting.md
-Development: docs/development.md
+- Start: README.md
+- Agent guide: AGENTS.md
+- Setup: docs/agents/quickstart.md
+- Recovery: docs/agents/install.md
+- Command contract: docs/reference/agent-protocol.md
+- CLI: docs/reference/cli.md
+- Security: SECURITY.md

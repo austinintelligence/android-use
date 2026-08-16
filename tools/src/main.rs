@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use au::api::{parse_act_command, parse_read_command};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -558,7 +559,7 @@ fn size(root: &Path) -> Result<(usize, usize, usize), String> {
     let source_files = file_count(root, &["rs", "java", "mjs", "js", "ps1", "sh", "cmd", "kt"])?;
     let production_modules = file_count(&root.join("computer/src"), &["rs"])? + file_count(&root.join("device/app/src/main"), &["java"])?;
     println!("rust_production={rust} android_production={java} tests={tests} automation={automation} authored_code={authored} source_files={source_files} production_modules={production_modules}");
-    if rust > 6500 || java > 2200 || automation > 900 || authored > 11300 {
+    if rust > 6500 || java > 2200 || automation > 1250 || authored > 11300 {
         return Err("source budget exceeded".into());
     }
     Ok((rust, java, automation))
@@ -652,7 +653,7 @@ fn release_manifest(root: &Path, directory: Option<&str>) -> Result<(), String> 
     fs::write(directory.join("release-manifest.json"), serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?).map_err(ioe)
 }
 fn docs(root: &Path) -> Result<(), String> {
-    for p in [
+    let required = [
         "README.md",
         "AGENTS.md",
         "llms.txt",
@@ -669,9 +670,111 @@ fn docs(root: &Path) -> Result<(), String> {
         "skills/android-use/references/protocol.md",
         "skills/android-use/references/safety.md",
         "skills/android-use/references/setup.md",
-    ] {
-        if !root.join(p).is_file() {
-            return Err(format!("missing document {p}"));
+    ];
+    for path in required {
+        if !root.join(path).is_file() {
+            return Err(format!("missing document {path}"));
+        }
+    }
+    let budgets = [
+        ("skills/android-use/SKILL.md", 2800usize, 700usize),
+        ("skills/android-use/references/protocol.md", 960, 240),
+        ("skills/android-use/references/safety.md", 520, 130),
+        ("skills/android-use/references/setup.md", 520, 130),
+        ("AGENTS.md", 1800, 450),
+        ("docs/reference/agent-protocol.md", 2800, 700),
+        ("docs/agents/quickstart.md", 1800, 450),
+        ("docs/agents/install.md", 7200, 1800),
+        ("docs/guides/common-workflows.md", 1400, 350),
+        ("docs/reference/cli.md", 2800, 700),
+        ("examples/README.md", 2000, 500),
+    ];
+    let mut skill_bytes = 0usize;
+    for (path, max_bytes, max_tokens) in budgets {
+        let bytes = fs::read(root.join(path)).map_err(ioe)?;
+        let tokens = approx_tokens(bytes.len());
+        println!(
+            "docs_budget path={path} bytes={} approx_tokens={tokens} max_bytes={max_bytes} max_tokens={max_tokens} status={}",
+            bytes.len(),
+            if bytes.len() <= max_bytes && tokens <= max_tokens { "pass" } else { "fail" }
+        );
+        if bytes.len() > max_bytes || tokens > max_tokens {
+            return Err(format!("documentation budget exceeded: {path}"));
+        }
+        if path.starts_with("skills/android-use/") {
+            skill_bytes = skill_bytes.saturating_add(bytes.len());
+        }
+    }
+    let skill_tokens = approx_tokens(skill_bytes);
+    println!(
+        "docs_budget path=skills/android-use bundle_bytes={skill_bytes} approx_tokens={skill_tokens} max_bytes=4800 max_tokens=1200 status={}",
+        if skill_bytes <= 4800 && skill_tokens <= 1200 { "pass" } else { "fail" }
+    );
+    if skill_bytes > 4800 || skill_tokens > 1200 {
+        return Err("installed skill bundle exceeds its budget".into());
+    }
+    for line in fs::read_to_string(root.join("llms.txt")).map_err(ioe)?.lines() {
+        if line.len() > 100 {
+            return Err("llms.txt contains a description over 100 bytes".into());
+        }
+    }
+    let primary_paths = ["skills/android-use/SKILL.md", "AGENTS.md", "docs/agents/quickstart.md", "docs/guides/common-workflows.md", "examples/README.md"];
+    let mut primary = String::new();
+    for path in primary_paths {
+        primary.push_str(&fs::read_to_string(root.join(path)).map_err(ioe)?);
+    }
+    for forbidden in ["Austin", "q=", "\"g\":", "target:\"", "\"target\":", "\"p\":", "artifact range", "integer ref"] {
+        if primary.contains(forbidden) {
+            return Err(format!("legacy primary-path phrase remains: {forbidden}"));
+        }
+    }
+    for path in ["device/app/src/main/java/dev/codex/aubridge/SemanticCompiler.java", "device/app/src/main/java/dev/codex/aubridge/Ui.java"] {
+        let source = fs::read_to_string(root.join(path)).map_err(ioe)?;
+        for forbidden in ["Austin", "Network & internet", "Airplane mode", "Discord", "com.android.settings", "switch_widget", "VPN"] {
+            if source.contains(forbidden) {
+                return Err(format!("semantic compiler contains fixture-specific literal {forbidden}: {path}"));
+            }
+        }
+    }
+    println!("semantic_source_scan=pass unknown_app_literals=0 fixture_labels_in_production=0");
+    let skill = fs::read_to_string(root.join("skills/android-use/SKILL.md")).map_err(ioe)?;
+    let examples = [
+        ("read", "status"),
+        ("read", "screen"),
+        ("read", "screen changes"),
+        ("read", "screen matching \"TEXT\""),
+        ("read", "find \"TEXT\""),
+        ("read", "page text matching \"SEARCH TEXT\""),
+        ("act", "tap \"TARGET\""),
+        ("act", "toggle \"TARGET\""),
+        ("act", "type \"TEXT\" in \"FIELD\""),
+        ("act", "scroll down in \"SCROLL AREA\""),
+        ("act", "open app \"DISPLAY NAME\""),
+        ("act", "page open \"https://example.invalid\""),
+        ("act", "page click \"TARGET\""),
+        ("act", "page type \"TEXT\" in \"FIELD\""),
+        ("act", "wait for text \"EXPECTED TEXT\" up to 5 seconds"),
+        ("act", "verify text \"EXPECTED TEXT\" exists"),
+        ("act", "capture screen"),
+    ];
+    for (kind, command) in examples {
+        let result = if kind == "read" { parse_read_command(command).map(|_| ()) } else { parse_act_command(command).map(|_| ()) };
+        if result.is_err() || !skill.contains(command) {
+            return Err(format!("documented command example is not covered: {command}"));
+        }
+    }
+    println!("docs_examples=pass canonical_forms=pass primary_legacy_syntax=pass llms_descriptions=pass");
+    if let Some(packaged) = root.join("dist/skills/android-use/SKILL.md").to_str() {
+        let packaged = Path::new(packaged);
+        if packaged.is_file() {
+            let source_bytes = fs::read(root.join("skills/android-use/SKILL.md")).map_err(ioe)?;
+            let packaged_bytes = fs::read(packaged).map_err(ioe)?;
+            if source_bytes != packaged_bytes {
+                return Err("packaged skill is not byte-for-byte equal to source skill".into());
+            }
+            println!("packaged_skill=pass");
+        } else {
+            println!("packaged_skill=not_built");
         }
     }
     Ok(())

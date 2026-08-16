@@ -1,7 +1,20 @@
 {
   "name": "android-use-workspace",
   "private": true,
-  "workspaces": ["install"],
-  "scripts": { "test": "npm test --workspace install", "lint": "npm run lint --workspace install", "verify": "cargo xtask verify" },
-  "engines": { "node": ">=20.11" }
+  "type": "module",
+  "workspaces": [
+    "install"
+  ],
+  "scripts": {
+    "test": "npm test --workspace install",
+    "lint": "npm run lint --workspace install && oxlint .",
+    "verify": "cargo xtask verify"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "devDependencies": {
+    "@oxlint/plugins": "1.78.0",
+    "oxlint": "1.78.0"
+  }
 }
