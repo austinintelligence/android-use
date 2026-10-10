@@ -213,4 +213,5 @@ jobs:
         shell: bash
         run: |
           version="$(tr -d '\r\n' < VERSION)"
-          gh release create "$GITHUB_REF_NAME" release/* --verify-tag --title "android-use v$version" --notes-file .github/release-notes.md
+          cargo +1.94.0 xtask release-notes > release-notes.md
+          gh release create "$GITHUB_REF_NAME" release/* --verify-tag --title "android-use v$version" --notes-file release-notes.md

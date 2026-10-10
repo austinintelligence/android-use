@@ -1,6 +1,6 @@
 # Development
 
-The host is Rust; the helper is a small Android Java app. Read [CONTRIBUTING.md](../CONTRIBUTING.md) and [SECURITY.md](../SECURITY.md) before changing trust boundaries, and [architecture](concepts/architecture.md) for the module map.
+The host is Rust; the helper is a small Android Java app. Read [CONTRIBUTING.md](../../CONTRIBUTING.md) and [SECURITY.md](../../SECURITY.md) before changing trust boundaries, and [architecture](../concepts/architecture.md) for the module map.
 
 ## Toolchain
 
@@ -11,6 +11,7 @@ The host is Rust; the helper is a small Android Java app. Read [CONTRIBUTING.md]
 | JDK | 17+ (21 for the Java formatter) | Helper build |
 | Gradle | 9.1.0 | Helper build (`AU_GRADLE` may point to it) |
 | Android SDK | `platforms;android-36`, `build-tools;36.0.0`, `platform-tools` | Helper build, `adb` |
+| Android emulator | `emulator` and a `google_apis` system image (`au emulator install`) | Emulator targets and live checks |
 
 Point `ANDROID_HOME` (or `ANDROID_SDK_ROOT`) at the SDK and `JAVA_HOME` at the JDK.
 
@@ -18,20 +19,13 @@ Point `ANDROID_HOME` (or `ANDROID_SDK_ROOT`) at the SDK and `JAVA_HOME` at the J
 
 ```console
 cargo build --release --bin au
-cargo xtask android          # debug helper APK
-cargo xtask package          # release archive layout in dist/
+cargo xtask android          # debug helper APK and the aubench fixture
+cargo xtask package          # release archive layout in dist/ (embeds the helper)
 ```
 
 ## Release
 
-Bump `VERSION`, the Cargo workspace, `install/package.json`, `package-lock.json`, the plugin manifests, and the Homebrew formula together (`cargo xtask version` checks them), tag `vX.Y.Z`, and push the tag. The release workflow builds the archives, the helper APK, `SHA256SUMS`, and the SBOM.
-
-After the GitHub release exists, publish to npm with your own `npm login`, then update the Homebrew tap with the checksums from `SHA256SUMS`:
-
-```console
-node install/publish-npm.mjs vX.Y.Z --dry-run
-node install/publish-npm.mjs vX.Y.Z
-```
+See [releasing](release.md).
 
 ## Verify
 
@@ -52,18 +46,12 @@ java -jar google-java-format-all-deps.jar --aosp --replace $(git ls-files 'devic
 
 On JDK 16+ the formatter needs `--add-exports=jdk.compiler/com.sun.tools.javac.<pkg>=ALL-UNNAMED` for `api`, `code`, `file`, `parser`, `tree`, and `util`; see `.github/workflows/ci.yml`.
 
-Live checks use one authorized device:
-
-```console
-cargo xtask benchmark-live
-```
-
-Privacy-sensitive capture checks require explicit Android permission. Do not enable them merely to satisfy an unrelated test.
+Live checks (a benchmark and an emulator end-to-end run) are in [testing](testing.md).
 
 ## Source map
 
 - `computer/` — engine, agent layer, adapters, protocol, artifacts, browser, and installer lifecycle. Integration tests live in `computer/tests/`.
 - `device/` — authenticated Android helper and deterministic debug example. JVM unit tests live in `device/app/src/test/`.
 - `tools/` — `cargo xtask`: verification, packaging, live tests, benchmarks, and documentation and source budgets.
-- `install/` — lightweight npm launcher for bundled platform releases.
+- `install/` — the npm launcher and its publisher, install scripts, Homebrew formula renderer, and `platforms.json`, the one list of release platforms.
 - `skills/` — compact operating instructions for coding agents.

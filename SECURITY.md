@@ -22,7 +22,7 @@ In scope: the `au` CLI, the Android helper, release archives, installer integrit
 
 - **Local host:** `au serve` uses stdio. It does not open a TCP listener. If another system carries stdio over a network, that system must provide authentication, encryption, and authorization.
 - **ADB transport:** Android must authorize the computer's debugging key. The server then binds one enrolled hardware serial to the session. Wireless ADB, if configured outside Android Use, expands this trust boundary to that network.
-- **Android helper:** the service has no `INTERNET` permission. It accepts an abstract-local socket from Android shell UID 2000 and is reached through an AU-created ADB forward.
+- **Android helper:** the service has no `INTERNET` permission. It accepts an abstract-local socket from Android shell UID 2000. `au` reaches it by speaking the ADB server's own protocol (`host:transport:SERIAL`, then `localabstract:NAME`), so no `adb` process runs for it and no TCP port forward exists to leak.
 - **Chrome:** CDP access is loopback-only and allowlisted to Chrome's Android abstract socket. It can read and operate the selected Chrome session, including authenticated pages already open on the device.
 
 Report vulnerabilities privately through GitHub Security Advisories. Do not include device identifiers, bridge credentials, UI content, or captured artifacts in a public issue.
@@ -33,9 +33,15 @@ All frames, queues, workers, plans, strings, predicates, waits, mutations, scene
 
 The production Rust crate forbids unsafe code and exposes no model-accessible ADB or shell escape hatch. Screenshots and photos an agent explicitly requests are returned to the connected client as image content; audio, screen recordings, and expanded diagnostics stay in the private artifact folder and only their path or handle is returned. Credentials, device identity, private content, and Java exception details are not logged.
 
+## Agent configuration and distribution
+
+`au install` edits agent configuration files (for example `~/.cursor/mcp.json`, `~/.claude.json` through `claude mcp add`, and `~/.codex/config.toml`). It changes only the `android-use` entry, saves the previous file as `<file>.au-backup`, refuses to overwrite an `android-use` entry it did not write unless you pass `--force`, and does not edit files that contain comments. `au install --dry-run` shows the change first. A tool an agent registers runs with that agent's permissions, so register it only with agents you trust to operate your device.
+
+Releases are built by GitHub Actions from a tagged commit and published with `SHA256SUMS`, an SPDX SBOM, and build attestations; the helper APK is signed with a pinned key whose fingerprint is checked in CI. The install scripts verify `SHA256SUMS` before unpacking. The npm packages (`android-use` and `@androiduse/<platform>`) and the Homebrew formula carry the same binaries, and the launcher checks the binary against its manifest before running it.
+
 ## Emulator targets
 
-`au emulator` creates local emulators, each a separate target with its own enrollment, journal, artifacts, and an exclusive `au serve` lock. An emulator is enrolled by a random per-target identifier stored in its settings, never by port, so a different device that later takes the same port is refused. Android Use does not enable the Accessibility service on an emulator or a phone; the user does, through Android's own consent screen. Emulators bind to loopback only. See [emulators](docs/emulators.md).
+`au emulator` creates local emulators, each a separate target with its own enrollment, journal, artifacts, and an exclusive `au serve` lock. An emulator is enrolled by a random per-target identifier stored in its settings, never by port, so a different device that later takes the same port is refused. Android Use does not enable the Accessibility service on an emulator or a phone; the user does, through Android's own consent screen. Emulators bind to loopback only. See [emulators](docs/guides/emulators.md).
 
 ## Sensitive capabilities
 
@@ -53,6 +59,6 @@ Do not publish diagnostics without reviewing them. Do not place Android Use stat
 
 ## Authentication and remote use
 
-The helper issues fresh bootstrap credentials, authenticates once per command connection, and requires exact monotonically increasing request sequences. This protects the helper socket; it is not a user-account system for a remotely exposed MCP server. Android Use does not ship a remote broker or multi-tenant authorization layer.
+The helper issues fresh bootstrap credentials, authenticates once per command connection, and requires exact monotonically increasing request sequences. This protects the helper socket; it is not a user-account system for a remotely exposed MCP server. Android Use does not ship a remote broker or multi-tenant authorization layer; a design for one is in [docs/design/remote-broker.md](docs/design/remote-broker.md), and nothing in it is built.
 
 Run `cargo xtask verify` for Rust and Java tests, the shared cross-language golden vector, source budgets, release builds, version consistency, documentation gates, and binary/APK size output.

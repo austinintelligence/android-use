@@ -10,7 +10,7 @@ Set up Android Use for this agent and connect one Android device. Inspect the ex
 
 ## Host install
 
-One command: `npx -y android-use setup` (npm), `brew install austinintelligence/tap/android-use` then `au setup`, or the install script (`install/install.sh`, `install/install.ps1`), which verifies `SHA256SUMS` before extracting. From a verified release archive:
+One command: `npx -y android-use setup` (npm), `brew install austinintelligence/tap/android-use` then `au setup`, or the install script (`install/install.sh`, `install/install.ps1`), which takes the latest release and verifies `SHA256SUMS` before extracting. Platforms: macOS, Linux, and Windows on x86_64 and arm64. From a verified release archive:
 
 ```powershell
 .\au.exe doctor
@@ -22,7 +22,7 @@ One command: `npx -y android-use setup` (npm), `brew install austinintelligence/
 ./au setup
 ```
 
-If the public package is not confirmed, do not guess an npm release. Download the matching official archive, `SHA256SUMS`, and `release-manifest.json`; verify them before extraction. If Platform-Tools are installed elsewhere, set `AU_ADB` to the trusted executable.
+If npm or Homebrew is unavailable, download the matching archive, `SHA256SUMS`, and `release-manifest.json` from the GitHub release and verify them before extraction. If Platform-Tools are installed elsewhere, set `AU_ADB` to the trusted executable.
 
 ## Device approvals
 

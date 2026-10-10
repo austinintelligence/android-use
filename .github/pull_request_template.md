@@ -9,18 +9,17 @@
 ## Safety and compatibility
 
 - [ ] No device-specific serials, tokens, private paths, media, or signing material are included.
-- [ ] Structured arguments preserve exact boundaries; raw `adb`/`sh` behavior is intentionally documented.
+- [ ] No new way for an agent to run a shell, `adb`, or page JavaScript; command forms changed in `computer/src/spec.rs` only.
 - [ ] Destructive/privacy-sensitive behavior has explicit confirmation coverage.
-- [ ] Temporary forwards, files, processes, and device state have cleanup coverage.
+- [ ] Temporary files, processes, emulators, and device state have cleanup coverage.
 
 ## Verification
 
 - [ ] `cargo fmt --all -- --check`
 - [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
 - [ ] `cargo test --workspace --all-targets`
-- [ ] `cargo build --workspace --release`
-- [ ] `npm test --workspace install`
-- [ ] `npm run lint --workspace install`
+- [ ] `cargo xtask verify`
+- [ ] `npm test` and `npm run lint`
 
 ## Release impact
 

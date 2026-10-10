@@ -39,6 +39,7 @@ fn run() -> Result<(), String> {
         }
         "version" => version(&root),
         "release-manifest" => release_manifest(&root, env::args().nth(2).as_deref()),
+        "release-notes" => release_notes(&root),
         "manifest" => manifest(&root),
         "verify" => verify(&root),
         "benchmark" => benchmark(&root),
@@ -49,7 +50,7 @@ fn run() -> Result<(), String> {
         "golden-capture" => tokens::capture(&root, &env::args().nth(2).ok_or("golden-capture needs a NAME")?),
         _ => {
             println!(
-                "cargo xtask check|test|android|package|release|version|release-manifest DIR|manifest|verify|benchmark|benchmark-live|emulator-e2e|size|docs [--write]|golden-capture NAME"
+                "cargo xtask check|test|android|package|release|version|release-manifest DIR|release-notes|manifest|verify|benchmark|benchmark-live|emulator-e2e|size|docs [--write]|golden-capture NAME"
             );
             Ok(())
         }
@@ -234,7 +235,7 @@ fn version(root: &Path) -> Result<(), String> {
     if !gradle.contains("def releaseVersion = file(\"../../VERSION\").text.trim()") || !gradle.contains("versionName = releaseVersion") {
         return Err("Android helper must read its version from VERSION".into());
     }
-    for path in ["README.md", "docs/getting-started.md", "install/README.md", "skills/android-use/SKILL.md"] {
+    for path in ["README.md", "docs/guides/install.md", "install/README.md", "skills/android-use/SKILL.md"] {
         let text = fs::read_to_string(root.join(path)).map_err(ioe)?;
         if text.contains("v3") || text.contains("v2") {
             return Err(format!("stale product version marker in {path}"));
@@ -318,12 +319,19 @@ fn docs(root: &Path, write: bool) -> Result<(), String> {
         "llms.txt",
         "SECURITY.md",
         "docs/README.md",
-        "docs/getting-started.md",
+        "docs/guides/install.md",
         "docs/agents/install.md",
         "docs/agents/quickstart.md",
         "docs/reference/cli.md",
         "docs/reference/agent-protocol.md",
-        "docs/troubleshooting.md",
+        "docs/guides/troubleshooting.md",
+        "docs/guides/emulators.md",
+        "docs/reference/environment.md",
+        "docs/reference/capabilities.md",
+        "docs/concepts/token-budget.md",
+        "docs/concepts/security-model.md",
+        "docs/contributing/release.md",
+        "docs/contributing/testing.md",
         "examples/README.md",
         "skills/android-use/SKILL.md",
         "skills/android-use/references/protocol.md",
@@ -334,6 +342,7 @@ fn docs(root: &Path, write: bool) -> Result<(), String> {
         if !root.join(path).is_file() {
             return Err(format!("missing document {path}"));
         }
+        links(root)?;
     }
     let budgets = [
         ("skills/android-use/SKILL.md", 2800usize, 700usize),
@@ -344,7 +353,7 @@ fn docs(root: &Path, write: bool) -> Result<(), String> {
         ("docs/reference/agent-protocol.md", 2800, 700),
         ("docs/agents/quickstart.md", 1800, 450),
         ("docs/agents/install.md", 7200, 1800),
-        ("docs/guides/common-workflows.md", 1400, 350),
+        ("docs/guides/workflows.md", 1400, 350),
         ("docs/reference/cli.md", 2800, 700),
         ("examples/README.md", 2000, 500),
     ];
@@ -377,7 +386,7 @@ fn docs(root: &Path, write: bool) -> Result<(), String> {
             return Err("llms.txt contains a description over 100 bytes".into());
         }
     }
-    let primary_paths = ["skills/android-use/SKILL.md", "AGENTS.md", "docs/agents/quickstart.md", "docs/guides/common-workflows.md", "examples/README.md"];
+    let primary_paths = ["skills/android-use/SKILL.md", "AGENTS.md", "docs/agents/quickstart.md", "docs/guides/workflows.md", "examples/README.md"];
     let mut primary = String::new();
     for path in primary_paths {
         primary.push_str(&fs::read_to_string(root.join(path)).map_err(ioe)?);
@@ -598,4 +607,68 @@ fn file_count(root: &Path, exts: &[&str]) -> Result<usize, String> {
 }
 pub(crate) fn ioe(e: impl std::fmt::Display) -> String {
     e.to_string()
+}
+
+/// Every relative link in a Markdown file points at a file or folder that exists.
+fn links(root: &Path) -> Result<(), String> {
+    let out = Command::new("git").args(["ls-files", "*.md"]).current_dir(root).output().map_err(ioe)?;
+    for file in String::from_utf8_lossy(&out.stdout).lines().filter(|f| !f.starts_with("docs/design/baseline/") && *f != "CHANGELOG.md") {
+        let text = fs::read_to_string(root.join(file)).map_err(ioe)?;
+        for (at, _) in text.match_indices("](") {
+            let rest = &text[at + 2..];
+            let Some(end) = rest.find(')') else { continue };
+            let target = rest[..end].split(['#', ' ']).next().unwrap_or_default();
+            if target.is_empty() || target.contains("://") || target.starts_with("mailto:") {
+                continue;
+            }
+            let base = root.join(file).parent().map(Path::to_path_buf).unwrap_or_default();
+            if !base.join(target).exists() {
+                return Err(format!("{file}: broken link {target}"));
+            }
+        }
+    }
+    println!("doc_links=pass");
+    Ok(())
+}
+
+/// The body of a changelog section: from its `## VERSION` heading to the next `## ` heading.
+fn changelog_section(changelog: &str, version: &str) -> Option<String> {
+    let start = changelog.lines().position(|l| l.starts_with("## ") && l[3..].split([' ', '\u{2014}']).next() == Some(version))?;
+    let body: Vec<&str> = changelog.lines().skip(start + 1).take_while(|l| !l.starts_with("## ")).collect();
+    Some(body.join("\n").trim().to_owned())
+}
+/// `cargo xtask release-notes`: the GitHub release body for `VERSION`, from its changelog section.
+fn release_notes(root: &Path) -> Result<(), String> {
+    let version = fs::read_to_string(root.join("VERSION")).map_err(ioe)?.trim().to_owned();
+    let changelog = fs::read_to_string(root.join("CHANGELOG.md")).map_err(ioe)?;
+    let section = changelog_section(&changelog, &version).ok_or(format!("CHANGELOG.md has no section for {version}"))?;
+    // Relative links do not work in a release body.
+    let section = section.replace("](docs/", &format!("](https://github.com/austinintelligence/android-use/blob/v{version}/docs/"));
+    let rows: String = platforms(root)?
+        .iter()
+        .map(|p| {
+            format!(
+                "| {} | `android-use-v{version}-{}.{}` |\n",
+                p["npm"].as_str().unwrap_or_default().replace('-', " "),
+                p["asset"].as_str().unwrap_or_default(),
+                p["archive"].as_str().unwrap_or_default()
+            )
+        })
+        .collect();
+    print!(
+        "# android-use {version}\n\n{section}\n\n## Install\n\n```sh\nnpx -y android-use setup                                  # npm\nbrew install austinintelligence/tap/android-use           # Homebrew\ncurl -fsSL https://raw.githubusercontent.com/austinintelligence/android-use/v{version}/install/install.sh | sh   # macOS, Linux\n```\n\nOn Windows run `install/install.ps1`, or unpack an archive below and run `au setup`. Every archive contains `au` with the Android helper built in; the helper is also attached on its own for audited deployment.\n\n| Platform | Archive |\n| --- | --- |\n{rows}\n## Verify\n\nCheck an archive against `SHA256SUMS`, and its provenance with `gh attestation verify FILE --repo austinintelligence/android-use`. `android-use.spdx.json` is the software bill of materials, and `release-manifest.json` lists every asset with its size and digest.\n\n## Security\n\nUSB debugging and access to `au serve` are device-control authority; keep them local and private. Android Use ships no remote broker or multi-user authorization. Read [SECURITY.md](https://github.com/austinintelligence/android-use/blob/v{version}/SECURITY.md) before exposing any transport beyond your computer. Full history: [CHANGELOG.md](https://github.com/austinintelligence/android-use/blob/v{version}/CHANGELOG.md).\n"
+    );
+    Ok(())
+}
+#[cfg(test)]
+mod tests {
+    use super::changelog_section;
+
+    #[test]
+    fn a_changelog_section_stops_at_the_next_version() {
+        let log = "# Changelog\n\n## 1.2.0 \u{2014} 2026-10-10\n\nNew.\n\n### Added\n\n- a\n\n## 1.1.2 \u{2014} 2026-10-09\n\nOld.\n";
+        assert_eq!(changelog_section(log, "1.2.0").unwrap(), "New.\n\n### Added\n\n- a");
+        assert_eq!(changelog_section(log, "1.1.2").unwrap(), "Old.");
+        assert!(changelog_section(log, "1.3.0").is_none());
+    }
 }

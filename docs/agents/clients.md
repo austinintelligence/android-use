@@ -19,7 +19,7 @@ au uninstall cursor   # remove only the android-use entry
 - A config file with comments or trailing commas (VS Code and OpenCode allow them) is not edited; `au install` prints the snippet to paste instead.
 - Desktop apps (Cursor, VS Code, Claude Desktop) do not inherit your shell's PATH, so they get the absolute path of `au` as found on PATH. Terminal agents get plain `au`.
 
-Run `au setup` once first (see the [human quickstart](../getting-started.md)). The manual forms follow; replace `au` with an absolute path if the client cannot find it.
+Run `au setup` once first (see the [install guide](../guides/install.md)). The manual forms follow; replace `au` with an absolute path if the client cannot find it.
 
 ## Claude Code
 
@@ -68,7 +68,11 @@ Use a stdio transport with the command and arguments above. The server implement
 | `android_read` | Look without changing anything: `screen`, `page`, `notifications`, … |
 | `android_act` | Change the device: `tap "Wi-Fi"`, `type "hello" in "Message"`, `page open "https://…"`, … |
 
-Each takes one string argument, `command`. Some clients show the names with dots replaced (for example `android_read`); they are the same tools. The tool descriptions list the common commands, so an agent can work from them alone; the [agent protocol](../reference/agent-protocol.md) explains results in more depth.
+Each takes one string argument, `command`. (Older clients that call `android.read` and `android.act` still work; only the underscore names are listed.) The tool descriptions list the common commands, so an agent can work from them alone; the [agent protocol](../reference/agent-protocol.md) explains results in more depth.
+
+## One agent per device
+
+A server drives one target: your enrolled phone by default, or an [emulator](../guides/emulators.md) with `--target NAME`. Register it like any other server, with `args` `--target NAME serve --mcp` (for example `claude mcp add android-demo -- au --target demo serve --mcp`). A second server for the same target is refused.
 
 ## Agents without MCP
 

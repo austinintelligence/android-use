@@ -2,7 +2,7 @@
 
 ![Android Use architecture](../../images/how-it-works.svg)
 
-Android Use has two halves: `au`, a Rust binary on the computer, and a small Java helper app on the device. They talk through an authenticated socket forwarded by ADB. Chrome is reached separately through its own on-device debugging socket.
+Android Use has two halves: `au`, a Rust binary on the computer, and a small Java helper app on the device (labeled Android-Use). They talk through an authenticated abstract socket that `au` opens by speaking the ADB server's protocol. Chrome is reached separately through its own on-device debugging socket.
 
 ## One action, end to end
 
@@ -39,10 +39,30 @@ sequenceDiagram
 | `engine.rs` | Execution core: lazy device link, reconnects, journaled plan execution, artifacts. |
 | `journal.rs` | At-most-once operation journal. |
 | `bridge.rs` / `browser.rs` | Helper protocol and Chrome DevTools clients. |
-| `device.rs` / `install.rs` | ADB discovery, enrollment, setup, and `doctor`. |
+| `device.rs` / `install.rs` | ADB discovery (over the adb server socket, with no `adb` process), enrollment, targets and their locks, setup, and `doctor`. Identity: a hardware serial, or for emulators a per-target marker. |
+| `emulator.rs` | `au emulator`: SDK checks and `sdkmanager` installs, AVD creation, start and stop on free ports, snapshots, and identity checks on the recorded port. |
 | `compress.rs` | Content-aware screenshot compression and the image-to-device coordinate map. |
 | `visual.rs` / `artifact.rs` | PNG crop, hash, and diff; private local artifacts. |
 | `api.rs` | Shared types and wire encoding. |
+
+## Helper modules (`device/app/src/main/java/dev/codex/aubridge`)
+
+| Class | Responsibility |
+| --- | --- |
+| `Ui` | The accessibility service: reads the tree, resolves labels and handles to nodes, and settles after an action. |
+| `SemanticCompiler` | Turns the accessibility tree into the compact rows the agent reads (with unlabeled-control handling). |
+| `Targets` | Label search in tiers: exact, then word-aligned near matches, with ambiguity reported. |
+| `Vm` | Runs a plan: generation check, re-validation of each target, gestures, `scroll_until`, and the settle op. |
+| `Bridge` / `BridgeService` | The authenticated socket and its foreground service (type `specialUse`). |
+| `Capture`, `Notify` | Camera, microphone, and screen capture; the notification listener. |
+
+## Targets and emulators
+
+A *target* is a named device with its own enrollment, journal, artifacts, and exclusive serve lock under `AU_HOME/targets/NAME`. The default target is your phone. `au emulator create` writes an AVD under `AU_HOME/emulators/avd` (no `avdmanager`), `start` picks a free console and adb port pair under a lock and writes an identity marker into the emulator's settings, and every later action on the recorded port first confirms that marker. See [emulators](../guides/emulators.md).
+
+## The helper in the binary
+
+Release builds compile the signed helper APK into `au` (`computer/build.rs`, `AU_EMBED_APK`, with its SHA-256 checked at install), so one file is the whole product and `au update` ships a matching helper.
 
 ## Safety invariants
 

@@ -1,6 +1,6 @@
 # Contributing to Android Use
 
-Thanks for helping. Start with the [project guide](README.md) for the source layout and local setup.
+Thanks for helping. Start with [development](docs/contributing/development.md) for the toolchain and source layout, and [testing](docs/contributing/testing.md) for the checks.
 
 ## Before changing code
 
@@ -11,7 +11,7 @@ Thanks for helping. Start with the [project guide](README.md) for the source lay
 - Give every operation a deadline, output bound, cancellation path, and clear failure.
 - Require explicit output paths for binary or large data.
 
-New commands need tests for valid use, malformed input, timeouts, partial completion, and cleanup. If an operation changes device state, define the authoritative postcondition before implementation.
+New commands need tests for valid use, malformed input, timeouts, partial completion, and cleanup. Agent-facing command forms live once, in `computer/src/spec.rs`; run `cargo xtask docs --write` after changing them. If an operation changes device state, define the authoritative postcondition before implementation.
 
 ## Code style
 
@@ -45,4 +45,4 @@ Keep generated build output and local state out of the commit. A reviewer should
 
 ## Release maintenance
 
-`VERSION` is the public version source of truth. Do not edit package, CLI, or Android version strings independently; `cargo xtask version` checks that every shipped surface agrees. A stable `vX.Y.Z` tag runs the release workflow. It builds the supported host archives, verifies the pinned Android helper signer, publishes SHA-256 checksums and an SPDX SBOM, and attests the assets.
+`VERSION` is the public version source of truth. Do not edit package, CLI, or Android version strings independently; `cargo xtask version` checks that every shipped surface agrees. Releases follow [releasing](docs/contributing/release.md): rehearse the workflow by hand, then tag.

@@ -32,7 +32,7 @@ The server starts even without a device, so the tool result explains the problem
 - *The enrolled Android device is not connected*: reconnect and unlock it.
 - *Accessibility service is off*: enable it as above.
 
-If the client cannot start the server at all, run `au install --dry-run` to see what is registered, and check that its configuration runs `au` (an absolute path for desktop apps) with the arguments `serve --mcp` ([client setup](agents/clients.md)).
+If the client cannot start the server at all, run `au install --dry-run` to see what is registered, and check that its configuration runs `au` (an absolute path for desktop apps) with the arguments `serve --mcp` ([client setup](../agents/clients.md)).
 
 ## "No item labeled … is on the current screen"
 
@@ -57,3 +57,11 @@ Do not retry the whole command. Read the screen and work out what already happen
 ## Optional capture is unavailable
 
 Run `au read capabilities`. Camera, microphone, and location need Android permission; screen recording needs approval in the Android-Use app for the current helper process.
+
+## Emulators
+
+- *No Android SDK found / the emulator is not installed*: run `au emulator doctor`, then `au emulator install` in a terminal (it needs a JDK for Google's `sdkmanager` and asks you to accept the SDK license).
+- *The emulator did not come up*: the message ends with the last lines of `emulator.log`. On Linux, check that KVM is available; on any host, free some RAM (the small profile uses 2 GB).
+- *another au serve is already driving this target*: stop that server, or use a different `--target`.
+- *The device on this emulator's recorded port is not that emulator*: the emulator crashed or was closed outside `au`. Run `au emulator start NAME` again; nothing was stopped or bound.
+- *Accessibility is off after a restart*: wait a few seconds for the service to bind, then run `au --target NAME status`.
