@@ -60,4 +60,4 @@ Apple silicon, Android 16 (API 36) `google_apis` arm64 image, `small` profile, h
 
 ## What this does not do
 
-Android Use does not turn on Accessibility for you and does not bypass Android's consent screens, on emulators or phones. Provisioning that would skip them is deliberately not built. A shared or remote emulator broker is out of scope; see [Security](../SECURITY.md).
+Android Use does not turn on Accessibility for you and does not bypass Android's consent screens, on emulators or phones. Provisioning that would skip them is deliberately not built. A remote broker is only a [design proposal](design/remote-broker.md); nothing listens on a network.

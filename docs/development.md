@@ -22,6 +22,17 @@ cargo xtask android          # debug helper APK
 cargo xtask package          # release archive layout in dist/
 ```
 
+## Release
+
+Bump `VERSION`, the Cargo workspace, `install/package.json`, `package-lock.json`, the plugin manifests, and the Homebrew formula together (`cargo xtask version` checks them), tag `vX.Y.Z`, and push the tag. The release workflow builds the archives, the helper APK, `SHA256SUMS`, and the SBOM.
+
+After the GitHub release exists, publish to npm with your own `npm login`, then update the Homebrew tap with the checksums from `SHA256SUMS`:
+
+```console
+node install/publish-npm.mjs vX.Y.Z --dry-run
+node install/publish-npm.mjs vX.Y.Z
+```
+
 ## Verify
 
 ```console

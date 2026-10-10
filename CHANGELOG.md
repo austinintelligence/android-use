@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 — 2026-10-10
 
 ### Breaking
 
@@ -55,7 +55,7 @@
 
 - `cargo xtask benchmark-live` drives the shipped commands over MCP on a device and reports calls, tokens, time, and success per task, with p50/p95 per action and optional gates (`BENCH_GATE=1`). The `aubench` fixture gains duplicate, near-miss, slow, and unlabeled controls. Baselines are in `docs/design/baseline/`.
 - Product code may not use `uiautomator`. Release artifacts are size-gated: host binary at most 1,000,000 bytes, helper APK at most 60,000 (now 39,148, from 52,454, by dropping Kotlin metadata).
-- Budgets (formatted lines): Rust production 7,000, Java 3,450, authored code 14,500, automation 1,320. Rust production is 6,926 against 5,620 in 1.0.0 after removing about 650 lines of legacy protocol; the additions are the install command, the spec table, handles and marks, the journal, compression, and the agent layer.
+- Budgets (formatted lines): Rust production 7,450, Java 3,450, authored code 15,100, automation 1,400. Rust production is about 7,380 against 5,620 in 1.0.0 after removing about 650 lines of legacy protocol; the additions are the install command, the spec table, handles and marks, the journal, compression, the agent layer, and emulator targets. `install/publish-npm.mjs` publishes a release to npm.
 - Dependency: `serde_json` with `preserve_order` (adds `indexmap`), so editing an agent's configuration keeps its key order.
 
 ### Fixed
