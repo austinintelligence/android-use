@@ -27,7 +27,7 @@
 
 ### Maintenance
 
-- Budgets (formatted lines): Rust production 7,520, Java 3,450, automation 1,650, authored code 15,450. The increases cover `au emulator install` and the emulator, release, and publishing tooling.
+- Budgets (formatted lines): Rust production 7,520, Java 3,450, automation 1,700, authored code 15,500. The increases cover `au emulator install` and the emulator, release, and publishing tooling.
 
 ## 1.1.2 — 2026-10-10
 
