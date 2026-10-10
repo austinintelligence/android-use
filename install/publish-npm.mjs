@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Publish a GitHub release to npm: three @android-use/<platform> packages, then android-use.
 // Usage: node install/publish-npm.mjs vX.Y.Z [--dry-run]
-// Needs `gh` and an npm login that can publish both names. Archives are checked against the
+// Needs `gh` and an npm login that can publish both names. npm may ask for a 2FA confirmation
+// (a browser link or a one-time code), so run it in a terminal you are watching. Archives are checked against the
 // release's SHA256SUMS before anything is staged.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -23,7 +24,7 @@ if (version !== readFileSync(join(here, "..", "VERSION"), "utf8").trim()) {
   process.exit(2);
 }
 
-const run = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, stdio: ["ignore", "inherit", "inherit"] });
+const run = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, stdio: "inherit" });
 const work = mkdtempSync(join(tmpdir(), "au-npm-"));
 run("gh", ["release", "download", tag, "--dir", work, "-p", "*.tar.gz", "-p", "*.zip", "-p", "SHA256SUMS"]);
 
