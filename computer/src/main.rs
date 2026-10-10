@@ -4,6 +4,7 @@ use au::{
     adapter,
     api::{parse_act_command, parse_read_command, Code, Error, Read, Result},
     clients::{self, Client, Dirs, Options},
+    emulator,
     engine::{plain_error, Engine, ModelResponse},
     install,
 };
@@ -11,6 +12,7 @@ use serde_json::Value;
 use std::{env, io::IsTerminal, path::Path};
 
 fn main() {
+    select_target();
     let human = env::args().any(|arg| arg == "--human") || (!env::args().any(|arg| arg == "--json") && std::io::stdout().is_terminal());
     let command = env::args().skip(1).find(|arg| arg != "--json" && arg != "--human").unwrap_or_else(|| "help".into());
     match run(human) {
@@ -31,10 +33,28 @@ fn main() {
         }
     }
 }
+/// `--target NAME` anywhere on the command line selects a target for this process: it is moved to
+/// `AU_TARGET`, which `Paths::discover` reads, so no command parses it.
+fn select_target() {
+    let args: Vec<String> = env::args().collect();
+    if let Some(at) = args.iter().position(|arg| arg == "--target") {
+        if let Some(name) = args.get(at + 1) {
+            env::set_var("AU_TARGET", name);
+        }
+    }
+}
+
 fn run(human: bool) -> Result<Value> {
-    let a: Vec<String> = env::args().skip(1).filter(|arg| arg != "--json" && arg != "--human").collect();
+    let mut a: Vec<String> = env::args().skip(1).filter(|arg| arg != "--json" && arg != "--human").collect();
+    if let Some(at) = a.iter().position(|arg| arg == "--target") {
+        a.drain(at..(at + 2).min(a.len()));
+    }
     let out = match a.first().map(String::as_str).unwrap_or("help") {
+        "emulator" => emulator(&a)?,
+        "targets" => targets()?,
         "serve" => {
+            let paths = au::device::Paths::discover()?;
+            let _lock = paths.lock_for_serving()?;
             let e = Engine::open()?;
             match a.get(1).map(String::as_str) {
                 Some("--mcp") => return adapter::mcp(e).map(|_| Value::Null),
@@ -75,12 +95,51 @@ fn run(human: bool) -> Result<Value> {
         "uninstall" => install::uninstall()?,
         "version" | "--version" => serde_json::json!({"version":env!("CARGO_PKG_VERSION")}),
         "help" | "--help" | "-h" => {
-            serde_json::json!({"commands":["devices","setup [APK]","status","doctor","update [APK]","uninstall","enroll ENDPOINT","repair [APK]","serve --mcp","read COMMAND","act COMMAND","install [AGENT|all] [--dry-run] [--force]","uninstall AGENT"]})
+            serde_json::json!({"commands":["devices","setup [APK]","status","doctor","update [APK]","uninstall","enroll ENDPOINT","repair [APK]","serve --mcp","read COMMAND","act COMMAND","install [AGENT|all] [--dry-run] [--force]","uninstall AGENT","emulator doctor|images|create|start|stop|status|list|destroy","targets","--target NAME (any command)"]})
         }
         _ => return Err(Error::new(Code::Args, format!("unknown command: {}", a[0]))),
     };
     Ok(out)
 }
+/// `au emulator doctor|images|create|start|stop|status|list|destroy`.
+fn emulator(a: &[String]) -> Result<Value> {
+    let name = || a.get(2).filter(|arg| !arg.starts_with("--")).ok_or_else(|| Error::new(Code::Args, "this command needs an emulator NAME"));
+    let flag = |flag: &str| a.iter().any(|arg| arg == flag);
+    let value = |flag: &str| a.iter().position(|arg| arg == flag).and_then(|at| a.get(at + 1)).map(String::as_str);
+    match a.get(1).map(String::as_str) {
+        Some("doctor") => emulator::doctor(),
+        Some("images") => emulator::list_images(),
+        Some("create") => emulator::create(name()?, value("--image"), if value("--profile") == Some("standard") { emulator::Profile::Standard } else { emulator::Profile::Small }),
+        Some("start") => emulator::start(name()?, flag("--window")),
+        Some("stop") => emulator::stop(name()?),
+        Some("status") => emulator::status(name()?),
+        Some("list") => emulator::list(),
+        Some("destroy") => emulator::destroy(name()?, flag("--yes")),
+        _ => Err(Error::new(Code::Args, "use au emulator doctor, images, create NAME, start NAME, stop NAME, status NAME, list, or destroy NAME --yes")),
+    }
+}
+
+/// `au targets`: the default target and every named one, with the endpoint each is bound to.
+fn targets() -> Result<Value> {
+    let base = au::device::Paths::base()?;
+    let bound = |dir: &Path| {
+        std::fs::read(dir.join("device.json")).ok().and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok()).and_then(|v| v["endpoint"].as_str().map(str::to_owned))
+    };
+    let mut rows = vec![serde_json::json!({"name":"default","kind":"device","endpoint":bound(&base)})];
+    let mut names: Vec<_> = std::fs::read_dir(base.join("targets")).map(|dir| dir.flatten().filter_map(|e| e.file_name().into_string().ok()).collect()).unwrap_or_default();
+    names.sort();
+    for name in names {
+        let dir = base.join("targets").join(&name);
+        let kind = std::fs::read(dir.join("target.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .and_then(|v| v["kind"].as_str().map(str::to_owned))
+            .unwrap_or_else(|| "device".into());
+        rows.push(serde_json::json!({"name":name,"kind":kind,"endpoint":bound(&dir)}));
+    }
+    Ok(serde_json::json!({"ok":1,"targets":rows}))
+}
+
 /// `au install [AGENT|all] [--dry-run] [--force]` and `au uninstall AGENT`: register or remove the
 /// MCP server (and skill) for the named agents, or for every agent found.
 fn agents(a: &[String]) -> Result<Value> {

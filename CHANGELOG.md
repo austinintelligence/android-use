@@ -9,6 +9,13 @@
 - Screens are rendered densely: `sw Wi-Fi=on`, `edit Email="x"`, `list Feed`, plain names for buttons and text, and `Save#2` for a duplicate (send `tap "Save" number 2`). Descriptive subtitles move to `screen full`.
 - A fully successful action says `Done.` rather than restating the command, followed by the screen or, on the same screen, only `Changed:` rows (`~` changed, `+` added, `-` removed).
 
+### Emulators and targets
+
+- `au emulator doctor|images|create|start|stop|status|list|destroy` creates and runs local Android emulators without a JDK or `avdmanager`. Each is a separate target: `--target NAME` (or `AU_TARGET`) selects its own enrollment, journal, artifacts, and an exclusive `au serve` lock. `au targets` lists them. See `docs/emulators.md`.
+- An emulator is enrolled by a per-target identifier, not its port, so it survives a restart on another port and is never confused with another device.
+- Android Use still never enables Accessibility itself; provisioning that would skip Android's consent screen is deliberately not built.
+- The Rust source budget rises from 7000 to 7450 lines (authored code 14500 to 15000) to cover about 430 lines of emulator code.
+
 ### Cheaper for agents
 
 - Fixed per-turn tokens (instructions plus both tool definitions) fall from 834 to 396 (o200k, −53%), driven by `computer/src/spec.rs`: one table generates the tool descriptions, the new `android_read help`, the installed `references/protocol.md`, and the grammar tests. `SKILL.md` is 263 tokens instead of 548.

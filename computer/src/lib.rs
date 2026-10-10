@@ -10,6 +10,7 @@ pub mod clients;
 mod command;
 mod compress;
 pub mod device;
+pub mod emulator;
 pub mod engine;
 mod format;
 pub use format::render_screen;

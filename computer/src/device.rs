@@ -21,8 +21,9 @@ pub struct Paths {
 }
 
 impl Paths {
-    pub fn discover() -> Result<Self> {
-        let root = if let Some(v) = env::var_os("AU_HOME") {
+    /// The state folder shared by every target (`AU_HOME`, else the platform default).
+    pub fn base() -> Result<PathBuf> {
+        Ok(if let Some(v) = env::var_os("AU_HOME") {
             PathBuf::from(v)
         } else if cfg!(windows) {
             PathBuf::from(env::var_os("LOCALAPPDATA").ok_or_else(|| Error::new(Code::Io, "LOCALAPPDATA is not set"))?).join("AndroidUse")
@@ -33,8 +34,24 @@ impl Paths {
                     .ok_or_else(|| Error::new(Code::Io, "no state directory"))?,
             )
             .join("android-use")
-        };
-        Self::at(root)
+        })
+    }
+    /// State for the selected target: `<base>/targets/NAME` with `--target NAME` (or `AU_TARGET`),
+    /// else the base folder itself, so nothing moves for anyone not using targets.
+    pub fn discover() -> Result<Self> {
+        let base = Self::base()?;
+        match env::var("AU_TARGET").ok().filter(|name| !name.is_empty()) {
+            Some(name) if crate::emulator::valid_name(&name) => Self::at(base.join("targets").join(name)),
+            Some(_) => Err(Error::new(Code::Args, "target names use lowercase letters, digits, and dashes (at most 32)")),
+            None => Self::at(base),
+        }
+    }
+    /// Takes the exclusive lock that keeps two `au serve` processes off one target; the lock is
+    /// released when the returned file is dropped or the process ends, even by a crash.
+    pub fn lock_for_serving(&self) -> Result<fs::File> {
+        let file = fs::OpenOptions::new().create(true).truncate(false).write(true).open(self.root.join("lock"))?;
+        file.try_lock().map_err(|_| Error::new(Code::Device, "another au serve is already driving this target; stop it, or use a different --target"))?;
+        Ok(file)
     }
     pub(crate) fn at(root: PathBuf) -> Result<Self> {
         fs::create_dir_all(&root)?;
@@ -164,6 +181,10 @@ impl Adb {
         if paths.device.is_file() {
             return Ok((self.resolve(paths)?, false));
         }
+        // A target made by `au emulator create` enrolls its own running emulator.
+        if let Some(endpoint) = crate::emulator::running_endpoint(paths) {
+            return Ok((self.enroll(paths, &endpoint)?, true));
+        }
         let ready: Vec<_> = self.devices_all()?.into_iter().filter(|d| d.state.as_ref() == "device").collect();
         let one = match ready.as_slice() {
             [one] => one,
@@ -173,6 +194,15 @@ impl Adb {
         Ok((self.enroll(paths, &one.endpoint)?, true))
     }
     pub fn hardware(&self, endpoint: &str) -> Result<Box<str>> {
+        // An emulator made by `au emulator` carries its own identity, because serials are not
+        // guaranteed unique across instances and ports move between starts.
+        if endpoint.starts_with("emulator-") {
+            let out = self.run(Some(endpoint), &["shell", "settings", "get", "global", "android_use_instance"], Duration::from_secs(4)).unwrap_or_default();
+            let marker = String::from_utf8_lossy(&out).trim().to_owned();
+            if !marker.is_empty() && marker != "null" && marker.len() <= 64 {
+                return Ok(format!("au-emulator-{marker}").into());
+            }
+        }
         for key in ["ro.serialno", "ro.boot.serialno"] {
             let out = self.run(Some(endpoint), &["shell", "getprop", key], Duration::from_secs(4))?;
             let s = String::from_utf8_lossy(&out).trim().to_string();

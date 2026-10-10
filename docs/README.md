@@ -15,6 +15,7 @@ Start with the result you want.
 - [Capabilities](capabilities.md) — what Android UI, Chrome, and supported device interfaces can do.
 - [Common workflows](guides/common-workflows.md) — observe, act, verify, and recover.
 - [CLI reference](reference/cli.md) — every `au` command.
+- [Emulators and targets](emulators.md) — run and drive local emulators beside your phone.
 - [Agent protocol](reference/agent-protocol.md) — the compact MCP command contract.
 - [Troubleshooting](troubleshooting.md) — USB trust, permissions, Chrome, and stale state.
 

@@ -522,4 +522,7 @@ Real-tokenizer (o200k) counts from `baseline/trace_tokens.py` over `BENCH_TRACE`
 | G4.2 (P3) | Smart sockets done (helper and Chrome). Not done: a daemon for CLI calls (the MCP server already persists; a CLI call is now 70 ms) and blob frames (a screenshot is 1–4 slices of 256 KiB; the JSON/base64 overhead is not the bottleneck) |
 | G5.1–G5.6 | Done in the repository; nothing published (needs credentials and the owner's go-ahead) |
 | G6.1–G6.4 | Done; budgets recorded in the changelog |
-| E1–E7 emulator lifecycle | Next |
+| E1–E4 targets, identity, emulator lifecycle, serve lock | Done on `feature/emulator-targets`; verified end to end on a managed API 36 emulator (boot 38 s, restart keeps enrollment, second serve refused, destroy clean) |
+| E5 multi-instance tests | Covered by unit tests for ports and identity; no parallel live-session suite yet |
+| E6 snapshots | Not built (optional) |
+| E7 remote broker | Not built; needs owner approval |

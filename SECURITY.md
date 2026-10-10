@@ -33,6 +33,10 @@ All frames, queues, workers, plans, strings, predicates, waits, mutations, scene
 
 The production Rust crate forbids unsafe code and exposes no model-accessible ADB or shell escape hatch. Screenshots and photos an agent explicitly requests are returned to the connected client as image content; audio, screen recordings, and expanded diagnostics stay in the private artifact folder and only their path or handle is returned. Credentials, device identity, private content, and Java exception details are not logged.
 
+## Emulator targets
+
+`au emulator` creates local emulators, each a separate target with its own enrollment, journal, artifacts, and an exclusive `au serve` lock. An emulator is enrolled by a random per-target identifier stored in its settings, never by port, so a different device that later takes the same port is refused. Android Use does not enable the Accessibility service on an emulator or a phone; the user does, through Android's own consent screen. Emulators bind to loopback only. See [emulators](docs/emulators.md).
+
 ## Sensitive capabilities
 
 Camera and microphone plans are permission-gated and bounded. Location is a one-shot request. Notification access requires Android's user-enabled listener service. Screen recording requires a process-local user-granted MediaProjection token and is capped at 30 seconds. Screenshots can contain credentials, messages, and personal data even though they do not require the camera permission. Browser CDP can access authenticated page content. Agents cannot submit arbitrary page JavaScript; Android Use exposes only the documented browser operations.

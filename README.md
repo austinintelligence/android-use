@@ -127,6 +127,7 @@ Normal control stays between your computer and the connected device. Android sti
 | Try commands myself | [Human Quickstart](docs/getting-started.md) |
 | Build an agent integration | [Agent protocol](docs/reference/agent-protocol.md) and [architecture](docs/concepts/architecture.md) |
 | Automate a repeatable task | [Examples](examples/README.md) and the `au read` / `au act` commands |
+| Try it on a throwaway emulator instead of my phone | [Emulators and targets](docs/emulators.md) |
 | Understand permissions and remote-control risk | [Security](SECURITY.md) |
 | Contribute to Android Use | [Development](docs/development.md) |
 
