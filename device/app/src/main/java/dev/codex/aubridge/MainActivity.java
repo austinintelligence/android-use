@@ -21,7 +21,9 @@ public final class MainActivity extends Activity {
         page.setPadding(48, 64, 48, 48);
         TextView title = new TextView(this);
         title.setText(
-                "Android-Use\n\nTurn on its accessibility service, then use the Android-Use agent on your computer.");
+                "Android-Use\n\n"
+                    + "Turn on its accessibility service, then use the Android-Use agent on your"
+                    + " computer.");
         title.setTextSize(20);
         Button open = new Button(this);
         open.setText("Open accessibility settings");

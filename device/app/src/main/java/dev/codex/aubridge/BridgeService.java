@@ -18,7 +18,8 @@ public final class BridgeService extends Service {
         super.onCreate();
         NotificationManager n = getSystemService(NotificationManager.class);
         n.createNotificationChannel(
-                new NotificationChannel("bridge", "Android-Use", NotificationManager.IMPORTANCE_LOW));
+                new NotificationChannel(
+                        "bridge", "Android-Use", NotificationManager.IMPORTANCE_LOW));
         Notification note =
                 new Notification.Builder(this, "bridge")
                         .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
