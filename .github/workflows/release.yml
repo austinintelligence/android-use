@@ -3,6 +3,8 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # A dry run builds and checks everything and publishes nothing. Run it on the commit you mean to tag.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -14,6 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Validate immutable release version
+        if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: |
           version="$(tr -d '\r\n' < VERSION)"
@@ -98,30 +101,25 @@ jobs:
     needs: validate
     strategy:
       fail-fast: false
+      # Keep in step with install/platforms.json (`cargo xtask version` checks it).
       matrix:
         include:
-          - os: windows-2022
-            label: Windows x86_64
-            artifact: release-windows-x86_64
-            binary: au.exe
-            archive: zip
-          - os: macos-15
-            label: macOS Apple Silicon
-            artifact: release-macos-aarch64
-            binary: au
-            archive: tar.gz
-          - os: ubuntu-24.04
-            label: Linux x86_64
-            artifact: release-linux-x86_64
-            binary: au
-            archive: tar.gz
-    runs-on: ${{ matrix.os }}
+          - { label: macOS Apple Silicon, runner: macos-15, asset: macos-aarch64, archive: tar.gz, binary: au, target: aarch64-apple-darwin }
+          - { label: macOS Intel, runner: macos-15, asset: macos-x86_64, archive: tar.gz, binary: au, target: x86_64-apple-darwin }
+          - { label: Linux x86_64, runner: ubuntu-24.04, asset: linux-x86_64, archive: tar.gz, binary: au, target: x86_64-unknown-linux-gnu }
+          - { label: Linux arm64, runner: ubuntu-24.04-arm, asset: linux-aarch64, archive: tar.gz, binary: au, target: aarch64-unknown-linux-gnu }
+          - { label: Windows x86_64, runner: windows-2022, asset: windows-x86_64, archive: zip, binary: au.exe, target: x86_64-pc-windows-msvc }
+          - { label: Windows arm64, runner: windows-2022, asset: windows-aarch64, archive: zip, binary: au.exe, target: aarch64-pc-windows-msvc }
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Install Rust release toolchain
-        run: rustup toolchain install 1.94.0 --profile minimal; rustup default 1.94.0
+        shell: bash
+        run: |
+          rustup toolchain install 1.94.0 --profile minimal --target "${{ matrix.target }}"
+          rustup default 1.94.0
       - name: Verify release version
         run: cargo +1.94.0 xtask version
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -131,49 +129,42 @@ jobs:
       - name: Build the host binary with the helper embedded
         shell: bash
         run: |
-          AU_EMBED_APK="$(ls "$PWD"/helper/*android.apk)" cargo +1.94.0 build --profile dist -p au
-      - name: Package Windows archive
-        if: matrix.archive == 'zip'
-        shell: pwsh
-        run: |
-          $version = (Get-Content VERSION -Raw).Trim()
-          $stage = Join-Path $env:RUNNER_TEMP "android-use-$version-windows-x86_64"
-          $out = Join-Path $PWD 'release'
-          New-Item -ItemType Directory -Force $stage, $out | Out-Null
-          Copy-Item target/dist/au.exe (Join-Path $stage 'au.exe')
-          Copy-Item helper/*android.apk (Join-Path $stage 'aubridge.apk')
-          Copy-Item README.md, LICENSE, SECURITY.md $stage
-          Copy-Item docs/agents/install.md (Join-Path $stage 'install.md')
-          $skill = Join-Path $stage 'skills/android-use'
-          New-Item -ItemType Directory -Force $skill | Out-Null
-          Copy-Item skills/android-use/* $skill -Recurse
-          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath (Join-Path $out "android-use-v$version-windows-x86_64.zip") -Force
-      - name: Package Unix archive
-        if: matrix.archive == 'tar.gz'
+          AU_EMBED_APK="$(ls "$PWD"/helper/*android.apk)" cargo +1.94.0 build --profile dist -p au --target "${{ matrix.target }}"
+      - name: Package the archive
         shell: bash
         run: |
           version="$(tr -d '\r\n' < VERSION)"
+          name="android-use-v$version-${{ matrix.asset }}"
           mkdir -p stage release
-          cp "target/dist/${{ matrix.binary }}" stage/au
+          cp "target/${{ matrix.target }}/dist/${{ matrix.binary }}" "stage/${{ matrix.binary }}"
           cp helper/*android.apk stage/aubridge.apk
           cp README.md LICENSE SECURITY.md stage/
           cp docs/agents/install.md stage/install.md
           mkdir -p stage/skills/android-use
           cp -R skills/android-use/. stage/skills/android-use/
-          case "${{ matrix.artifact }}" in
-            release-macos-aarch64) name="android-use-v$version-macos-aarch64.tar.gz" ;;
-            release-linux-x86_64) name="android-use-v$version-linux-x86_64.tar.gz" ;;
+          if [ "${{ matrix.archive }}" = zip ]; then
+            (cd stage && 7z a -tzip "../release/$name.zip" . >/dev/null)
+          else
+            tar -C stage -czf "release/$name.tar.gz" au aubridge.apk README.md LICENSE SECURITY.md install.md skills
+          fi
+      - name: Smoke-test the binary where this runner can run it
+        shell: bash
+        run: |
+          case "${{ matrix.target }}" in
+            aarch64-pc-windows-msvc) echo "cross-built for arm64; not run on this runner" ;;
+            x86_64-apple-darwin) arch -x86_64 "target/${{ matrix.target }}/dist/${{ matrix.binary }}" version || echo "Rosetta unavailable; not run" ;;
+            *) "target/${{ matrix.target }}/dist/${{ matrix.binary }}" version ;;
           esac
-          tar -C stage -czf "release/$name" au aubridge.apk README.md LICENSE SECURITY.md install.md skills
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: ${{ matrix.artifact }}
+          name: release-${{ matrix.asset }}
           path: release/*
           if-no-files-found: error
 
   publish:
     name: Attest and publish GitHub Release
     needs: [validate, host-archives]
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -194,9 +185,9 @@ jobs:
         shell: bash
         run: |
           version="$(tr -d '\r\n' < VERSION)"
-          test -s "release/android-use-v$version-windows-x86_64.zip"
-          test -s "release/android-use-v$version-macos-aarch64.tar.gz"
-          test -s "release/android-use-v$version-linux-x86_64.tar.gz"
+          for asset in $(jq -r '.[] | .asset + "." + .archive' install/platforms.json); do
+            test -s "release/android-use-v$version-$asset"
+          done
           test -s "release/android-use-v$version-android.apk"
           test -s release/android-use.spdx.json
           test -s release/SHA256SUMS

@@ -92,8 +92,8 @@ fn enable_accessibility_step() -> Value {
         "user",
         "Enable Android Use Accessibility",
         &[
-            "On Android, open Settings → Accessibility → Android Use.",
-            "Turn Android Use on and approve Android's warning.",
+            "On Android, open Settings → Accessibility → Android-Use.",
+            "Turn Android-Use on and approve Android's warning.",
             "Leave the device unlocked while Android Use verifies the service.",
         ],
         "Run au setup --json, or run au doctor --json to verify readiness.",
@@ -173,7 +173,7 @@ pub fn setup(apk: Option<&Path>, wait_for_approval: bool) -> Result<Value> {
         ready_step()
     };
     Ok(
-        json!({"ok":1,"installed":installed as u8,"enrolled":enrolled_now as u8,"device":device.hardware,"accessibility":accessibility as u8,"settings_opened":settings_opened as u8,"ready":(installed&&accessibility) as u8,"phase":phase,"next":(!installed).then_some("Android Use could not confirm the helper after installation; run au setup again.").or((!accessibility).then_some("Android Use opened Accessibility settings on your device. Tap Android Use, turn it on, then run au setup again.")),"next_step":step}),
+        json!({"ok":1,"installed":installed as u8,"enrolled":enrolled_now as u8,"device":device.hardware,"accessibility":accessibility as u8,"settings_opened":settings_opened as u8,"ready":(installed&&accessibility) as u8,"phase":phase,"next":(!installed).then_some("Android Use could not confirm the helper after installation; run au setup again.").or((!accessibility).then_some("Android Use opened Accessibility settings on your device. Tap Android-Use, turn it on, then run au setup again.")),"next_step":step}),
     )
 }
 pub fn doctor() -> Result<Value> {
@@ -241,7 +241,7 @@ pub fn doctor() -> Result<Value> {
         "helper".into(),
         json!({"state":if helper{"ready"}else{"attention"},"message":if helper{"Android Use helper is installed"}else{"Run au setup to install the Android helper"}}),
     );
-    checks.insert("accessibility".into(), json!({"state":if accessibility{"ready"}else{"attention"},"message":if accessibility{"Accessibility is enabled"}else{"On Android, enable Android Use under Settings → Accessibility"}}));
+    checks.insert("accessibility".into(), json!({"state":if accessibility{"ready"}else{"attention"},"message":if accessibility{"Accessibility is enabled"}else{"On Android, enable Android-Use under Settings → Accessibility"}}));
     checks.insert("notifications".into(), json!({"state":if notifications{"ready"}else{"optional"},"message":if notifications{"Notification access is enabled"}else{"Optional: enable notification access when needed"}}));
     checks.insert(
         "browser".into(),
@@ -300,9 +300,9 @@ pub fn uninstall() -> Result<Value> {
 /// into release binaries (written to private state first, after its hash is checked).
 fn apk_to_install(given: Option<&Path>, paths: &Paths) -> Result<PathBuf> {
     if let Some(path) = given.map(PathBuf::from).or_else(bundled_apk) {
-        return if path.is_file() { Ok(path) } else { Err(Error::new(Code::Args, "AU Bridge APK was not found")) };
+        return if path.is_file() { Ok(path) } else { Err(Error::new(Code::Args, "Android-Use helper APK was not found")) };
     }
-    let bytes = embedded_apk().ok_or_else(|| Error::new(Code::Args, "pass the AU Bridge APK path or place aubridge.apk beside au"))?;
+    let bytes = embedded_apk().ok_or_else(|| Error::new(Code::Args, "pass the Android-Use helper APK path or place aubridge.apk beside au"))?;
     let path = paths.root.join("aubridge.apk");
     fs::write(&path, bytes)?;
     Ok(path)

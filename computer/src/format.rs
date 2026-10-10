@@ -10,7 +10,7 @@ use std::collections::HashMap;
 pub(crate) const SCREEN_BYTES: usize = 1200;
 pub(crate) const FULL_SCREEN_BYTES: usize = 4000;
 pub(crate) const NOTIFICATION_ACCESS_OFF: &str =
-    "Notification access is off for Android Use. Ask the user to allow it on the device (Settings → Notifications → Device & app notifications → Android Use), then retry.";
+    "Notification access is off for Android-Use. Ask the user to allow it on the device (Settings → Notifications → Device & app notifications → Android-Use), then retry.";
 
 /// One conceptual row compiled by the helper's semantic compiler.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,7 +101,7 @@ pub(crate) fn format_status(value: &Value) -> String {
     let control = value.get("cap").and_then(Value::as_u64).unwrap_or(0) != 0;
     match (connected, control) {
         (true, true) => "Ready. Android Use is connected and can read and control the screen.".into(),
-        (true, false) => "Not ready: the Android Use helper is running, but its Accessibility service is off. Ask the user to turn on Android Use under Settings → Accessibility on the device, then retry.".into(),
+        (true, false) => "Not ready: the Android Use helper is running, but its Accessibility service is off. Ask the user to turn on Android-Use under Settings → Accessibility on the device, then retry.".into(),
         _ => "Android Use is not ready. Ask the user to run au doctor on the computer, then retry.".into(),
     }
 }
@@ -358,7 +358,7 @@ pub(crate) fn format_capabilities(value: &Value) -> String {
     ];
     let mut text = format!("Capabilities: {}.", parts.join("; "));
     if parts.iter().any(|part| part.contains("need")) {
-        text.push_str(" The user grants permissions and approvals in the Android Use app on the device.");
+        text.push_str(" The user grants permissions and approvals in the Android-Use app on the device.");
     }
     text
 }
@@ -587,7 +587,7 @@ pub(crate) fn failure_text(receipt: &Receipt, actions: &[Action]) -> String {
             Some("stale") => "The screen changed before anything ran, so nothing was done. Retry the same command.".into(),
             Some("unknown") => "The result is uncertain: the command may or may not have run. Read the screen before doing anything else, and do not repeat it blindly.".into(),
             Some("permission") => {
-                format!("Android Use is missing the Android permission needed to {what}. Ask the user to grant it in the Android Use app on the device, then retry.")
+                format!("Android Use is missing the Android permission needed to {what}. Ask the user to grant it in the Android-Use app on the device, then retry.")
             }
             Some("timeout") => format!("Timed out at {which}; nothing changed. Retry if it is still needed."),
             Some("unsupported") => format!("Cannot {what} on this device or Android version; nothing changed."),
@@ -637,7 +637,7 @@ pub(crate) fn plain_error_model(error: &Error) -> String {
         Code::Args | Code::Bounds | Code::Unsupported if message.contains("Use ") => bounded_output(message, 320),
         Code::Args | Code::Bounds | Code::Unsupported => bounded_output(format!("The command needs a correction: {message}."), 320),
         Code::Ambiguous | Code::Missing | Code::Partial => bounded_output(message, 480),
-        Code::Permission => "Android Use's Accessibility service is off or a required Android permission is missing. Ask the user to turn on Android Use under Settings → Accessibility on the device (and grant any permission the task needs), then retry.".into(),
+        Code::Permission => "Android Use's Accessibility service is off or a required Android permission is missing. Ask the user to turn on Android-Use under Settings → Accessibility on the device (and grant any permission the task needs), then retry.".into(),
         Code::Artifact => bounded_output(format!("{message}. Capture the screen before using an image alias."), 320),
         Code::Stale => "The screen changed before anything ran, so nothing was done. Retry the same command.".into(),
         Code::Unknown => "The result is uncertain: the command may or may not have run. Read the screen before doing anything else, and do not repeat it blindly.".into(),

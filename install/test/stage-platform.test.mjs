@@ -34,7 +34,7 @@ test("stages a darwin-arm64 package with every required field", async (t) => {
   assert.equal(pkg.version, version);
   assert.deepEqual(pkg.os, ["darwin"]);
   assert.deepEqual(pkg.cpu, ["arm64"]);
-  assert.deepEqual(pkg.files, ["bin"]);
+  assert.deepEqual(pkg.files, ["bin", "README.md"]);
   assert.equal(pkg.license, "MIT");
   assert.deepEqual(pkg.repository, install.repository);
   assert.deepEqual(pkg.publishConfig, { access: "public" });
@@ -55,4 +55,14 @@ test("stages a win32-x64 package with au.exe", async (t) => {
 test("rejects an unknown platform key", async (t) => {
   const { out } = await stageFake(t, "linux-x64");
   await assert.rejects(run(process.execPath, [stage, "freebsd-x64", join(out, "bin", "au"), out]), (e) => e.code === 2);
+});
+
+test("every platform in platforms.json can be staged", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const platforms = JSON.parse(await readFile(new URL("../platforms.json", import.meta.url), "utf8"));
+  assert.ok(platforms.length >= 6);
+  for (const { npm } of platforms) {
+    const [os, cpu] = npm.split("-");
+    assert.ok(["darwin", "linux", "win32"].includes(os) && ["arm64", "x64"].includes(cpu), npm);
+  }
 });

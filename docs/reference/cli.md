@@ -14,7 +14,7 @@ Run `au setup` once with one authorized, unlocked Android device. Use `au doctor
 | `au enroll ENDPOINT` | Bind one connected hardware identity when several devices are attached. |
 | `au repair [APK]` / `au update [APK]` | Reinstall or update the helper. |
 | `au uninstall` | Remove the helper and Android Use's local state. |
-| `au emulator doctor\|images\|create\|start\|stop\|status\|list\|snapshot\|destroy` | Create and run emulators as separate targets. See [emulators](../emulators.md). |
+| `au emulator doctor\|install\|images\|create\|start\|stop\|status\|list\|snapshot\|destroy` | Create and run emulators as separate targets. See [emulators](../emulators.md). |
 | `au targets` | List the default target and each emulator target. |
 | `--target NAME` | With any command, act on that target instead of the default. `AU_TARGET` is the same. |
 | `au version`, `au help` | Version and command list. |

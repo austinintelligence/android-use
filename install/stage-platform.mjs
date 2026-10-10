@@ -33,10 +33,11 @@ const pkg = {
   description: `Android Use ${os} ${cpu} binary`,
   os: [os],
   cpu: [cpu],
-  files: ["bin"],
+  files: ["bin", "README.md"],
   license: "MIT",
   repository: install.repository,
   publishConfig: { access: "public" },
 };
 await writeFile(join(outDir, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+await writeFile(join(outDir, "README.md"), `# @androiduse/${key}\n\nThe ${os} ${cpu} binary for [android-use](https://www.npmjs.com/package/android-use). Install \`android-use\`, not this package: npm picks the matching platform for you.\n`);
 await writeFile(join(outDir, "manifest.json"), `${JSON.stringify({ files: { [file]: sha256 } }, null, 2)}\n`);

@@ -1,16 +1,26 @@
-# Install au.exe from a pinned GitHub release (Windows x86_64 only).
+# Install au.exe from a GitHub release (the latest, or ANDROID_USE_VERSION; x86_64 and arm64).
 # The archive is verified against SHA256SUMS before anything is extracted.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$Version = if ($env:ANDROID_USE_VERSION) { $env:ANDROID_USE_VERSION } else { '1.0.0' }
-$Base = "https://github.com/austinintelligence/android-use/releases/download/v$Version"
-$Asset = "android-use-v$Version-windows-x86_64.zip"
+$Repo = 'https://github.com/austinintelligence/android-use'
 $InstallDir = if ($env:AU_INSTALL_DIR) { $env:AU_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'AndroidUse\bin' }
 
-if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') {
-  throw 'Unsupported platform: this installer supports Windows x86_64 only.'
+# The newest release unless ANDROID_USE_VERSION pins one (for example 1.2.0).
+if ($env:ANDROID_USE_VERSION) {
+  $Version = $env:ANDROID_USE_VERSION.TrimStart('v')
+} else {
+  $Version = (Invoke-RestMethod -Uri 'https://api.github.com/repos/austinintelligence/android-use/releases/latest').tag_name.TrimStart('v')
+  if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw 'Could not find the latest release. Set ANDROID_USE_VERSION.' }
+}
+$Base = "$Repo/releases/download/v$Version"
+
+$Arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+$Asset = switch ($Arch) {
+  'X64' { "android-use-v$Version-windows-x86_64.zip" }
+  'Arm64' { "android-use-v$Version-windows-aarch64.zip" }
+  default { throw "Unsupported platform: Windows $Arch. Supported: x86_64 and arm64." }
 }
 
 $Tmp = Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString())

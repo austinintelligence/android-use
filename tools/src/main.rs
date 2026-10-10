@@ -9,6 +9,7 @@ use std::{
     time::Instant,
 };
 
+mod emulator_e2e;
 mod live;
 mod tokens;
 
@@ -42,12 +43,13 @@ fn run() -> Result<(), String> {
         "verify" => verify(&root),
         "benchmark" => benchmark(&root),
         "benchmark-live" => live::run(&root),
+        "emulator-e2e" => emulator_e2e::run(&root),
         "size" => size(&root).map(|_| ()),
         "docs" => docs(&root, env::args().nth(2).as_deref() == Some("--write")),
         "golden-capture" => tokens::capture(&root, &env::args().nth(2).ok_or("golden-capture needs a NAME")?),
         _ => {
             println!(
-                "cargo xtask check|test|android|package|release|version|release-manifest DIR|manifest|verify|benchmark|benchmark-live|size|docs [--write]|golden-capture NAME"
+                "cargo xtask check|test|android|package|release|version|release-manifest DIR|manifest|verify|benchmark|benchmark-live|emulator-e2e|size|docs [--write]|golden-capture NAME"
             );
             Ok(())
         }
@@ -112,7 +114,8 @@ fn package(root: &Path) -> Result<(), String> {
     let manifest_path = bundle.join("package.json");
     let mut package_json: Value = serde_json::from_slice(&fs::read(&manifest_path).map_err(ioe)?).map_err(ioe)?;
     let version = env!("CARGO_PKG_VERSION");
-    package_json["optionalDependencies"] = json!({"@androiduse/darwin-arm64": version, "@androiduse/linux-x64": version, "@androiduse/win32-x64": version});
+    let platforms = platforms(root)?;
+    package_json["optionalDependencies"] = Value::Object(platforms.iter().map(|p| (format!("@androiduse/{}", p["npm"].as_str().unwrap_or_default()), json!(version))).collect());
     fs::write(&manifest_path, serde_json::to_vec_pretty(&package_json).map_err(ioe)?).map_err(ioe)?;
     fs::write(bundle.join("manifest.json"), serde_json::to_vec(&json!({"schema":1,"version":env!("CARGO_PKG_VERSION"),"files":files})).map_err(|e| e.to_string())?).map_err(ioe)?;
     manifest(root)
@@ -171,7 +174,7 @@ fn size(root: &Path) -> Result<(usize, usize, usize), String> {
     println!("rust_production={rust} android_production={java} tests={tests} automation={automation} authored_code={authored} source_files={source_files} production_modules={production_modules}");
     // Budgets measure conventionally formatted code (rustfmt; google-java-format --aosp for the
     // helper), so they track real complexity rather than how densely lines are packed.
-    if rust > 7450 || java > 3450 || automation > 1400 || authored > 15100 {
+    if rust > 7520 || java > 3450 || automation > 1650 || authored > 15450 {
         return Err("source budget exceeded".into());
     }
     Ok((rust, java, automation))
@@ -237,7 +240,40 @@ fn version(root: &Path) -> Result<(), String> {
             return Err(format!("stale product version marker in {path}"));
         }
     }
+    platforms_agree(root)?;
     println!("version={version}");
+    Ok(())
+}
+/// `install/platforms.json` is the one list of release platforms.
+fn platforms(root: &Path) -> Result<Vec<Value>, String> {
+    let list: Value = serde_json::from_slice(&fs::read(root.join("install/platforms.json")).map_err(ioe)?).map_err(|e| e.to_string())?;
+    list.as_array().cloned().filter(|l| !l.is_empty()).ok_or_else(|| "install/platforms.json must be a non-empty list".into())
+}
+/// Everything that names a platform (the release matrix, both install scripts) agrees with that list,
+/// and no install script pins a version.
+fn platforms_agree(root: &Path) -> Result<(), String> {
+    let release = fs::read_to_string(root.join(".github/workflows/release.yml")).map_err(ioe)?;
+    let sh = fs::read_to_string(root.join("install/install.sh")).map_err(ioe)?;
+    let ps1 = fs::read_to_string(root.join("install/install.ps1")).map_err(ioe)?;
+    for p in platforms(root)? {
+        let (asset, target, npm) = (p["asset"].as_str().unwrap_or_default(), p["target"].as_str().unwrap_or_default(), p["npm"].as_str().unwrap_or_default());
+        if asset.is_empty() || target.is_empty() || npm.is_empty() {
+            return Err("every platform needs npm, asset and target".into());
+        }
+        if !release.contains(&format!("asset: {asset}")) || !release.contains(&format!("target: {target}")) {
+            return Err(format!("release.yml has no matrix entry for {asset}"));
+        }
+        let installer = if asset.starts_with("windows") { &ps1 } else { &sh };
+        if !installer.contains(&format!("-{asset}.")) {
+            return Err(format!("the install script for {asset} does not name that archive"));
+        }
+    }
+    for (name, text) in [("install.sh", &sh), ("install.ps1", &ps1)] {
+        let digit_after = |marker: &str| text.match_indices(marker).any(|(at, _)| text[at + marker.len()..].starts_with(|c: char| c.is_ascii_digit()));
+        if digit_after("VERSION:-") || digit_after("else { '") {
+            return Err(format!("{name} must not pin a version"));
+        }
+    }
     Ok(())
 }
 fn release_manifest(root: &Path, directory: Option<&str>) -> Result<(), String> {

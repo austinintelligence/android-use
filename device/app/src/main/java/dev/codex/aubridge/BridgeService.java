@@ -18,11 +18,11 @@ public final class BridgeService extends Service {
         super.onCreate();
         NotificationManager n = getSystemService(NotificationManager.class);
         n.createNotificationChannel(
-                new NotificationChannel("bridge", "AU Bridge", NotificationManager.IMPORTANCE_LOW));
+                new NotificationChannel("bridge", "Android-Use", NotificationManager.IMPORTANCE_LOW));
         Notification note =
                 new Notification.Builder(this, "bridge")
                         .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
-                        .setContentTitle("AU Bridge")
+                        .setContentTitle("Android-Use")
                         .setContentText("Authenticated local Android control")
                         .build();
         // Without a type, startForeground claims every manifest type, and claiming
@@ -60,7 +60,7 @@ public final class BridgeService extends Service {
         Notification note =
                 new Notification.Builder(service, "bridge")
                         .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
-                        .setContentTitle("AU Bridge")
+                        .setContentTitle("Android-Use")
                         .setContentText("Screen recording is active")
                         .build();
         int type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION;

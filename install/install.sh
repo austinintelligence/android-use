@@ -1,17 +1,31 @@
 #!/bin/sh
-# Install the au CLI from a pinned GitHub release. The archive is verified
+# Install the au CLI from a GitHub release (the latest, or ANDROID_USE_VERSION). The archive is verified
 # against SHA256SUMS before anything is extracted.
 set -eu
 
-VERSION="${ANDROID_USE_VERSION:-1.0.0}"
-BASE="https://github.com/austinintelligence/android-use/releases/download/v$VERSION"
+REPO="https://github.com/austinintelligence/android-use"
 INSTALL_DIR="${AU_INSTALL_DIR:-$HOME/.local/bin}"
+
+# The newest release unless ANDROID_USE_VERSION pins one (for example 1.2.0).
+if [ -n "${ANDROID_USE_VERSION:-}" ]; then
+  VERSION="${ANDROID_USE_VERSION#v}"
+else
+  LATEST=$(curl -fsSIL -o /dev/null -w '%{url_effective}' "$REPO/releases/latest")
+  VERSION="${LATEST##*/v}"
+  case "$VERSION" in
+    [0-9]*.[0-9]*.[0-9]*) ;;
+    *) echo "Could not find the latest release. Set ANDROID_USE_VERSION." >&2; exit 1 ;;
+  esac
+fi
+BASE="$REPO/releases/download/v$VERSION"
 
 case "$(uname -s)-$(uname -m)" in
   Darwin-arm64) ASSET="android-use-v$VERSION-macos-aarch64.tar.gz" ;;
+  Darwin-x86_64) ASSET="android-use-v$VERSION-macos-x86_64.tar.gz" ;;
   Linux-x86_64) ASSET="android-use-v$VERSION-linux-x86_64.tar.gz" ;;
+  Linux-aarch64 | Linux-arm64) ASSET="android-use-v$VERSION-linux-aarch64.tar.gz" ;;
   *)
-    echo "Unsupported platform: $(uname -s) $(uname -m). Supported: macOS arm64, Linux x86_64." >&2
+    echo "Unsupported platform: $(uname -s) $(uname -m). Supported: macOS arm64 and x86_64, Linux x86_64 and arm64 (Windows: install.ps1)." >&2
     exit 1
     ;;
 esac

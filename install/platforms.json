@@ -1,0 +1,8 @@
+[
+  { "npm": "darwin-arm64", "asset": "macos-aarch64", "archive": "tar.gz", "binary": "au", "runner": "macos-15", "target": "aarch64-apple-darwin" },
+  { "npm": "darwin-x64", "asset": "macos-x86_64", "archive": "tar.gz", "binary": "au", "runner": "macos-15", "target": "x86_64-apple-darwin" },
+  { "npm": "linux-x64", "asset": "linux-x86_64", "archive": "tar.gz", "binary": "au", "runner": "ubuntu-24.04", "target": "x86_64-unknown-linux-gnu" },
+  { "npm": "linux-arm64", "asset": "linux-aarch64", "archive": "tar.gz", "binary": "au", "runner": "ubuntu-24.04-arm", "target": "aarch64-unknown-linux-gnu" },
+  { "npm": "win32-x64", "asset": "windows-x86_64", "archive": "zip", "binary": "au.exe", "runner": "windows-2022", "target": "x86_64-pc-windows-msvc" },
+  { "npm": "win32-arm64", "asset": "windows-aarch64", "archive": "zip", "binary": "au.exe", "runner": "windows-2022", "target": "aarch64-pc-windows-msvc" }
+]

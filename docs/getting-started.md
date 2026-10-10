@@ -49,7 +49,7 @@ Keep the device unlocked. Setup will:
 - find and remember the connected device;
 - install the Android Use helper;
 - open the correct Accessibility screen;
-- wait while you turn on **Android Use**;
+- wait while you turn on **Android-Use**;
 - confirm when the device is ready.
 
 You should finish on:

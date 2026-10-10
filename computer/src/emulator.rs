@@ -167,6 +167,48 @@ fn claimed_ports(l: &Layout) -> Vec<u16> {
     entries.iter().filter_map(|dir| read_json(&dir.join("emulator.json"))?.get("console")?.as_u64().and_then(|n| u16::try_from(n).ok())).collect()
 }
 
+/// The `sdkmanager` packages still needed to run an emulator here: the emulator itself and one
+/// `google_apis` system image for this computer's architecture.
+fn wanted_packages(has_emulator: bool, found: &[Image]) -> Vec<String> {
+    let mut wanted = Vec::new();
+    if !has_emulator {
+        wanted.push("emulator".to_owned());
+    }
+    if !found.iter().any(|image| image.tag == "google_apis" && image.abi == host_abi()) {
+        wanted.push(format!("system-images;android-36;google_apis;{}", host_abi()));
+    }
+    wanted
+}
+
+/// `au emulator install`: has Google's `sdkmanager` fetch what is missing. It runs attached to the
+/// terminal, so the Android SDK license is shown to the user and accepted by them, never by Android Use.
+pub fn install() -> Result<Value> {
+    let sdk = sdk_root()?;
+    let wanted = wanted_packages(emulator_binary(&sdk).is_ok(), &images(&sdk));
+    if wanted.is_empty() {
+        return Ok(json!({"ok":1,"installed":[],"note":"the emulator and a system image are already installed"}));
+    }
+    let name = if cfg!(windows) { "sdkmanager.bat" } else { "sdkmanager" };
+    let manager = ["cmdline-tools/latest/bin", "cmdline-tools/bin", "tools/bin"].iter().map(|dir| sdk.join(dir).join(name)).find(|path| path.is_file()).ok_or_else(|| {
+        Error::new(
+            Code::Device,
+            "sdkmanager was not found; install \"Android SDK Command-line Tools\" in Android Studio (SDK Manager, SDK Tools), then run au emulator install again",
+        )
+    })?;
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        return Err(Error::new(Code::Args, format!("run au emulator install in a terminal so you can read and accept the SDK license; it installs: {}", wanted.join(", "))));
+    }
+    let status = Command::new(&manager)
+        .arg(format!("--sdk_root={}", sdk.display()))
+        .args(&wanted)
+        .status()
+        .map_err(|e| Error::new(Code::Device, format!("sdkmanager failed to start (it needs a JDK; set JAVA_HOME): {e}")))?;
+    if !status.success() {
+        return Err(Error::new(Code::Device, format!("sdkmanager exited with {status}; nothing more was installed")));
+    }
+    Ok(json!({"ok":1,"installed":wanted,"next":"au emulator create NAME"}))
+}
+
 pub fn doctor() -> Result<Value> {
     let sdk = sdk_root();
     let (emulator, found) = match &sdk {
@@ -177,11 +219,8 @@ pub fn doctor() -> Result<Value> {
     let mut fixes = Vec::new();
     if sdk.is_err() {
         fixes.push("install Android Studio or the Android command-line tools".to_owned());
-    } else if !emulator {
-        fixes.push("sdkmanager \"emulator\"".into());
-    }
-    if usable.iter().all(|image| image.tag != "google_apis") {
-        fixes.push(format!("sdkmanager \"system-images;android-36;google_apis;{}\"", host_abi()));
+    } else if !wanted_packages(emulator, &found).is_empty() {
+        fixes.push("au emulator install".into());
     }
     Ok(
         json!({"ok": u8::from(fixes.is_empty()), "sdk": sdk.ok().map(|d| d.display().to_string()), "emulator": emulator, "abi": host_abi(), "images": found.len(), "usable_images": usable.len(), "fix": fixes}),
@@ -437,5 +476,14 @@ mod tests {
             assert_eq!(snapshot("any", "save", tag).unwrap_err().code, Code::Args, "{tag:?}");
         }
         assert_eq!(snapshot("any", "delete", "ok_tag-1").unwrap_err().code, Code::Args);
+    }
+
+    #[test]
+    fn only_missing_sdk_packages_are_requested() {
+        let have = [image(36, "google_apis", host_abi())];
+        assert!(wanted_packages(true, &have).is_empty());
+        assert_eq!(wanted_packages(false, &have), ["emulator"]);
+        let play_only = [image(36, "google_apis_playstore", host_abi())];
+        assert_eq!(wanted_packages(true, &play_only), [format!("system-images;android-36;google_apis;{}", host_abi())]);
     }
 }

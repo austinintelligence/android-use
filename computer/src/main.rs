@@ -98,19 +98,20 @@ fn run(human: bool) -> Result<Value> {
         "uninstall" => install::uninstall()?,
         "version" | "--version" => serde_json::json!({"version":env!("CARGO_PKG_VERSION")}),
         "help" | "--help" | "-h" => {
-            serde_json::json!({"commands":["devices","setup [APK]","status","doctor","update [APK]","uninstall","enroll ENDPOINT","repair [APK]","serve --mcp","read COMMAND","act COMMAND","install [AGENT|all] [--dry-run] [--force]","uninstall AGENT","emulator doctor|images|create|start|stop|status|list|snapshot|destroy","targets","--target NAME (any command)"]})
+            serde_json::json!({"commands":["devices","setup [APK]","status","doctor","update [APK]","uninstall","enroll ENDPOINT","repair [APK]","serve --mcp","read COMMAND","act COMMAND","install [AGENT|all] [--dry-run] [--force]","uninstall AGENT","emulator doctor|install|images|create|start|stop|status|list|snapshot|destroy","targets","--target NAME (any command)"]})
         }
         _ => return Err(Error::new(Code::Args, format!("unknown command: {}", a[0]))),
     };
     Ok(out)
 }
-/// `au emulator doctor|images|create|start|stop|status|list|snapshot|destroy`.
+/// `au emulator doctor|install|images|create|start|stop|status|list|snapshot|destroy`.
 fn emulator(a: &[String]) -> Result<Value> {
     let name = || a.get(2).filter(|arg| !arg.starts_with("--")).ok_or_else(|| Error::new(Code::Args, "this command needs an emulator NAME"));
     let flag = |flag: &str| a.iter().any(|arg| arg == flag);
     let value = |flag: &str| a.iter().position(|arg| arg == flag).and_then(|at| a.get(at + 1)).map(String::as_str);
     match a.get(1).map(String::as_str) {
         Some("doctor") => emulator::doctor(),
+        Some("install") => emulator::install(),
         Some("images") => emulator::list_images(),
         Some("create") => emulator::create(name()?, value("--image"), if value("--profile") == Some("standard") { emulator::Profile::Standard } else { emulator::Profile::Small }),
         Some("start") => emulator::start(name()?, flag("--window")),
@@ -119,9 +120,10 @@ fn emulator(a: &[String]) -> Result<Value> {
         Some("list") => emulator::list(),
         Some("destroy") => emulator::destroy(name()?, flag("--yes")),
         Some("snapshot") => emulator::snapshot(name()?, a.get(3).map_or("", String::as_str), a.get(4).map_or("", String::as_str)),
-        _ => {
-            Err(Error::new(Code::Args, "use au emulator doctor, images, create NAME, start NAME, stop NAME, status NAME, list, snapshot NAME save|load TAG, or destroy NAME --yes"))
-        }
+        _ => Err(Error::new(
+            Code::Args,
+            "use au emulator doctor, install, images, create NAME, start NAME, stop NAME, status NAME, list, snapshot NAME save|load TAG, or destroy NAME --yes",
+        )),
     }
 }
 
@@ -192,11 +194,11 @@ fn model_value(engine: &Engine, response: ModelResponse) -> Result<Value> {
 }
 fn human_value(command: &str, value: &Value) -> String {
     match command {
-        "help" | "--help" | "-h" => "Android Use — Give AI an Android device.\n\nGet connected:\n  au devices      List connected Android devices\n  au setup        Prepare and remember one device\n  au status       Check whether Android Use is ready\n  au doctor       Explain anything that needs attention\n\nUse the device (same commands as the MCP tools):\n  au read screen                 List what is on screen\n  au read 'find \"Wi-Fi\"'          Look for one item\n  au read page                   Read the current Chrome page\n  au act 'tap \"Settings\"'         Tap a visible label\n  au act 'open app \"Chrome\" then page open \"https://example.com\"'\n\nConnect an agent:\n  au serve --mcp   Model Context Protocol over stdio\n\nMaintenance:\n  au update       Update the Android helper\n  au uninstall    Remove Android Use and its local state\n\nRun `au help --json` for the complete machine-readable command list.".into(),
+        "help" | "--help" | "-h" => "Android Use — Give AI an Android device.\n\nGet connected:\n  au devices      List connected Android devices\n  au setup        Prepare and remember one device\n  au status       Check whether Android Use is ready\n  au doctor       Explain anything that needs attention\n\nUse the device (same commands as the MCP tools):\n  au read screen                 List what is on screen\n  au read 'find \"Wi-Fi\"'          Look for one item\n  au read page                   Read the current Chrome page\n  au act 'tap \"Settings\"'         Tap a visible label\n  au act 'open app \"Chrome\" then page open \"https://example.com\"'\n\nConnect an agent:\n  au install [AGENT]     Register with Claude Code, Codex, Cursor, ... (au install --dry-run first)\n  au serve --mcp         Model Context Protocol over stdio\n\nTry it on an emulator instead of your phone:\n  au emulator doctor     Check the Android SDK (au emulator install fetches what is missing)\n  au targets             List targets; add --target NAME to any command\n\nMaintenance:\n  au update       Update the Android helper\n  au uninstall    Remove Android Use and its local state\n\nRun `au help --json` for the complete machine-readable command list.".into(),
         "version" | "--version" => format!("Android Use {}", value.get("version").and_then(Value::as_str).unwrap_or(env!("CARGO_PKG_VERSION"))),
         "status" => match (value.get("ok").and_then(Value::as_u64) == Some(1), value.get("cap").and_then(Value::as_u64).unwrap_or(0) != 0) {
             (true, true) => "Android Use is ready\n\n✓ Android helper connected\n✓ Accessibility control is on".into(),
-            (true, false) => "Android Use is almost ready\n\n✓ Android helper connected\n! Accessibility control is off\n\nOn Android, open Settings → Accessibility → Android Use and turn it on.\nThen run: au status".into(),
+            (true, false) => "Android Use is almost ready\n\n✓ Android helper connected\n! Accessibility control is off\n\nOn Android, open Settings → Accessibility → Android-Use and turn it on.\nThen run: au status".into(),
             _ => "Android Use is not ready.\nRun: au doctor".into(),
         },
         "read" | "act" if value.get("text").is_some() => {

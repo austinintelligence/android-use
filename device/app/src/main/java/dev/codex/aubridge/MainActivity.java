@@ -21,7 +21,7 @@ public final class MainActivity extends Activity {
         page.setPadding(48, 64, 48, 48);
         TextView title = new TextView(this);
         title.setText(
-                "AU Bridge\n\nEnable accessibility control, then use the paired desktop CLI.");
+                "Android-Use\n\nTurn on its accessibility service, then use the Android-Use agent on your computer.");
         title.setTextSize(20);
         Button open = new Button(this);
         open.setText("Open accessibility settings");

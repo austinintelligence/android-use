@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">AU Bridge</string>
-    <string name="accessibility_description">Enables authenticated semantic control for the local AU desktop client.</string>
+    <string name="app_name">Android-Use</string>
+    <string name="accessibility_description">Lets the Android-Use agent on your computer read and operate this screen. It works only while a computer you approved over USB debugging is connected.</string>
 </resources>

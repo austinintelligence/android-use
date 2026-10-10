@@ -1,16 +1,49 @@
 {
   "name": "android-use",
   "version": "1.1.2",
-  "description": "Give AI agents fast, bounded access to an Android device",
+  "description": "Give AI agents fast, bounded access to an Android device. Launcher for the au CLI and MCP server.",
   "type": "module",
-  "bin": { "android-use": "cli.mjs" },
-  "files": ["cli.mjs", "bin/**", "manifest.json", "LICENSE"],
-  "engines": { "node": ">=20.11" },
-  "repository": { "type": "git", "url": "git+https://github.com/austinintelligence/android-use.git" },
+  "bin": {
+    "android-use": "cli.mjs"
+  },
+  "files": [
+    "cli.mjs",
+    "bin/**",
+    "manifest.json",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/austinintelligence/android-use.git"
+  },
   "homepage": "https://github.com/austinintelligence/android-use#readme",
-  "bugs": { "url": "https://github.com/austinintelligence/android-use/issues" },
-  "keywords": ["android", "ai-agent", "mcp", "automation", "adb", "accessibility"],
+  "bugs": {
+    "url": "https://github.com/austinintelligence/android-use/issues"
+  },
+  "keywords": [
+    "accessibility",
+    "adb",
+    "ai-agent",
+    "android",
+    "android-use",
+    "automation",
+    "claude",
+    "codex",
+    "cursor",
+    "emulator",
+    "mcp",
+    "model-context-protocol"
+  ],
   "license": "MIT",
-  "scripts": { "lint": "node --check cli.mjs && node --check stage-platform.mjs", "test": "node --test" },
-  "publishConfig": { "access": "public" }
+  "scripts": {
+    "lint": "node --check cli.mjs && node --check stage-platform.mjs",
+    "test": "node --test"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }

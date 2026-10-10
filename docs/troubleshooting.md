@@ -22,7 +22,7 @@ Disconnect extras or run `au enroll ENDPOINT`. A server stays bound to the enrol
 
 ## Setup opened Accessibility but did not finish
 
-On the screen setup opened, tap **Android Use**, turn it on, and approve Android's warning. If your device moved the page, look under **Installed apps** or **Downloaded apps**, then run `au setup` again. `au status` reports `Accessibility control is off` until this is done.
+On the screen setup opened, tap **Android-Use**, turn it on, and approve Android's warning. If your device moved the page, look under **Installed apps** or **Downloaded apps**, then run `au setup` again. `au status` reports `Accessibility control is off` until this is done.
 
 ## The agent's MCP tools fail
 
@@ -52,8 +52,8 @@ Do not retry the whole command. Read the screen and work out what already happen
 
 ## Notifications are empty
 
-`notifications` needs notification access: open the Android Use app on the device and tap **Open notification access settings**. Notifications posted before access was granted are not listed.
+`notifications` needs notification access: open the Android-Use app on the device and tap **Open notification access settings**. Notifications posted before access was granted are not listed.
 
 ## Optional capture is unavailable
 
-Run `au read capabilities`. Camera, microphone, and location need Android permission; screen recording needs approval in the Android Use app for the current helper process.
+Run `au read capabilities`. Camera, microphone, and location need Android permission; screen recording needs approval in the Android-Use app for the current helper process.
