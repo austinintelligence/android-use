@@ -184,7 +184,7 @@ impl Engine {
             index += 1;
             let result = match &group[0] {
                 Action::Android(_) => self.android_step(group, identity.as_deref()),
-                Action::Browser(_) => self.browser_step(group, identity.as_deref()).map(|step| (step, group.len())),
+                Action::Browser(_) => self.browser_step(group, identity.as_deref()),
                 Action::Visual(_) => self.visual_step(group).map(|step| (step, group.len())),
                 Action::Look(read) => self.look_step(read.clone()).map(|step| (step, 1)),
             };
@@ -553,11 +553,20 @@ impl Engine {
         Ok((dx, dy))
     }
 
-    fn browser_step(&mut self, actions: &[Action], identity: Option<&str>) -> Result<Step> {
-        match self.browser_attempt(actions, identity) {
+    /// Runs a group of page actions. A step that loads another page ends the plan it is in: what
+    /// follows is compiled against the page it led to, not the one it replaced.
+    fn browser_step(&mut self, actions: &[Action], identity: Option<&str>) -> Result<(Step, usize)> {
+        let loads = |action: &Action| {
+            use BrowserAction as B;
+            matches!(action, Action::Browser(B::Open(_) | B::Back | B::Forward | B::Reload | B::NewTab(_) | B::SelectTab(_) | B::CloseTab(_)))
+        };
+        let take = actions.iter().position(loads).map_or(actions.len(), |at| at + 1);
+        let actions = &actions[..take];
+        let step = match self.browser_attempt(actions, identity) {
             Err(error) if error.code == Code::Stale => self.browser_attempt(actions, identity.map(|value| format!("{value}#retry")).as_deref()),
             result => result,
-        }
+        }?;
+        Ok((step, take))
     }
 
     fn browser_attempt(&mut self, actions: &[Action], identity: Option<&str>) -> Result<Step> {

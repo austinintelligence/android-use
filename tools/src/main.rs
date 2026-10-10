@@ -174,6 +174,10 @@ fn gate(root: &Path) -> Result<(), String> {
             if s.contains("unsafe {") || s.contains("Command::new(\"sh\")") || s.contains("Command::new(\"adb\")") {
                 return Err(format!("security gate failed: {}", p.display()));
             }
+            // A full-tree dump is slow and bypasses the semantic compiler; reading goes through the helper.
+            if s.contains("uiautomator") {
+                return Err(format!("product code must not use uiautomator: {}", p.display()));
+            }
             if s.lines().count() > 900 {
                 return Err(format!("production file exceeds 900 lines: {}", p.display()));
             }

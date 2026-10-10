@@ -6,7 +6,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{json, Value};
 use std::{
     io::{Read, Write},
-    net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
+    net::TcpStream,
     thread,
     time::{Duration, Instant},
 };
@@ -17,9 +17,6 @@ use std::{
 pub const MAX_CHUNK: usize = 256 * 1024;
 
 pub struct Bridge {
-    adb: Adb,
-    device: Device,
-    port: u16,
     stream: TcpStream,
     seq: u64,
     chunk: usize,
@@ -30,21 +27,11 @@ pub enum Observation {
     Scene(Scene),
 }
 
-impl Drop for Bridge {
-    fn drop(&mut self) {
-        if self.port != 0 {
-            self.adb.remove_forward(&self.device, self.port);
-            self.port = 0;
-        }
-    }
-}
-
 impl Bridge {
-    /// A bridge over an already-connected stream, for host tests that run a
-    /// fake helper. No ADB forward is owned, so dropping it runs no command.
+    /// A bridge over an already-connected stream, for host tests that run a fake helper.
     #[cfg(test)]
-    pub(crate) fn over(stream: TcpStream, device: Device) -> Self {
-        Self { adb: Adb::for_tests(), device, port: 0, stream, seq: 0, chunk: MAX_CHUNK }
+    pub(crate) fn over(stream: TcpStream, _device: Device) -> Self {
+        Self { stream, seq: 0, chunk: MAX_CHUNK }
     }
 
     pub fn connect(adb: Adb, device: Device) -> Result<Self> {
@@ -67,9 +54,8 @@ impl Bridge {
     fn handshake(adb: &Adb, device: &Device) -> Result<Self> {
         // These abstract-socket names are a deployed wire-protocol identifier, not a public product version.
         // Keep them stable so a v1 host can reconnect to an already-installed helper.
-        let bootstrap = adb.forward(device, "localabstract:aubridge-bootstrap-v3")?;
-        let auth = (|| {
-            let mut s = connect(bootstrap, Duration::from_secs(2))?;
+        let (token, nonce) = {
+            let mut s = adb.open_stream(device, "localabstract:aubridge-bootstrap-v3")?;
             s.set_read_timeout(Some(Duration::from_secs(3)))?;
             send(&mut s, &json!([0, "bootstrap"]))?;
             let r = recv(&mut s)?;
@@ -77,25 +63,17 @@ impl Bridge {
             if a.len() != 4 || a[0].as_u64() != Some(0) || a[1].as_u64() != Some(0) {
                 return Err(Error::new(Code::Auth, "helper bootstrap was rejected"));
             }
-            Ok((text(&a[2])?.to_string(), text(&a[3])?.to_string()))
-        })();
-        adb.remove_forward(device, bootstrap);
-        let (token, nonce) = auth?;
-        let command = adb.forward(device, "localabstract:aubridge-v3")?;
-        let result = (|| {
-            let mut stream = connect(command, Duration::from_secs(5))?;
-            send(&mut stream, &json!([0, "hello", token, nonce]))?;
-            let h = recv(&mut stream)?;
-            let a = h.as_array().ok_or_else(|| Error::new(Code::Protocol, "invalid hello reply"))?;
-            if a.len() < 2 || a[0].as_u64() != Some(0) || a[1].as_u64() != Some(0) {
-                return Err(Error::new(Code::Auth, "helper authentication failed"));
-            }
-            Ok(Self { adb: adb.clone(), device: device.clone(), port: command, stream, seq: 0, chunk: MAX_CHUNK })
-        })();
-        if result.is_err() {
-            adb.remove_forward(device, command);
+            (text(&a[2])?.to_string(), text(&a[3])?.to_string())
+        };
+        let mut stream = adb.open_stream(device, "localabstract:aubridge-v3")?;
+        send(&mut stream, &json!([0, "hello", token, nonce]))?;
+        let h = recv(&mut stream)?;
+        let a = h.as_array().ok_or_else(|| Error::new(Code::Protocol, "invalid hello reply"))?;
+        if a.len() < 2 || a[0].as_u64() != Some(0) || a[1].as_u64() != Some(0) {
+            return Err(Error::new(Code::Auth, "helper authentication failed"));
         }
-        result
+        stream.set_read_timeout(Some(Duration::from_secs(35)))?;
+        Ok(Self { stream, seq: 0, chunk: MAX_CHUNK })
     }
     fn call(&mut self, make: impl FnOnce(u64) -> Value) -> Result<Vec<Value>> {
         self.seq = self.seq.checked_add(1).ok_or_else(|| Error::new(Code::Sequence, "sequence exhausted"))?;
@@ -238,23 +216,6 @@ impl Bridge {
     }
 }
 
-fn connect(port: u16, timeout: Duration) -> Result<TcpStream> {
-    let end = Instant::now() + timeout;
-    loop {
-        match TcpStream::connect_timeout(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port), Duration::from_millis(500)) {
-            Ok(s) => {
-                s.set_read_timeout(Some(Duration::from_secs(35)))?;
-                s.set_write_timeout(Some(Duration::from_secs(5)))?;
-                return Ok(s);
-            }
-            Err(e) if Instant::now() < end => {
-                let _ = e;
-                thread::sleep(Duration::from_millis(100))
-            }
-            Err(e) => return Err(Error::new(Code::Helper, format!("helper connection failed: {e}"))),
-        }
-    }
-}
 fn send(s: &mut TcpStream, v: &Value) -> Result<()> {
     let b = serde_json::to_vec(v).map_err(|e| Error::new(Code::Protocol, e.to_string()))?;
     if b.len() > MAX_FRAME {
@@ -341,8 +302,7 @@ mod tests {
             requests
         });
         let stream = TcpStream::connect(addr).unwrap();
-        let device = Device { endpoint: "test".into(), hardware: "test".into() };
-        (Bridge { adb: Adb::for_tests(), device, port: 0, stream, seq: 0, chunk: MAX_CHUNK }, server)
+        (Bridge { stream, seq: 0, chunk: MAX_CHUNK }, server)
     }
 
     #[test]

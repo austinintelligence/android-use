@@ -2,7 +2,8 @@ use crate::api::{Code, Error, Result};
 use serde::{Deserialize, Serialize};
 use std::{
     env, fs,
-    io::Read,
+    io::{Read, Write},
+    net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
@@ -231,16 +232,40 @@ impl Adb {
         self.run(Some(&d.endpoint), &["shell", "am", "start-foreground-service", "-n", "dev.codex.aubridge/.BridgeService"], Duration::from_secs(8))?;
         Ok(())
     }
-    pub(crate) fn forward(&self, d: &Device, remote: &str) -> Result<u16> {
+    /// Opens a stream to an abstract socket on the device by speaking to the adb server directly
+    /// (`host:transport:SERIAL`, then `localabstract:NAME`), the protocol `adb` itself uses. No
+    /// `adb` process is spawned and no port forward exists to clean up.
+    pub(crate) fn open_stream(&self, d: &Device, remote: &str) -> Result<TcpStream> {
         if !matches!(remote, "localabstract:aubridge-v3" | "localabstract:aubridge-bootstrap-v3" | "localabstract:chrome_devtools_remote") {
-            return Err(Error::new(Code::Protocol, "refusing unknown helper socket"));
+            return Err(Error::new(Code::Protocol, "refusing unknown device socket"));
         }
-        let out = self.run(Some(&d.endpoint), &["forward", "tcp:0", remote], Duration::from_secs(5))?;
-        String::from_utf8_lossy(&out).trim().parse::<u16>().map_err(|_| Error::new(Code::Helper, "adb did not allocate a forward"))
-    }
-    pub(crate) fn remove_forward(&self, d: &Device, port: u16) {
-        let local = format!("tcp:{port}");
-        let _ = self.run(Some(&d.endpoint), &["forward", "--remove", &local], Duration::from_secs(3));
+        let port = env::var("ANDROID_ADB_SERVER_PORT").ok().and_then(|value| value.parse().ok()).unwrap_or(5037);
+        let address = SocketAddr::from(([127, 0, 0, 1], port));
+        let mut stream = match TcpStream::connect_timeout(&address, Duration::from_secs(1)) {
+            Ok(stream) => stream,
+            Err(_) => {
+                // No adb server yet: starting one is what any `adb` command would do first.
+                self.run(None, &["start-server"], Duration::from_secs(10))?;
+                TcpStream::connect_timeout(&address, Duration::from_secs(2)).map_err(|e| Error::new(Code::Device, format!("cannot reach the adb server: {e}")))?
+            }
+        };
+        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+        stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+        for request in [format!("host:transport:{}", d.endpoint), remote.to_owned()] {
+            stream.write_all(format!("{:04x}{request}", request.len()).as_bytes())?;
+            let mut status = [0u8; 4];
+            stream.read_exact(&mut status)?;
+            if &status != b"OKAY" {
+                let mut length = [0u8; 4];
+                let reason = stream.read_exact(&mut length).ok().and_then(|()| usize::from_str_radix(&String::from_utf8_lossy(&length), 16).ok()).filter(|n| *n <= 512).map(|n| {
+                    let mut text = vec![0u8; n];
+                    let _ = stream.read_exact(&mut text);
+                    String::from_utf8_lossy(&text).into_owned()
+                });
+                return Err(Error::new(Code::Helper, format!("adb refused {request}: {}", reason.unwrap_or_default())));
+            }
+        }
+        Ok(stream)
     }
     pub fn install(&self, d: &Device, apk: &Path) -> Result<()> {
         let p = apk.to_str().ok_or_else(|| Error::new(Code::Args, "APK path is not UTF-8"))?;

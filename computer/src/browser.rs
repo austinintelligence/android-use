@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use sha1::{Digest, Sha1};
 use std::{
     io::{Read, Write},
-    net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
+    net::TcpStream,
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -32,10 +32,13 @@ struct Tab {
     websocket: Option<String>,
 }
 
+/// Opens one stream to Chrome's DevTools socket on the device (see `Adb::open_stream`).
+type Opener = Box<dyn Fn() -> Result<TcpStream>>;
+
 pub struct Browser {
     adb: Adb,
     device: Device,
-    port: u16,
+    open: Opener,
     cdp: Option<Cdp>,
     tabs: Vec<Tab>,
     selected: String,
@@ -57,11 +60,12 @@ pub struct Outcome {
 
 impl Browser {
     pub fn connect(adb: Adb, device: Device) -> Result<Self> {
-        let port = adb.forward(&device, "localabstract:chrome_devtools_remote")?;
+        let (opener_adb, opener_device) = (adb.clone(), device.clone());
+        let open: Opener = Box::new(move || opener_adb.open_stream(&opener_device, "localabstract:chrome_devtools_remote"));
         let mut browser = Self {
             adb,
             device,
-            port,
+            open,
             cdp: None,
             tabs: Vec::new(),
             selected: String::new(),
@@ -71,10 +75,9 @@ impl Browser {
             nodes_generation: 0,
             dom_fingerprint: None,
         };
-        if let Err(error) = browser.sync() {
-            browser.close();
-            return Err(error);
-        }
+        // No DevTools socket means Chrome is not running (or has no tab): say so, not "helper".
+        (browser.open)().map_err(|_| Error::plain(Code::Device, "Chrome is not running. Use open app \"Chrome\", then retry."))?;
+        browser.sync()?;
         Ok(browser)
     }
 
@@ -164,10 +167,10 @@ impl Browser {
 
     fn apply(&mut self, op: &BrowserOp, deadline: Instant, artifact: &mut Option<Vec<u8>>) -> std::result::Result<(), &'static str> {
         match op {
-            BrowserOp::Navigate(url) => self.command("Page.navigate", json!({"url":url})).map(drop),
-            BrowserOp::Back => self.command("Runtime.evaluate", json!({"expression":"history.back()"})).map(drop),
-            BrowserOp::Forward => self.command("Runtime.evaluate", json!({"expression":"history.forward()"})).map(drop),
-            BrowserOp::Reload => self.command("Page.reload", json!({"ignoreCache":false})).map(drop),
+            BrowserOp::Navigate(url) => self.navigating(deadline, |b| b.command("Page.navigate", json!({"url":url})).map(drop)),
+            BrowserOp::Back => self.navigating(deadline, |b| b.command("Runtime.evaluate", json!({"expression":"history.back()"})).map(drop)),
+            BrowserOp::Forward => self.navigating(deadline, |b| b.command("Runtime.evaluate", json!({"expression":"history.forward()"})).map(drop)),
+            BrowserOp::Reload => self.navigating(deadline, |b| b.command("Page.reload", json!({"ignoreCache":false})).map(drop)),
             BrowserOp::Click(r) => self.dom_action(*r, "click", None),
             BrowserOp::Focus(r) => self.dom_action(*r, "focus", None),
             BrowserOp::Text(r, text) => self.dom_action(*r, "text", Some(text)),
@@ -205,7 +208,7 @@ impl Browser {
             // tab list. Once the request is sent, a failure to confirm means the
             // tab may have changed, so the outcome is reported as uncertain.
             BrowserOp::Close(id) => {
-                http_get(self.port, &format!("/json/close/{id}"), remaining(deadline)).map_err(|_| "unknown")?;
+                http_get(&self.open, &format!("/json/close/{id}"), remaining(deadline)).map_err(|_| "unknown")?;
                 let end = deadline.min(Instant::now() + Duration::from_secs(3));
                 while Instant::now() < end {
                     if !self.list_tabs(remaining(end)).map_err(|_| "unknown")?.iter().any(|tab| tab.id == id.as_ref()) {
@@ -219,7 +222,7 @@ impl Browser {
             }
             BrowserOp::New(url) => {
                 let endpoint = self.browser_endpoint().map_err(|_| "helper")?;
-                let mut cdp = Cdp::connect(self.port, &endpoint).map_err(|_| "helper")?;
+                let mut cdp = Cdp::connect((self.open)().map_err(|_| "helper")?, &endpoint).map_err(|_| "helper")?;
                 let value = cdp.command("Target.createTarget", json!({"url":url})).map_err(|error| if error.code == Code::Unknown { "unknown" } else { "helper" })?;
                 let id = value.get("targetId").and_then(Value::as_str).filter(|id| !id.is_empty() && id.len() <= 128).ok_or("unknown")?.to_owned();
                 let end = deadline.min(Instant::now() + Duration::from_secs(5));
@@ -239,7 +242,7 @@ impl Browser {
     }
 
     fn browser_endpoint(&self) -> Result<String> {
-        let body = http_get(self.port, "/json/version", HTTP_READ)?;
+        let body = http_get(&self.open, "/json/version", HTTP_READ)?;
         let value: Value = serde_json::from_str(&body).map_err(|_| Error::new(Code::Protocol, "Chrome version response was invalid"))?;
         let endpoint = value.get("webSocketDebuggerUrl").and_then(Value::as_str).ok_or_else(|| Error::new(Code::Protocol, "Chrome browser endpoint was missing"))?;
         if endpoint.len() > 2048 || !endpoint.starts_with("ws://") || !endpoint.contains("/devtools/browser") {
@@ -379,13 +382,13 @@ impl Browser {
         self.tabs = tabs;
         if self.cdp.is_none() {
             let endpoint = selected.websocket.as_deref().ok_or_else(|| Error::new(Code::Helper, "selected Chrome tab has no DevTools endpoint"))?;
-            self.cdp = Some(Cdp::connect(self.port, endpoint)?);
+            self.cdp = Some(Cdp::connect((self.open)()?, endpoint)?);
         }
         Ok(())
     }
 
     fn list_tabs(&self, read: Duration) -> Result<Vec<Tab>> {
-        let body = http_get(self.port, "/json", read)?;
+        let body = http_get(&self.open, "/json", read)?;
         let raw: Vec<Value> = serde_json::from_str(&body).map_err(|_| Error::new(Code::Protocol, "Chrome tab list was invalid"))?;
         let mut tabs = Vec::new();
         for item in raw.into_iter().take(128) {
@@ -413,7 +416,7 @@ impl Browser {
 
     /// Once the request may have reached Chrome, only an explicit refusal is `helper`.
     fn activate(&mut self, id: &str, deadline: Instant) -> std::result::Result<(), &'static str> {
-        let response = http_get(self.port, &format!("/json/activate/{id}"), remaining(deadline)).map_err(|error| if error.code == Code::Helper { "helper" } else { "unknown" })?;
+        let response = http_get(&self.open, &format!("/json/activate/{id}"), remaining(deadline)).map_err(|error| if error.code == Code::Helper { "helper" } else { "unknown" })?;
         if !response.to_ascii_lowercase().contains("activated") {
             return Err("helper");
         }
@@ -434,7 +437,9 @@ impl Browser {
 
     fn refresh_dom_fingerprint(&mut self) -> std::result::Result<(), &'static str> {
         let value = self.eval_value(&format!("JSON.stringify((()=>{{const state=window.__androidUseState;if(!state)return '';return [...document.querySelectorAll('{DOM_SELECTOR}')].slice(0,64).map(e=>{{let id=state.ids.get(e);if(!id){{id=state.next++;state.ids.set(e,id)}}return [id,(e.innerText||e.getAttribute('aria-label')||e.getAttribute('placeholder')||e.value||e.tagName||'').slice(0,160),e.matches('input,textarea,select')?'i':e.matches('button,[role=button]')?'b':e.matches('a')?'a':'m',e.disabled?1:3,e.checked?1:0].join('|')}}).join(';')}})())"))?;
-        let fingerprint = value.as_str().unwrap_or("").to_owned();
+        // The page returns JSON text of a string; observe() unquotes it, so this must too, or every
+        // page click, focus, and type would look like the page had changed.
+        let fingerprint = value.as_str().and_then(|raw| serde_json::from_str::<String>(raw).ok()).unwrap_or_default();
         if self.dom_fingerprint.as_deref() == Some(&fingerprint) {
             return Ok(());
         }
@@ -445,19 +450,31 @@ impl Browser {
         Err("stale")
     }
 
+    /// Runs a navigation, then waits for the new document to finish loading, so the next step (or
+    /// the summary) sees the page it led to. Best effort: a same-document change (an anchor) or a
+    /// page that never finishes is left as it is after a short wait.
+    fn navigating(&mut self, deadline: Instant, start: impl FnOnce(&mut Self) -> std::result::Result<(), &'static str>) -> std::result::Result<(), &'static str> {
+        let state = |b: &mut Self| b.eval_value("[performance.timeOrigin, document.readyState]").ok();
+        let before = state(self).and_then(|value| value[0].as_f64());
+        start(self)?;
+        let (begun, end) = (Instant::now(), deadline.min(Instant::now() + Duration::from_secs(6)));
+        while Instant::now() < end {
+            thread::sleep(Duration::from_millis(100));
+            let Some(now) = state(self) else { continue };
+            let fresh = now[0].as_f64() != before;
+            if (fresh && now[1] == "complete") || (!fresh && begun.elapsed() > Duration::from_millis(1500)) {
+                break;
+            }
+        }
+        Ok(())
+    }
+
     fn eval_value(&mut self, expression: &str) -> std::result::Result<Value, &'static str> {
         let result = self.command("Runtime.evaluate", json!({"expression":expression,"returnByValue":true}))?;
         if result.get("exceptionDetails").is_some() {
             return Err("helper");
         }
         Ok(result.pointer("/result/value").cloned().unwrap_or(Value::Null))
-    }
-
-    fn close(&mut self) {
-        if self.port != 0 {
-            self.adb.remove_forward(&self.device, self.port);
-            self.port = 0;
-        }
     }
 }
 
@@ -476,31 +493,21 @@ fn dom_action_expression(stable_id: u64, command: &str) -> String {
     format!("(()=>{{const state=window.__androidUseState;if(!state)return false;const e=[...document.querySelectorAll('{DOM_SELECTOR}')].slice(0,64).find(e=>state.ids.get(e)==={stable_id});if(!e)return false;e.focus();{command};return true}})()")
 }
 
-impl Drop for Browser {
-    fn drop(&mut self) {
-        self.close();
-    }
-}
-
 struct Cdp {
     stream: TcpStream,
     id: u64,
 }
 
 impl Cdp {
-    fn connect(port: u16, endpoint: &str) -> Result<Self> {
+    fn connect(mut stream: TcpStream, endpoint: &str) -> Result<Self> {
         let endpoint = endpoint.strip_prefix("ws://").ok_or_else(|| Error::new(Code::Protocol, "invalid Chrome WebSocket endpoint"))?;
         let path = endpoint.find('/').map(|i| &endpoint[i..]).ok_or_else(|| Error::new(Code::Protocol, "invalid Chrome WebSocket endpoint"))?;
-        let mut stream = TcpStream::connect_timeout(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port), Duration::from_secs(3))?;
         stream.set_read_timeout(Some(Duration::from_secs(8)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
         let mut key_bytes = [0u8; 16];
         getrandom::fill(&mut key_bytes).map_err(|_| Error::new(Code::Io, "could not generate a Chrome WebSocket key"))?;
         let key = STANDARD.encode(key_bytes);
-        write!(
-            stream,
-            "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
-        )?;
+        write!(stream, "GET {path} HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n")?;
         let mut header = Vec::new();
         let mut byte = [0u8; 1];
         while header.len() < 16 * 1024 {
@@ -553,11 +560,11 @@ fn remaining(deadline: Instant) -> Duration {
     deadline.saturating_duration_since(Instant::now()).clamp(Duration::from_millis(1), HTTP_READ)
 }
 
-fn http_get(port: u16, path: &str, read: Duration) -> Result<String> {
-    let mut stream = TcpStream::connect_timeout(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port), Duration::from_secs(3))?;
+fn http_get(open: &Opener, path: &str, read: Duration) -> Result<String> {
+    let mut stream = open()?;
     stream.set_read_timeout(Some(read))?;
     stream.set_write_timeout(Some(Duration::from_secs(3)))?;
-    write!(stream, "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n")?;
+    write!(stream, "GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")?;
     let response = read_http(&mut stream)?;
     let boundary = response.windows(4).position(|w| w == b"\r\n\r\n").ok_or_else(|| Error::new(Code::Protocol, "Chrome HTTP response was malformed"))?;
     if !String::from_utf8_lossy(&response[..boundary]).starts_with("HTTP/1.1 200") {
@@ -718,6 +725,7 @@ fn nonce() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::Ipv4Addr;
     use std::{
         io::{Read, Write},
         net::TcpListener,
@@ -736,7 +744,8 @@ mod tests {
             stream.flush().unwrap();
             thread::sleep(Duration::from_millis(50));
         });
-        assert_eq!(http_get(port, "/json/version", HTTP_READ).unwrap(), "hello");
+        let open: Opener = Box::new(move || Ok(TcpStream::connect((Ipv4Addr::LOCALHOST, port))?));
+        assert_eq!(http_get(&open, "/json/version", HTTP_READ).unwrap(), "hello");
         worker.join().unwrap();
     }
 
@@ -796,7 +805,19 @@ mod tests {
         });
         let (stream, device) = (TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap(), Device { endpoint: "t".into(), hardware: "t".into() });
         let (cdp, selected, nodes, dom_fingerprint) = (Some(Cdp { stream, id: 0 }), "t".to_owned(), vec![9], Some(String::new()));
-        let mut b = Browser { adb: Adb::for_tests(), device, port: 0, cdp, tabs: vec![], selected, signature: None, generation: 1, nodes, nodes_generation: 1, dom_fingerprint };
+        let mut b = Browser {
+            adb: Adb::for_tests(),
+            device,
+            open: Box::new(|| Err(Error::new(Code::Helper, "no device"))),
+            cdp,
+            tabs: vec![],
+            selected,
+            signature: None,
+            generation: 1,
+            nodes,
+            nodes_generation: 1,
+            dom_fingerprint,
+        };
         (b.act_inner(&BrowserPlan { id: "p".into(), generation: 1, deadline_ms: 5000, max_mutations: 16, ops: ops.into_boxed_slice() }).unwrap(), b)
     }
 
@@ -820,10 +841,17 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let worker = thread::spawn(move || drop(listener.accept().unwrap().0.read(&mut [0u8; 256])));
         let (_, mut browser) = fake_chrome(vec![], |_, _| None);
-        browser.port = port;
+        browser.open = Box::new(move || Ok(TcpStream::connect((Ipv4Addr::LOCALHOST, port))?));
         assert_eq!(browser.activate("t2", Instant::now() + Duration::from_secs(2)), Err("unknown"));
-        browser.port = 0;
         worker.join().unwrap();
+    }
+
+    #[test]
+    fn a_click_on_an_unchanged_page_is_not_mistaken_for_a_changed_one() {
+        // Chrome returns the fingerprint as JSON text of a string; comparing it quoted made every
+        // click, focus, and type look stale.
+        let (outcome, _) = fake_chrome(vec![BrowserOp::Click(0)], |_, n| Some(json!({"result":{"result":{"value": if n == 0 { json!("\"\"") } else { json!(true) }}}})));
+        assert_eq!((outcome.mutations, outcome.error), (1, None));
     }
 
     #[test]

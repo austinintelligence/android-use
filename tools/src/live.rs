@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
     env, fs,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read as _, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
     thread,
@@ -37,6 +37,22 @@ struct Task {
 }
 
 use Step::{Act, Read};
+
+/// A static page the Chrome tasks open; the emulator reaches the host's loopback as 10.0.2.2.
+const PAGE_PORT: u16 = 18765;
+const PAGE: &str = "<!doctype html><title>Bench page</title><h1>Hello bench</h1><button onclick=\"document.title='Clicked'\">Press me</button><input placeholder=\"Your name\">";
+
+/// Serves `PAGE` until the process ends; false when the port is taken (the Chrome tasks then skip).
+fn serve_page() -> bool {
+    let Ok(listener) = std::net::TcpListener::bind(("127.0.0.1", PAGE_PORT)) else { return false };
+    thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let _ = stream.read(&mut [0u8; 1024]);
+            let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{PAGE}", PAGE.len());
+        }
+    });
+    true
+}
 
 const TASKS: &[Task] = &[
     Task { name: "status_and_screen", reset: None, steps: &[Read("status", "Ready"), Read("screen", "")] },
@@ -80,6 +96,15 @@ const TASKS: &[Task] = &[
         name: "toggle_wifi",
         reset: Some(SETTINGS),
         steps: &[Act("open app \"Settings\"", "Done"), Act("tap \"Network & internet\"", "Internet"), Act("tap \"Internet\"", "Wi-Fi"), Act("tap \"Wi-Fi\"", "Done")],
+    },
+    Task {
+        name: "chrome_page",
+        reset: None,
+        steps: &[
+            Act("open app \"Chrome\"", "Done"),
+            Act("page open \"http://10.0.2.2:18765/\" then page click \"Press me\" then page text matching \"Hello\"", "Hello bench"),
+            Read("browser tabs", "Clicked"),
+        ],
     },
     Task {
         name: "settings_search",
@@ -238,7 +263,8 @@ pub fn run(root: &Path) -> Result<(), String> {
     let mut report = Vec::new();
     let mut traces = Vec::new();
     println!("fixed_tokens_per_turn={}", mcp.fixed_tokens);
-    for task in TASKS {
+    let page = serve_page();
+    for task in TASKS.iter().filter(|task| page || task.name != "chrome_page") {
         let results: Vec<Run> = (0..runs).map(|_| run_task(&exe, task, &mut latency)).collect::<Result<_, _>>()?;
         let mean = |f: &dyn Fn(&Run) -> f64| results.iter().map(f).sum::<f64>() / results.len() as f64;
         let entry = json!({
