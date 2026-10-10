@@ -652,7 +652,7 @@ fn release_notes(root: &Path) -> Result<(), String> {
         .map(|p| {
             format!(
                 "| {} | `android-use-v{version}-{}.{}` |\n",
-                p["npm"].as_str().unwrap_or_default().replace('-', " "),
+                p["label"].as_str().unwrap_or_default(),
                 p["asset"].as_str().unwrap_or_default(),
                 p["archive"].as_str().unwrap_or_default()
             )
