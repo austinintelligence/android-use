@@ -7,7 +7,7 @@ import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const version = "1.1.0";
+const version = "1.1.1";
 const commands = ["setup", "repair", "doctor", "status", "update", "uninstall", "install", "serve", "read", "act", "devices", "enroll", "version"];
 const command = process.argv[2] || "setup";
 const help = `Android Use

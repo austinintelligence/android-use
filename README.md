@@ -147,6 +147,6 @@ Normal control stays between your computer and the connected device. Android sti
 
 ## Project status
 
-Android Use 1.1.0 is the supported release line. The typed interface, bounded execution model, helper authentication, Chrome control, and local artifact system are implemented and tested. Optional Android capabilities vary by device; `au doctor` is the authority for the connected setup.
+Android Use 1.1.1 is the supported release line. The typed interface, bounded execution model, helper authentication, Chrome control, and local artifact system are implemented and tested. Optional Android capabilities vary by device; `au doctor` is the authority for the connected setup.
 
 MIT licensed. Contributions are welcome—start with [CONTRIBUTING.md](CONTRIBUTING.md).

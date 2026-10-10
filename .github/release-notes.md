@@ -1,4 +1,4 @@
-# android-use 1.1.0
+# android-use 1.1.1
 
 Android Use gives an AI agent bounded, structured access to one real Android device. Connect by USB, run `au setup`, approve Android's prompts, and let an agent read the interface, use apps, control supported Chrome sessions, and inspect supported device state.
 

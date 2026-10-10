@@ -22,6 +22,7 @@ jobs:
         with:
           node-version: '22.18.0'
           cache: npm
+      - run: npm ci
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
         with:
           distribution: temurin

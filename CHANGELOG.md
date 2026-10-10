@@ -1,6 +1,8 @@
 # Changelog
 
-## 1.1.0 — 2026-10-10
+## 1.1.1 — 2026-10-10
+
+This is the first release since 1.0.0. The `v1.1.0` tag exists but never produced a release: the release workflow did not install the npm dev tools its lint step needs, and a tag cannot be moved once pushed. The workflow now runs `npm ci`.
 
 ### Breaking
 
