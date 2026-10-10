@@ -264,6 +264,22 @@ fn is_ours(adb: &Adb, dir: &Path, endpoint: &str) -> bool {
     !instance.trim().is_empty() && adb.hardware(endpoint).is_ok_and(|id| *id == *format!("au-emulator-{}", instance.trim()))
 }
 
+/// Like `is_ours`, but a device that is momentarily unreadable (just restored from a snapshot, or
+/// still starting its settings service) gets a few seconds to answer before it is called foreign.
+/// Acting on a device that is not ours is never worth that wait; wrongly refusing our own is.
+fn is_ours_settled(adb: &Adb, dir: &Path, endpoint: &str) -> bool {
+    let until = Instant::now() + Duration::from_secs(15);
+    loop {
+        if is_ours(adb, dir, endpoint) {
+            return true;
+        }
+        if Instant::now() >= until {
+            return false;
+        }
+        thread::sleep(Duration::from_secs(2));
+    }
+}
+
 fn require_target(l: &Layout, name: &str) -> Result<PathBuf> {
     let dir = l.target(name);
     if valid_name(name) && read_json(&dir.join("target.json")).is_some_and(|t| t["kind"] == "emulator") {
@@ -277,10 +293,19 @@ pub fn start(name: &str, window: bool) -> Result<Value> {
     let l = layout()?;
     let dir = require_target(&l, name)?;
     let adb = Adb::discover()?;
+    // An emulator that is still starting or shutting down shows as offline. Let it settle: starting
+    // a second one on the same disk image would fail, and a record must not be dropped while a
+    // process may still hold it.
+    if let Some(endpoint) = read_json(&dir.join("emulator.json")).and_then(|i| i["endpoint"].as_str().map(str::to_owned)) {
+        let settle = Instant::now() + Duration::from_secs(60);
+        while adb_state(&adb, &endpoint).as_deref() == Some("offline") && Instant::now() < settle {
+            thread::sleep(Duration::from_secs(1));
+        }
+    }
     if let Some(state) = read_json(&dir.join("emulator.json"))
         .and_then(|i| i["endpoint"].as_str().map(str::to_owned))
         .and_then(|endpoint| adb_state(&adb, &endpoint).map(|s| (endpoint, s)))
-        .filter(|(endpoint, _)| is_ours(&adb, &dir, endpoint))
+        .filter(|(endpoint, _)| is_ours_settled(&adb, &dir, endpoint))
     {
         return Ok(json!({"ok":1,"name":name,"endpoint":state.0,"state":state.1,"started":0}));
     }
@@ -327,6 +352,13 @@ pub fn start(name: &str, window: bool) -> Result<Value> {
     }
     drop(lock);
     adb.wait_boot_completed(&endpoint, Duration::from_secs(240))?;
+    // `sys.boot_completed` can precede the package manager; installing or starting a service then fails oddly.
+    let ready = Instant::now() + Duration::from_secs(90);
+    while Instant::now() < ready
+        && !adb.run(Some(&endpoint), &["shell", "pm", "path", "android"], Duration::from_secs(5)).is_ok_and(|out| String::from_utf8_lossy(&out).starts_with("package:"))
+    {
+        thread::sleep(Duration::from_secs(1));
+    }
     // The marker identifies this instance from now on, whatever port it gets next time.
     adb.run(Some(&endpoint), &["shell", "settings", "put", "global", "android_use_instance", &instance], Duration::from_secs(10))?;
     Ok(json!({"ok":1,"name":name,"endpoint":endpoint,"started":1,"next":format!("au --target {name} setup")}))
@@ -339,13 +371,23 @@ pub fn stop(name: &str) -> Result<Value> {
     let endpoint = instance["endpoint"].as_str().unwrap_or_default().to_owned();
     let adb = Adb::discover()?;
     if adb_state(&adb, &endpoint).is_some() {
-        if !is_ours(&adb, &dir, &endpoint) {
+        if !is_ours_settled(&adb, &dir, &endpoint) {
             // The recorded port now belongs to something else; leave it alone.
             let _ = fs::remove_file(dir.join("emulator.json"));
             return Ok(json!({"ok":1,"name":name,"stopped":0,"note":"the recorded port is not this emulator; nothing was stopped"}));
         }
-        adb.run(Some(&endpoint), &["emu", "kill"], Duration::from_secs(10))?;
-        let end = Instant::now() + Duration::from_secs(20);
+        // Power off from inside Android so it flushes its disk: `emu kill` alone is a power cut, and
+        // after one the installed helper or its Accessibility setting can be gone on the next boot.
+        // Fall back to the cut only if Android does not go down in time.
+        let _ = adb.run(Some(&endpoint), &["shell", "reboot", "-p"], Duration::from_secs(10));
+        let graceful = Instant::now() + Duration::from_secs(40);
+        while adb_state(&adb, &endpoint).is_some() && Instant::now() < graceful {
+            thread::sleep(Duration::from_millis(500));
+        }
+        if adb_state(&adb, &endpoint).is_some() {
+            adb.run(Some(&endpoint), &["emu", "kill"], Duration::from_secs(10))?;
+        }
+        let end = Instant::now() + Duration::from_secs(60);
         while adb_state(&adb, &endpoint).is_some() {
             if Instant::now() > end {
                 return Err(Error::new(Code::Timeout, format!("{endpoint} is still shutting down; try again, or close it yourself (pid {})", instance["pid"])));

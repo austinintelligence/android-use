@@ -63,8 +63,8 @@ fn body(root: &Path, au: &str, name: &str, home: &Path) -> Result<Checks, String
     let mut checks: Checks = Vec::new();
 
     ok(au_run(&["emulator", "doctor"])?, "emulator doctor (run au emulator install)")?;
-    if au_run(&["emulator", "status", &name])?["ok"] != 1 {
-        ok(au_run(&["emulator", "create", &name, "--profile", "small"])?, "create")?;
+    if au_run(&["emulator", "status", name])?["ok"] != 1 {
+        ok(au_run(&["emulator", "create", name, "--profile", "small"])?, "create")?;
     }
     let start = |window: bool| -> Result<(), String> {
         let mut args = vec!["emulator", "start", name];
@@ -75,10 +75,10 @@ fn body(root: &Path, au: &str, name: &str, home: &Path) -> Result<Checks, String
     };
     let window = env::var("E2E_WINDOW").is_ok_and(|v| v == "1");
     start(window)?;
-    let setup = au_run(&["--target", &name, "setup", &apk.display().to_string(), "--no-agents"])?;
+    let setup = au_run(&["--target", name, "setup", &apk.display().to_string(), "--no-agents"])?;
     ok(setup.clone(), "setup")?;
     let begun = Instant::now();
-    while !au_run(&["--target", &name, "read", "status"])?["text"].as_str().is_some_and(|t| t.starts_with("Ready")) {
+    while !au_run(&["--target", name, "read", "status"])?["text"].as_str().is_some_and(|t| t.starts_with("Ready")) {
         if begun.elapsed() > Duration::from_secs(300) {
             return Err("Android-Use is not enabled; turn it on under Settings → Accessibility on the emulator (E2E_WINDOW=1 shows it) and run again".into());
         }
@@ -99,28 +99,34 @@ fn body(root: &Path, au: &str, name: &str, home: &Path) -> Result<Checks, String
         "acts on the screen",
         on(&["act", "open app \"Settings\""]).and_then(|v| v["text"].as_str().filter(|t| t.starts_with("Done")).map(|_| ()).ok_or(format!("unexpected: {v}"))),
     ));
-    checks.push(("lists the target", au_run(&["targets"]).and_then(|v| if v.to_string().contains(&name) { Ok(()) } else { Err(v.to_string()) })));
+    checks.push(("lists the target", au_run(&["targets"]).and_then(|v| if v.to_string().contains(name) { Ok(()) } else { Err(v.to_string()) })));
 
     // A second serve for the same target must be refused while the first holds the lock.
-    let mut first = Command::new(au).args(["--target", &name, "serve", "--mcp"]).env("AU_HOME", home).stdin(Stdio::piped()).stdout(Stdio::null()).spawn().map_err(ioe)?;
+    let mut first = Command::new(au).args(["--target", name, "serve", "--mcp"]).env("AU_HOME", home).stdin(Stdio::piped()).stdout(Stdio::null()).spawn().map_err(ioe)?;
     thread::sleep(Duration::from_secs(3));
-    let second = Command::new(au).args(["--target", &name, "serve", "--mcp"]).env("AU_HOME", home).stdin(Stdio::null()).output().map_err(ioe)?;
+    let second = Command::new(au).args(["--target", name, "serve", "--mcp"]).env("AU_HOME", home).stdin(Stdio::null()).output().map_err(ioe)?;
     let refused = String::from_utf8_lossy(&second.stdout).contains("already driving");
     let _ = first.kill();
     let _ = first.wait();
     checks.push(("refuses a second serve", if refused { Ok(()) } else { Err("a second serve was not refused".into()) }));
 
     // The enrollment must survive a stop and start.
-    ok(au_run(&["emulator", "stop", &name])?, "stop")?;
+    ok(au_run(&["emulator", "stop", name])?, "stop")?;
     start(window)?;
-    let again = on(&["read", "status"]);
+    // The service rebinds a few seconds after boot; give it up to a minute.
+    let begun = Instant::now();
+    let mut again = on(&["read", "status"]);
+    while again.as_ref().map_or(true, |v| !v["text"].as_str().is_some_and(|t| t.starts_with("Ready"))) && begun.elapsed() < Duration::from_secs(60) {
+        thread::sleep(Duration::from_secs(3));
+        again = on(&["read", "status"]);
+    }
     checks
         .push(("keeps its enrollment across a restart", again.and_then(|v| if v["text"].as_str().is_some_and(|t| t.starts_with("Ready")) { Ok(()) } else { Err(v.to_string()) })));
 
     checks.push((
         "saves and restores a snapshot",
-        ok(au_run(&["emulator", "snapshot", &name, "save", "e2e"])?, "snapshot save")
-            .and_then(|_| ok(au_run(&["emulator", "snapshot", &name, "load", "e2e"])?, "snapshot load"))
+        ok(au_run(&["emulator", "snapshot", name, "save", "e2e"])?, "snapshot save")
+            .and_then(|_| ok(au_run(&["emulator", "snapshot", name, "load", "e2e"])?, "snapshot load"))
             .map(|_| ()),
     ));
 
