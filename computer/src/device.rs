@@ -182,7 +182,13 @@ impl Adb {
             return Ok((self.resolve(paths)?, false));
         }
         // A target made by `au emulator create` enrolls its own running emulator.
+        // The recorded endpoint can be stale (a crash or reboot leaves it behind), so the device on
+        // it must still carry this target's identifier before it is bound.
         if let Some(endpoint) = crate::emulator::running_endpoint(paths) {
+            let expected = fs::read_to_string(paths.root.join("instance")).unwrap_or_default();
+            if expected.trim().is_empty() || *self.hardware(&endpoint)? != *format!("au-emulator-{}", expected.trim()) {
+                return Err(Error::new(Code::Identity, "the device on this emulator's recorded port is not that emulator; run au emulator start again"));
+            }
             return Ok((self.enroll(paths, &endpoint)?, true));
         }
         let ready: Vec<_> = self.devices_all()?.into_iter().filter(|d| d.state.as_ref() == "device").collect();

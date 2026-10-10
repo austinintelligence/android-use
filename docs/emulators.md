@@ -49,7 +49,7 @@ The emulator starts headless; add `--window` to `au emulator start` to watch it.
 
 ## How targets stay separate
 
-- **Identity.** An emulator's serial changes with its port, so Android Use writes a random per-target identifier into the emulator's global settings and enrolls that instead. A restart on a different port is still the same device. A different emulator, or your phone, is never mistaken for it.
+- **Identity.** An emulator's serial changes with its port, so Android Use writes a random per-target identifier into the emulator's global settings and enrolls that instead. A restart on a different port is still the same device. A different emulator, or your phone, is never mistaken for it. A leftover record of a crashed emulator is checked against that identifier before `stop`, `status`, or `setup` act on its port, so a stale port can never stop or bind another device.
 - **One session per target.** `au serve` holds an exclusive lock on its target. A second `serve` for the same target fails with a clear message; a serve for another target is unaffected.
 - **Ports.** Emulators take even console ports from 5554 upward (limit: 16 instances). Port choice and spawn happen under one lock, so two simultaneous starts cannot pick the same pair.
 - **State.** Everything lives under `<AU_HOME>/targets/NAME` and `<AU_HOME>/emulators`. `au emulator destroy` removes it all.

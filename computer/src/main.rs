@@ -47,7 +47,10 @@ fn select_target() {
 fn run(human: bool) -> Result<Value> {
     let mut a: Vec<String> = env::args().skip(1).filter(|arg| arg != "--json" && arg != "--human").collect();
     if let Some(at) = a.iter().position(|arg| arg == "--target") {
-        a.drain(at..(at + 2).min(a.len()));
+        if a.get(at + 1).is_none_or(|name| name.starts_with("--")) {
+            return Err(Error::new(Code::Args, "--target needs a target name; see au targets"));
+        }
+        a.drain(at..at + 2);
     }
     let out = match a.first().map(String::as_str).unwrap_or("help") {
         "emulator" => emulator(&a)?,

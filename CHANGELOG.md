@@ -13,6 +13,7 @@
 
 - `au emulator doctor|images|create|start|stop|status|list|destroy` creates and runs local Android emulators without a JDK or `avdmanager`. Each is a separate target: `--target NAME` (or `AU_TARGET`) selects its own enrollment, journal, artifacts, and an exclusive `au serve` lock. `au targets` lists them. See `docs/emulators.md`.
 - `au emulator snapshot NAME save|load TAG` saves and restores a named restore point.
+- `emulator stop`, `status`, `start`, and `setup` verify the identifier on the recorded port first, so a stale record after a crash cannot stop or bind a different emulator. A startup that times out kills the emulator it spawned. `--target` without a name is an error instead of falling back to the default target.
 - An emulator is enrolled by a per-target identifier, not its port, so it survives a restart on another port and is never confused with another device.
 - Android Use still never enables Accessibility itself; provisioning that would skip Android's consent screen is deliberately not built.
 - The Rust source budget rises from 7000 to 7450 lines (authored code 14500 to 15000) to cover about 430 lines of emulator code.

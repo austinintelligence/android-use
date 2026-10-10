@@ -217,6 +217,14 @@ fn adb_state(adb: &Adb, endpoint: &str) -> Option<String> {
     adb.devices_all().ok()?.into_iter().find(|d| d.endpoint.as_ref() == endpoint).map(|d| d.state.to_string())
 }
 
+/// Whether the device on `endpoint` is this target's emulator. `emulator.json` can outlive the
+/// process (a crash or reboot), and a port can be taken by another emulator, so nothing may act on
+/// the recorded endpoint (kill it, report it, bind it) without this check.
+fn is_ours(adb: &Adb, dir: &Path, endpoint: &str) -> bool {
+    let instance = fs::read_to_string(dir.join("instance")).unwrap_or_default();
+    !instance.trim().is_empty() && adb.hardware(endpoint).is_ok_and(|id| *id == *format!("au-emulator-{}", instance.trim()))
+}
+
 fn require_target(l: &Layout, name: &str) -> Result<PathBuf> {
     let dir = l.target(name);
     if valid_name(name) && read_json(&dir.join("target.json")).is_some_and(|t| t["kind"] == "emulator") {
@@ -230,8 +238,10 @@ pub fn start(name: &str, window: bool) -> Result<Value> {
     let l = layout()?;
     let dir = require_target(&l, name)?;
     let adb = Adb::discover()?;
-    if let Some(state) =
-        read_json(&dir.join("emulator.json")).and_then(|i| i["endpoint"].as_str().map(str::to_owned)).and_then(|endpoint| adb_state(&adb, &endpoint).map(|s| (endpoint, s)))
+    if let Some(state) = read_json(&dir.join("emulator.json"))
+        .and_then(|i| i["endpoint"].as_str().map(str::to_owned))
+        .and_then(|endpoint| adb_state(&adb, &endpoint).map(|s| (endpoint, s)))
+        .filter(|(endpoint, _)| is_ours(&adb, &dir, endpoint))
     {
         return Ok(json!({"ok":1,"name":name,"endpoint":state.0,"state":state.1,"started":0}));
     }
@@ -268,6 +278,8 @@ pub fn start(name: &str, window: bool) -> Result<Value> {
     let appeared = Instant::now() + Duration::from_secs(90);
     while adb_state(&adb, &endpoint).as_deref() != Some("device") {
         if child.try_wait()?.is_some() || Instant::now() > appeared {
+            // A timed-out emulator must not come up later on a port nothing claims.
+            let _ = child.kill();
             let _ = fs::remove_file(dir.join("emulator.json"));
             let tail = fs::read_to_string(dir.join("emulator.log")).unwrap_or_default().lines().rev().take(8).collect::<Vec<_>>().join(" | ");
             return Err(Error::plain(Code::Device, format!("the emulator did not come up; last log lines: {tail}")));
@@ -288,6 +300,11 @@ pub fn stop(name: &str) -> Result<Value> {
     let endpoint = instance["endpoint"].as_str().unwrap_or_default().to_owned();
     let adb = Adb::discover()?;
     if adb_state(&adb, &endpoint).is_some() {
+        if !is_ours(&adb, &dir, &endpoint) {
+            // The recorded port now belongs to something else; leave it alone.
+            let _ = fs::remove_file(dir.join("emulator.json"));
+            return Ok(json!({"ok":1,"name":name,"stopped":0,"note":"the recorded port is not this emulator; nothing was stopped"}));
+        }
         adb.run(Some(&endpoint), &["emu", "kill"], Duration::from_secs(10))?;
         let end = Instant::now() + Duration::from_secs(20);
         while adb_state(&adb, &endpoint).is_some() {
@@ -305,7 +322,10 @@ pub fn status(name: &str) -> Result<Value> {
     let l = layout()?;
     let dir = require_target(&l, name)?;
     let instance = read_json(&dir.join("emulator.json"));
-    let state = instance.as_ref().and_then(|i| i["endpoint"].as_str()).and_then(|endpoint| adb_state(&Adb::discover().ok()?, endpoint));
+    let state = instance.as_ref().and_then(|i| i["endpoint"].as_str()).and_then(|endpoint| {
+        let adb = Adb::discover().ok()?;
+        adb_state(&adb, endpoint).filter(|_| is_ours(&adb, &dir, endpoint))
+    });
     Ok(json!({"ok":1,"name":name,"running":u8::from(state.is_some()),"endpoint":instance.as_ref().and_then(|i| i["endpoint"].as_str()),"state":state}))
 }
 
