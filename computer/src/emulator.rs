@@ -388,8 +388,9 @@ mod tests {
 
     #[test]
     fn avd_files_point_at_the_image_and_the_private_folder() {
-        let (ini, config) = avd_files("pixel-a", &image(36, "google_apis", "arm64-v8a"), Profile::Small, Path::new("/state/emulators/avd"));
-        assert!(ini.contains("path=/state/emulators/avd/pixel-a.avd") && ini.contains("target=android-36"));
+        let home = Path::new("/state/emulators/avd");
+        let (ini, config) = avd_files("pixel-a", &image(36, "google_apis", "arm64-v8a"), Profile::Small, home);
+        assert!(ini.contains(&format!("path={}", home.join("pixel-a.avd").display())) && ini.contains("target=android-36"));
         assert!(config.contains("image.sysdir.1=system-images/android-36/google_apis/arm64-v8a/") && config.contains("hw.ramSize=2048") && config.contains("hw.cpu.arch=arm64"));
         assert!(avd_files("x", &image(34, "google_apis", "x86_64"), Profile::Standard, Path::new("/a")).1.contains("hw.lcd.height=2400"));
     }
