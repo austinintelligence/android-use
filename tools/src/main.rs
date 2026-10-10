@@ -175,7 +175,7 @@ fn size(root: &Path) -> Result<(usize, usize, usize), String> {
     println!("rust_production={rust} android_production={java} tests={tests} automation={automation} authored_code={authored} source_files={source_files} production_modules={production_modules}");
     // Budgets measure conventionally formatted code (rustfmt; google-java-format --aosp for the
     // helper), so they track real complexity rather than how densely lines are packed.
-    if rust > 7520 || java > 3450 || automation > 1700 || authored > 15500 {
+    if rust > 7520 || java > 3450 || automation > 1700 || authored > 15550 {
         return Err("source budget exceeded".into());
     }
     Ok((rust, java, automation))

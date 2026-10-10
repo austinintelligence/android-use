@@ -23,11 +23,12 @@
 
 ### Fixed
 
+- `au emulator stop` powers Android off from the inside before cutting power. A power cut could lose the installed helper or its Accessibility setting on the next boot. `start` now waits for the package manager after boot and for an emulator that is still shutting down, and identity checks give a just-restored or still-starting emulator 15 seconds before calling it foreign.
 - Documentation named a command (`au capabilities`), an install state (npm "not published"), and an ADB port forward that no longer exist.
 
 ### Maintenance
 
-- Budgets (formatted lines): Rust production 7,520, Java 3,450, automation 1,700, authored code 15,500. The increases cover `au emulator install` and the emulator, release, and publishing tooling.
+- Budgets (formatted lines): Rust production 7,520, Java 3,450, automation 1,700, authored code 15,550. The increases cover `au emulator install` and the emulator, release, and publishing tooling.
 
 ## 1.1.2 — 2026-10-10
 
