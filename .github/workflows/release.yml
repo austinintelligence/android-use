@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # Release builds must not fail on a passing DNS or registry hiccup.
+  CARGO_NET_RETRY: 10
+
 jobs:
   validate:
     name: Validate release source and helper
