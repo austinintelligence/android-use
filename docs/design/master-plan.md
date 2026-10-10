@@ -1,6 +1,6 @@
 # Android Use master plan: cheapest, fastest, easiest Android tool for agents
 
-Status: **proposed. Nothing in §3 onward is implemented until the owner approves it.**
+Status: **approved and implemented through Step 6 (see §8). Steps 7–8 are described below.**
 
 This extends the earlier master plan ([`android-use-final-plan.md`](android-use-final-plan.md)). It does not replace it:
 
@@ -475,3 +475,51 @@ Success rate must not drop, and there must be no safety regression: the journal 
 4. **Dependency:** `serde_json/preserve_order`, for key-order-preserving config edits (§3.1). Otherwise accept the text-splice fallback.
 5. **Gate K.7:** binary size "+3%, excluding the embedded helper" (+5.7% measured).
 6. **Tool rename** to `android_read` / `android_act`, with the dotted names accepted as aliases.
+
+
+---
+
+## 8. Results (2026-10-10, API 36 emulator, 13 tasks × 10 runs)
+
+Real-tokenizer (o200k) counts from `baseline/trace_tokens.py` over `BENCH_TRACE` output of `cargo xtask benchmark-live`. The first table compares the nine tasks both harnesses share.
+
+| Metric | Baseline (§1) | Now | Change | Target |
+| --- | --- | --- | --- | --- |
+| Fixed tokens per turn (instructions + both tool definitions) | 834 | 396 | **−53%** | −40% ✓ |
+| Calls per task (shared nine) | 5.9 | 2.6 | **2.3× fewer** | ≥ 2× ✓ |
+| Calls per task (all thirteen) | — | 2.5 | | |
+| Result tokens per task | 426 | 142 | −67% | |
+| Input tokens per task (results + fixed per call) | 5,356 | 1,186 (shared nine) | **−78%** | |
+| Output tokens per task | 117 | 53 | −55% | |
+| Success rate | 64% (29/45) | **98% (127/130)** | +34 pts | no drop ✓ |
+| `screen` listing on 7 recorded screens | 543 | 347 | −36% | −50% **missed on listings**; −67% on what each action returns |
+| `SKILL.md` loaded per session | 548 | 263 | −52% | |
+| Cold `au read status` | 150 ms | 70 ms | −53% | |
+| Tap p50 / p95 | 686 / 1,654 ms | 695 / 2,164 ms | unchanged | gate: no regression |
+| Helper APK | 52,454 B | 39,148 B | −25% | ≤ 60,000 |
+| Host binary, no embed / with helper | 871,360 B (1.0.0) | 888,464 / 937,968 B | +2% / +7.6% | ≤ 1,000,000 |
+
+**Not met, and why.**
+- Screen listings fell 36%, not 50%: after dropping tags, subtitles, and wrappers, what remains is the app's own text, which must stay verbatim. The saving that matters comes after actions: a diff or `Done.` instead of a full listing.
+- Action latency did not improve. The helper's settle (react, then 200 ms quiet) replaced the host's polling, with the same floor; the saving is in round trips and process spawns, not wall time per tap.
+- `find_setting_scroll`, `toggle_wifi`, and `settings_search` each missed once in ten: Settings screens that finish loading after the screen goes quiet. Those runs recover on the next read, as the harness's agent does.
+
+**Plan items by status.**
+
+| Item | Status |
+| --- | --- |
+| A15 fail-closed serials, A16 boot wait, A8 microphone, A11 link schemes (docs now match: http(s), `geo:`, `google.navigation:`), R1–R6, S1 | Done |
+| Q1 fake adb/helper harness | Partly: the agent flows run against a scripted fake helper speaking the wire protocol; no fake adb server (resolution is a pure function with tests) |
+| Q2 live harness on the shipped grammar; S legacy deletion; `spec.rs` | Done |
+| G1.1–G1.4, G1.6, G1.8–G1.10 | Done |
+| G1.5 handles, G2.7 set-of-marks | Done (handles by key; marks on attached images) |
+| G1.2 (P2) one round trip | Done for settle (inside the plan); resolve stays a separate query, so a tap is observe + resolve + run + read |
+| G1.7 (P4) multi-window | Not needed for dialogs and popups: the active window already is the dialog or menu (checked with a dialog and Chrome's menu). The keyboard is not read by design |
+| G2.1 token gates, G2.2–G2.6 | Done |
+| G2.4 pruning | Partly: wrappers and repeated text were already merged by the compiler; container-vs-control attribution fixed; no further pruning measured to help |
+| G3.1, G3.2 | Done. G3.3 terse-reply snippet not shipped: output is 53 tokens a task, so it could not pay for its own input |
+| G4.1 latency gates, G4.3 no uiautomator | Done |
+| G4.2 (P3) | Smart sockets done (helper and Chrome). Not done: a daemon for CLI calls (the MCP server already persists; a CLI call is now 70 ms) and blob frames (a screenshot is 1–4 slices of 256 KiB; the JSON/base64 overhead is not the bottleneck) |
+| G5.1–G5.6 | Done in the repository; nothing published (needs credentials and the owner's go-ahead) |
+| G6.1–G6.4 | Done; budgets recorded in the changelog |
+| E1–E7 emulator lifecycle | Next |

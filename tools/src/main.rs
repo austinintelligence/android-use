@@ -66,7 +66,19 @@ fn verify(root: &Path) -> Result<(), String> {
     gate(root)?;
     docs(root, false)?;
     cmd(root, "cargo", &["build", "--profile", "dist", "-p", "au"])?;
+    artifact_sizes(root)?;
     size(root).map(|_| ())
+}
+/// The release artifacts stay small: the helper APK, and the host binary (which carries the APK in
+/// releases, so its limit has room for it).
+fn artifact_sizes(root: &Path) -> Result<(), String> {
+    let binary = file_bytes(&root.join("target/dist").join(if cfg!(windows) { "au.exe" } else { "au" }))?;
+    let apk = file_bytes(&release_apk(root).or_else(|_| root.join("device/app/build/outputs/apk/release/app-release-unsigned.apk").canonicalize().map_err(ioe))?)?;
+    println!("artifact_sizes binary_bytes={binary} apk_bytes={apk} max_binary=1000000 max_apk=60000");
+    if binary > 1_000_000 || apk > 60_000 {
+        return Err("a release artifact exceeds its size limit".into());
+    }
+    Ok(())
 }
 fn package(root: &Path) -> Result<(), String> {
     android(root, "assembleRelease")?;
@@ -156,7 +168,7 @@ fn size(root: &Path) -> Result<(usize, usize, usize), String> {
     println!("rust_production={rust} android_production={java} tests={tests} automation={automation} authored_code={authored} source_files={source_files} production_modules={production_modules}");
     // Budgets measure conventionally formatted code (rustfmt; google-java-format --aosp for the
     // helper), so they track real complexity rather than how densely lines are packed.
-    if rust > 7200 || java > 3500 || automation > 1400 || authored > 14800 {
+    if rust > 7000 || java > 3450 || automation > 1320 || authored > 14500 {
         return Err("source budget exceeded".into());
     }
     Ok((rust, java, automation))

@@ -54,6 +54,11 @@ android {
         }
     }
 
+    packaging {
+        // Kotlin metadata that nothing at runtime reads; the helper is pure Java.
+        resources.excludes += ["kotlin/**", "META-INF/version-control-info.textproto"]
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

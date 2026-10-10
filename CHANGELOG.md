@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+### Breaking
+
+- The MCP tools are named `android_read` and `android_act`. Some model APIs reject dots in tool names. The dotted names are still accepted in `tools/call`, but are no longer listed.
+- The legacy structured JSON protocol is removed: `au serve --jsonl`, `au observe`, `au browser`, `au capabilities`, `au location`, `au notifications`, `au visual`, `au artifact`, and `au act JSON`. Use `au read COMMAND` and `au act COMMAND`, which reach every capability. About 650 lines of host code are gone.
+- Screens are rendered densely: `sw Wi-Fi=on`, `edit Email="x"`, `list Feed`, plain names for buttons and text, and `Save#2` for a duplicate (send `tap "Save" number 2`). Descriptive subtitles move to `screen full`.
+- A fully successful action says `Done.` rather than restating the command, followed by the screen or, on the same screen, only `Changed:` rows (`~` changed, `+` added, `-` removed).
+
+### Cheaper for agents
+
+- Fixed per-turn tokens (instructions plus both tool definitions) fall from 834 to 396 (o200k, −53%), driven by `computer/src/spec.rs`: one table generates the tool descriptions, the new `android_read help`, the installed `references/protocol.md`, and the grammar tests. `SKILL.md` is 263 tokens instead of 548.
+- Screen listings are about 36% smaller on recorded screens, and a result on an unchanged screen is a few rows instead of the whole screen. `cargo xtask docs` gates both numbers.
+- `scroll up|down [in "AREA"] until "TEXT"` pages a list in the helper and stops at the end: one call instead of a scroll/read loop.
+- A read can end a chain: `tap "Save" then find "Saved"` runs the action and returns what you looked for.
+- Results carry `structuredContent` `{status, changed}`; errors carry `{status}`.
+- Icon-only controls are listed as `e7` and targeted with `tap e7`, by a key (class, view id, bounds) remembered from the last listing. Screen images carry a numbered box over each control.
+- A label that only contains the request (`tap "Save"` for "Save draft") is acted on when it is plainly meant (word-aligned, at most two other words, none destructive) and the result names it; otherwise it counts as missing.
+- A label miss attaches the screen image only when the text is thin. Omitted-row counts come first, so truncation cannot hide them.
+
+### Faster
+
+- The helper waits for the screen to react and go quiet inside the plan (and, after a launch, for the app to be in front), so the host polls nothing and replies describe the screen the action led to.
+- The helper link and Chrome DevTools use the adb server's own protocol directly: no `adb` process runs, no port forward exists to leak. A cold `au read status` fell from 150 ms to 70 ms.
+- Plans split after a step that opens another screen or page (open app, link, setting, key, notification, `page open`), so later labels are resolved on the screen they belong to.
+
+### One-command install
+
+- `au install [AGENT|all] [--dry-run] [--force]` and `au uninstall AGENT` register `serve --mcp` with Claude Code, Codex, Cursor, Gemini CLI, VS Code, Claude Desktop, or OpenCode (and the skill for Claude Code and Codex). Only the `android-use` entry changes; other entries, key order, and indentation stay; a foreign entry needs `--force`; a file with comments is not edited (the snippet is printed).
+- `au setup` installs the helper, registers every agent it finds, and ends with a live `status` and `screen` read.
+- Release binaries embed `aubridge.apk` (SHA-256 checked), so `au` alone is enough. `npx -y android-use setup`, an install script that verifies `SHA256SUMS`, a Homebrew formula, and a Claude Code plugin and marketplace manifest are included in the repository; nothing is published yet.
+
+### Fixed
+
+- The helper crash-looped on Android 14 and newer: `startForeground` without a type claims `mediaProjection` before consent. It now starts as `specialUse`.
+- Android 14+ hid views an app marks accessibility-data-sensitive, such as the Settings Wi-Fi switch. The service now declares `isAccessibilityTool`.
+- `page click`, `page focus`, and `page type` always reported `stale`: the page fingerprint was compared still JSON-quoted. (Present in 1.0.0.)
+- A list of plain text became one row with a long value; each line is now its own row, tappable by its bounds.
+- Duplicate numbers, headings, nested rows, scroll targets, and fields resolve consistently between the listing and the helper.
+- Two connected transports that report one serial are refused instead of the first being used; setup waits for the device to finish booting; `au doctor` asks the helper something instead of trusting that it is installed.
+- `au status` waits through the service rebinding after an update instead of reporting Accessibility off.
+
+### Maintenance
+
+- `cargo xtask benchmark-live` drives the shipped commands over MCP on a device and reports calls, tokens, time, and success per task, with p50/p95 per action and optional gates (`BENCH_GATE=1`). The `aubench` fixture gains duplicate, near-miss, slow, and unlabeled controls. Baselines are in `docs/design/baseline/`.
+- Product code may not use `uiautomator`. Release artifacts are size-gated: host binary at most 1,000,000 bytes, helper APK at most 60,000 (now 39,148, from 52,454, by dropping Kotlin metadata).
+- Budgets (formatted lines): Rust production 7,000, Java 3,450, authored code 14,500, automation 1,320. Rust production is 6,926 against 5,620 in 1.0.0 after removing about 650 lines of legacy protocol; the additions are the install command, the spec table, handles and marks, the journal, compression, and the agent layer.
+- Dependency: `serde_json` with `preserve_order` (adds `indexmap`), so editing an agent's configuration keeps its key order.
+
 ### Fixed
 
 - `notifications` always reported "no actionable notifications" because the host read the helper's notification object as an array. It now lists notifications by title and text, newest first.

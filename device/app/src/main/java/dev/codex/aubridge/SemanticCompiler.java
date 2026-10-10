@@ -306,7 +306,9 @@ final class SemanticCompiler {
         int unlabeled = 0;
         for (Item item : visible) {
             if (unlabeled >= MAX_UNLABELED) break;
-            boolean control = item.interactive() && !item.scrollable && !item.heading;
+            // A disabled control without words is a divider or a placeholder, not something to tap.
+            boolean control =
+                    item.interactive() && item.enabled && !item.scrollable && !item.heading;
             if (!control || !item.label.isEmpty() || consumed.contains(item.id) || tooSmall(item))
                 continue;
             if (surroundsLabel(item, visible)) continue;

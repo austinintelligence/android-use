@@ -1,0 +1,14 @@
+| status_and_screen | 10/10 | 2.0 | 80 | 872 | 26 |
+| toggle_switch | 10/10 | 2.0 | 128 | 920 | 36 |
+| fill_submit_form | 10/10 | 2.0 | 129 | 921 | 47 |
+| dismiss_dialog | 10/10 | 3.2 | 245 | 1512 | 60 |
+| confirm_dialog | 10/10 | 3.0 | 243 | 1431 | 57 |
+| duplicate_label | 10/10 | 2.0 | 123 | 915 | 38 |
+| near_miss_label | 10/10 | 2.0 | 135 | 927 | 35 |
+| slow_content | 10/10 | 2.0 | 122 | 914 | 52 |
+| scroll_to_row_40 | 10/10 | 1.0 | 120 | 516 | 43 |
+| find_setting_scroll | 9/10 | 1.2 | 86 | 561 | 40 |
+| toggle_wifi | 9/10 | 4.1 | 198 | 1822 | 69 |
+| chrome_page | 10/10 | 3.2 | 57 | 1324 | 78 |
+| settings_search | 9/10 | 4.9 | 179 | 2120 | 108 |
+| mean | 127/130 | 2.5 | 142 | 1135 | 53 |
