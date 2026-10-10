@@ -10,7 +10,13 @@ n = 0
 def rpc(method, params=None):
     global n; n += 1
     p.stdin.write(json.dumps({"jsonrpc":"2.0","id":n,"method":method,"params":params or {}})+"\n"); p.stdin.flush()
-    return json.loads(p.stdout.readline())
+    line = p.stdout.readline()
+    if not line:
+        sys.exit("au serve --mcp exited before replying; run `au doctor`")
+    reply = json.loads(line)
+    if "error" in reply:
+        sys.exit(f"{method} failed: {reply['error']}")
+    return reply
 rpc("initialize", {"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"demo","version":"1"}})
 p.stdin.write(json.dumps({"jsonrpc":"2.0","method":"notifications/initialized"})+"\n"); p.stdin.flush()
 steps = [("android_act", 'open app "Settings" then tap "Network & internet"'), ("android_act", 'tap "Airplane mode"'), ("android_act", 'tap "Airplane mode"'), ("android_act", "capture screen")]

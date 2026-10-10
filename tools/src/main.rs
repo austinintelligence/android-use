@@ -612,6 +612,9 @@ pub(crate) fn ioe(e: impl std::fmt::Display) -> String {
 /// Every relative link in a Markdown file points at a file or folder that exists.
 fn links(root: &Path) -> Result<(), String> {
     let out = Command::new("git").args(["ls-files", "*.md"]).current_dir(root).output().map_err(ioe)?;
+    if !out.status.success() {
+        return Err("git ls-files failed; the link check needs a git checkout".into());
+    }
     for file in String::from_utf8_lossy(&out.stdout).lines().filter(|f| !f.starts_with("docs/design/baseline/") && *f != "CHANGELOG.md") {
         let text = fs::read_to_string(root.join(file)).map_err(ioe)?;
         for (at, _) in text.match_indices("](") {

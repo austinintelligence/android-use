@@ -39,7 +39,7 @@ sequenceDiagram
 | `engine.rs` | Execution core: lazy device link, reconnects, journaled plan execution, artifacts. |
 | `journal.rs` | At-most-once operation journal. |
 | `bridge.rs` / `browser.rs` | Helper protocol and Chrome DevTools clients. |
-| `device.rs` / `install.rs` | ADB discovery (over the adb server socket, with no `adb` process), enrollment, targets and their locks, setup, and `doctor`. Identity: a hardware serial, or for emulators a per-target marker. |
+| `device.rs` / `install.rs` | ADB discovery (over the adb server socket; `adb` is run only to start a stopped adb server), enrollment, targets and their locks, setup, and `doctor`. Identity: a hardware serial, or for emulators a per-target marker. |
 | `emulator.rs` | `au emulator`: SDK checks and `sdkmanager` installs, AVD creation, start and stop on free ports, snapshots, and identity checks on the recorded port. |
 | `compress.rs` | Content-aware screenshot compression and the image-to-device coordinate map. |
 | `visual.rs` / `artifact.rs` | PNG crop, hash, and diff; private local artifacts. |
@@ -73,7 +73,7 @@ Release builds compile the signed helper APK into `au` (`computer/build.rs`, `AU
 
 ## Speed
 
-- The helper connection persists for the life of the server and reconnects once on transport errors. It and Chrome DevTools are opened by speaking the adb server's own protocol (`host:transport`, then `localabstract:`): no `adb` process runs and no port forward exists to leak.
+- The helper connection persists for the life of the server and reconnects once on transport errors. It and Chrome DevTools are opened by speaking the adb server's own protocol (`host:transport`, then `localabstract:`): no `adb` process runs per command (`adb` is run only to start a stopped adb server) and no port forward exists to leak.
 - The helper settles inside the plan: it waits for the screen to react, then to go quiet (and, after a launch, for that app to be in front), so the host never polls.
 - Unchanged screens are not re-sent: observation is keyed by generation.
 - Device artifacts download in 256 KiB slices. Older helpers fall back to 2.8 KB slices.

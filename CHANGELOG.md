@@ -51,7 +51,7 @@ The `v1.1.0` and `v1.1.1` tags exist but never produced a release (tags cannot b
 - Icon-only controls are `e7` and targeted with `tap e7`, by a key (class, view id, bounds); screen images carry a numbered box per control.
 - A label that only contains the request (`tap "Save"` for "Save draft") is used when plainly meant (word-aligned, at most two other words, none risky), and the result says so.
 - Every successful action reports the settled screen. Commands chain across screens: steps after an app, link, or page opens are resolved on what it shows. Screen images pass through content-aware compression (20 to 200 KB, exact coordinates mapped back to device pixels).
-- The helper waits for the screen to react and go quiet inside the plan, so the host polls nothing. The helper link and Chrome use the adb server's own protocol: no `adb` process, no port forward. A cold `au read status` fell from 150 ms to 70 ms. Artifacts download in 256 KiB slices (they were 2.8 KB).
+- The helper waits for the screen to react and go quiet inside the plan, so the host polls nothing. The helper link and Chrome use the adb server's own protocol: no `adb` process per command (only to start a stopped adb server), no port forward. A cold `au read status` fell from 150 ms to 70 ms. Artifacts download in 256 KiB slices (they were 2.8 KB).
 
 ### Added
 

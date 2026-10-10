@@ -100,7 +100,8 @@ Only the `android-use` entry is added or removed; every other setting stays as i
 ## No phone? Use an emulator
 
 ```sh
-au emulator install          # fetch the SDK pieces you are missing (you accept Google's license)
+au emulator doctor           # needs the Android SDK; if it says none, install Android Studio or the command-line tools first
+au emulator install          # fetch the missing emulator package and system image (you accept Google's license)
 au emulator create demo
 au emulator start demo
 au --target demo setup       # then turn on Android-Use in the emulator's Accessibility settings

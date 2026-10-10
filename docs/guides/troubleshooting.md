@@ -60,7 +60,7 @@ Run `au read capabilities`. Camera, microphone, and location need Android permis
 
 ## Emulators
 
-- *No Android SDK found / the emulator is not installed*: run `au emulator doctor`, then `au emulator install` in a terminal (it needs a JDK for Google's `sdkmanager` and asks you to accept the SDK license).
+- *No Android SDK found*: install Android Studio, or the Android SDK command-line tools, then run `au emulator doctor`. *The emulator or a system image is not installed*: run `au emulator install` in a terminal (it needs a JDK for Google's `sdkmanager` and asks you to accept the SDK license).
 - *The emulator did not come up*: the message ends with the last lines of `emulator.log`. On Linux, check that KVM is available; on any host, free some RAM (the small profile uses 2 GB).
 - *another au serve is already driving this target*: stop that server, or use a different `--target`.
 - *The device on this emulator's recorded port is not that emulator*: the emulator crashed or was closed outside `au`. Run `au emulator start NAME` again; nothing was stopped or bound.

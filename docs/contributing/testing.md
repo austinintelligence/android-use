@@ -1,6 +1,6 @@
 # Testing
 
-Four layers, fastest first. `cargo xtask verify` runs the first three; the last needs a device or emulator.
+Four layers, fastest first. `cargo xtask verify` runs the first two and builds the release helper; layers 3 and 4 are run by hand, and layer 4 needs a device or emulator.
 
 ## 1. Unit and flow tests
 
@@ -12,7 +12,7 @@ Four layers, fastest first. `cargo xtask verify` runs the first three; the last 
 
 ## 3. Helper build
 
-`cargo xtask android` builds the debug helper and the `aubench` fixture app (`device/example`): a deterministic screen with a dialog, a form, duplicate labels, a near-miss label, slow content, an icon-only button, and a long list.
+`cargo xtask android` builds the debug helper and, with it, the `aubench` fixture app (`device/example`; `verify` does not build the fixture): a deterministic screen with a dialog, a form, duplicate labels, a near-miss label, slow content, an icon-only button, and a long list.
 
 ## 4. Live checks
 

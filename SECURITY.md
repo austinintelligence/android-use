@@ -22,7 +22,7 @@ In scope: the `au` CLI, the Android helper, release archives, installer integrit
 
 - **Local host:** `au serve` uses stdio. It does not open a TCP listener. If another system carries stdio over a network, that system must provide authentication, encryption, and authorization.
 - **ADB transport:** Android must authorize the computer's debugging key. The server then binds one enrolled hardware serial to the session. Wireless ADB, if configured outside Android Use, expands this trust boundary to that network.
-- **Android helper:** the service has no `INTERNET` permission. It accepts an abstract-local socket from Android shell UID 2000. `au` reaches it by speaking the ADB server's own protocol (`host:transport:SERIAL`, then `localabstract:NAME`), so no `adb` process runs for it and no TCP port forward exists to leak.
+- **Android helper:** the service has no `INTERNET` permission. It accepts an abstract-local socket from Android shell UID 2000. `au` reaches it by speaking the ADB server's own protocol (`host:transport:SERIAL`, then `localabstract:NAME`), so no `adb` process runs per command (`adb` is run only to start a stopped adb server) and no TCP port forward exists to leak.
 - **Chrome:** CDP access is loopback-only and allowlisted to Chrome's Android abstract socket. It can read and operate the selected Chrome session, including authenticated pages already open on the device.
 
 Report vulnerabilities privately through GitHub Security Advisories. Do not include device identifiers, bridge credentials, UI content, or captured artifacts in a public issue.
