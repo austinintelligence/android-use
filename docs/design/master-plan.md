@@ -523,6 +523,6 @@ Real-tokenizer (o200k) counts from `baseline/trace_tokens.py` over `BENCH_TRACE`
 | G5.1–G5.6 | Done in the repository; nothing published (needs credentials and the owner's go-ahead) |
 | G6.1–G6.4 | Done; budgets recorded in the changelog |
 | E1–E4 targets, identity, emulator lifecycle, serve lock | Done on `feature/emulator-targets`; verified end to end on a managed API 36 emulator (boot 38 s, restart keeps enrollment, second serve refused, destroy clean) |
-| E5 multi-instance tests | Covered by unit tests for ports and identity; no parallel live-session suite yet |
-| E6 snapshots | Not built (optional) |
+| E5 multi-instance | Verified live: two emulators started concurrently got distinct ports and identifiers beside the default emulator |
+| E6 snapshots | Done: `au emulator snapshot NAME save\|load TAG`, verified live |
 | E7 remote broker | Not built; needs owner approval |

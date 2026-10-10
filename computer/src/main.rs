@@ -95,13 +95,13 @@ fn run(human: bool) -> Result<Value> {
         "uninstall" => install::uninstall()?,
         "version" | "--version" => serde_json::json!({"version":env!("CARGO_PKG_VERSION")}),
         "help" | "--help" | "-h" => {
-            serde_json::json!({"commands":["devices","setup [APK]","status","doctor","update [APK]","uninstall","enroll ENDPOINT","repair [APK]","serve --mcp","read COMMAND","act COMMAND","install [AGENT|all] [--dry-run] [--force]","uninstall AGENT","emulator doctor|images|create|start|stop|status|list|destroy","targets","--target NAME (any command)"]})
+            serde_json::json!({"commands":["devices","setup [APK]","status","doctor","update [APK]","uninstall","enroll ENDPOINT","repair [APK]","serve --mcp","read COMMAND","act COMMAND","install [AGENT|all] [--dry-run] [--force]","uninstall AGENT","emulator doctor|images|create|start|stop|status|list|snapshot|destroy","targets","--target NAME (any command)"]})
         }
         _ => return Err(Error::new(Code::Args, format!("unknown command: {}", a[0]))),
     };
     Ok(out)
 }
-/// `au emulator doctor|images|create|start|stop|status|list|destroy`.
+/// `au emulator doctor|images|create|start|stop|status|list|snapshot|destroy`.
 fn emulator(a: &[String]) -> Result<Value> {
     let name = || a.get(2).filter(|arg| !arg.starts_with("--")).ok_or_else(|| Error::new(Code::Args, "this command needs an emulator NAME"));
     let flag = |flag: &str| a.iter().any(|arg| arg == flag);
@@ -115,7 +115,10 @@ fn emulator(a: &[String]) -> Result<Value> {
         Some("status") => emulator::status(name()?),
         Some("list") => emulator::list(),
         Some("destroy") => emulator::destroy(name()?, flag("--yes")),
-        _ => Err(Error::new(Code::Args, "use au emulator doctor, images, create NAME, start NAME, stop NAME, status NAME, list, or destroy NAME --yes")),
+        Some("snapshot") => emulator::snapshot(name()?, a.get(3).map_or("", String::as_str), a.get(4).map_or("", String::as_str)),
+        _ => {
+            Err(Error::new(Code::Args, "use au emulator doctor, images, create NAME, start NAME, stop NAME, status NAME, list, snapshot NAME save|load TAG, or destroy NAME --yes"))
+        }
     }
 }
 

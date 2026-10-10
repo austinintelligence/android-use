@@ -309,6 +309,27 @@ pub fn status(name: &str) -> Result<Value> {
     Ok(json!({"ok":1,"name":name,"running":u8::from(state.is_some()),"endpoint":instance.as_ref().and_then(|i| i["endpoint"].as_str()),"state":state}))
 }
 
+/// `au emulator snapshot NAME save|load TAG`: a named restore point of the running emulator.
+pub fn snapshot(name: &str, action: &str, tag: &str) -> Result<Value> {
+    if tag.is_empty() || tag.len() > 32 || !tag.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+        return Err(Error::new(Code::Args, "a snapshot tag is 1-32 letters, digits, - or _"));
+    }
+    if !matches!(action, "save" | "load") {
+        return Err(Error::new(Code::Args, "use au emulator snapshot NAME save TAG or load TAG"));
+    }
+    let l = layout()?;
+    let dir = require_target(&l, name)?;
+    let endpoint = read_json(&dir.join("emulator.json"))
+        .and_then(|i| i["endpoint"].as_str().map(str::to_owned))
+        .ok_or_else(|| Error::new(Code::Device, format!("{name} is not running; au emulator start {name}")))?;
+    let out = Adb::discover()?.run(Some(&endpoint), &["emu", "avd", "snapshot", action, tag], Duration::from_secs(120))?;
+    let text = String::from_utf8_lossy(&out);
+    if text.lines().any(|line| line.starts_with("KO")) {
+        return Err(Error::new(Code::Device, format!("the emulator refused to {action} snapshot {tag}: {}", text.trim())));
+    }
+    Ok(json!({"ok":1,"name":name,"snapshot":tag,"action":action}))
+}
+
 pub fn list() -> Result<Value> {
     let l = layout()?;
     let names = fs::read_dir(l.base.join("targets")).map(|dir| dir.flatten().filter_map(|e| e.file_name().into_string().ok()).collect::<Vec<_>>()).unwrap_or_default();
@@ -387,5 +408,13 @@ mod tests {
         assert!(free_ports(&[FIRST_PORT]).is_none_or(|port| port != FIRST_PORT));
         let _ = busy;
         assert_eq!(free_ports(&(FIRST_PORT..=LAST_PORT).step_by(2).collect::<Vec<_>>()), None, "every pair claimed");
+    }
+
+    #[test]
+    fn snapshot_tags_and_actions_are_checked_before_anything_runs() {
+        for tag in ["", "has space", "semi;colon", &"x".repeat(33)] {
+            assert_eq!(snapshot("any", "save", tag).unwrap_err().code, Code::Args, "{tag:?}");
+        }
+        assert_eq!(snapshot("any", "delete", "ok_tag-1").unwrap_err().code, Code::Args);
     }
 }

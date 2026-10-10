@@ -43,6 +43,7 @@ The emulator starts headless; add `--window` to `au emulator start` to watch it.
 | `au emulator start NAME [--window]` | Boot it on a free port pair and wait until Android finishes booting. |
 | `au emulator stop NAME` | Shut it down. Its data is kept. |
 | `au emulator status NAME` / `au emulator list` | Show state and endpoint. |
+| `au emulator snapshot NAME save\|load TAG` | Save or restore a named restore point of the running emulator (1–32 letters, digits, `-`, `_`). Loading discards everything since the save. |
 | `au emulator destroy NAME --yes` | Delete the device, its data, and its target state. |
 | `au targets` | List the default target and every emulator target. |
 
@@ -55,7 +56,7 @@ The emulator starts headless; add `--window` to `au emulator start` to watch it.
 
 ## Measured on one Mac
 
-Apple silicon, Android 16 (API 36) `google_apis` arm64 image, `small` profile, headless: cold boot to `sys.boot_completed` in about 38 s. It ran beside another emulator already enrolled as the default target on 5554 without interference, and stopped and restarted with its enrollment intact. Your numbers depend on disk, RAM, and image.
+Apple silicon, Android 16 (API 36) `google_apis` arm64 image, `small` profile, headless: cold boot to `sys.boot_completed` in about 38 s. Two emulators started at once got different ports and identifiers, and a snapshot restored the saved settings. It ran beside another emulator already enrolled as the default target on 5554 without interference, and stopped and restarted with its enrollment intact. Your numbers depend on disk, RAM, and image.
 
 ## What this does not do
 
