@@ -18,14 +18,39 @@ use std::{
     time::{Duration, Instant},
 };
 
+type Checks = Vec<(&'static str, Result<(), String>)>;
+
 pub fn run(root: &Path) -> Result<(), String> {
     let au = env::var("AU_BIN").unwrap_or_else(|_| root.join("target/dist/au").display().to_string());
-    let apk = root.join("device/app/build/outputs/apk/debug/app-debug.apk");
     let name = env::var("E2E_NAME").unwrap_or_else(|_| "au-e2e".into());
     let home = root.join("target/e2e-home");
     fs::create_dir_all(&home).map_err(ioe)?;
+    let outcome = body(root, &au, &name, &home);
+    // Whatever happened above, do not leave the emulator running (or, when asked, behind).
+    let finish = if env::var("E2E_DESTROY").is_ok_and(|v| v == "1") { vec!["emulator", "destroy", name.as_str(), "--yes"] } else { vec!["emulator", "stop", name.as_str()] };
+    let _ = Command::new(&au).args(&finish).env("AU_HOME", &home).stdin(Stdio::null()).output();
+    let checks = outcome?;
+    let mut failed = 0;
+    for (what, result) in &checks {
+        match result {
+            Ok(()) => println!("pass  {what}"),
+            Err(why) => {
+                failed += 1;
+                println!("FAIL  {what}: {why}");
+            }
+        }
+    }
+    if failed > 0 {
+        return Err(format!("{failed} of {} emulator checks failed", checks.len()));
+    }
+    println!("emulator-e2e: {} checks passed", checks.len());
+    Ok(())
+}
+
+fn body(root: &Path, au: &str, name: &str, home: &Path) -> Result<Checks, String> {
+    let apk = root.join("device/app/build/outputs/apk/debug/app-debug.apk");
     let au_run = |args: &[&str]| -> Result<Value, String> {
-        let out = Command::new(&au).args(args).env("AU_HOME", &home).stdin(Stdio::null()).output().map_err(|e| format!("could not run {au}: {e}"))?;
+        let out = Command::new(au).args(args).env("AU_HOME", home).stdin(Stdio::null()).output().map_err(|e| format!("could not run {au}: {e}"))?;
         serde_json::from_slice(&out.stdout).map_err(|_| format!("au {} printed no JSON: {}", args.join(" "), String::from_utf8_lossy(&out.stderr)))
     };
     let ok = |value: Value, what: &str| -> Result<Value, String> {
@@ -35,14 +60,14 @@ pub fn run(root: &Path) -> Result<(), String> {
             Err(format!("{what}: {value}"))
         }
     };
-    let mut checks: Vec<(&str, Result<(), String>)> = Vec::new();
+    let mut checks: Checks = Vec::new();
 
     ok(au_run(&["emulator", "doctor"])?, "emulator doctor (run au emulator install)")?;
     if au_run(&["emulator", "status", &name])?["ok"] != 1 {
         ok(au_run(&["emulator", "create", &name, "--profile", "small"])?, "create")?;
     }
     let start = |window: bool| -> Result<(), String> {
-        let mut args = vec!["emulator", "start", name.as_str()];
+        let mut args = vec!["emulator", "start", name];
         if window {
             args.push("--window");
         }
@@ -62,7 +87,7 @@ pub fn run(root: &Path) -> Result<(), String> {
     }
 
     let on = |args: &[&str]| -> Result<Value, String> {
-        let mut full = vec!["--target", name.as_str()];
+        let mut full = vec!["--target", name];
         full.extend_from_slice(args);
         au_run(&full)
     };
@@ -77,9 +102,9 @@ pub fn run(root: &Path) -> Result<(), String> {
     checks.push(("lists the target", au_run(&["targets"]).and_then(|v| if v.to_string().contains(&name) { Ok(()) } else { Err(v.to_string()) })));
 
     // A second serve for the same target must be refused while the first holds the lock.
-    let mut first = Command::new(&au).args(["--target", &name, "serve", "--mcp"]).env("AU_HOME", &home).stdin(Stdio::piped()).stdout(Stdio::null()).spawn().map_err(ioe)?;
+    let mut first = Command::new(au).args(["--target", &name, "serve", "--mcp"]).env("AU_HOME", home).stdin(Stdio::piped()).stdout(Stdio::null()).spawn().map_err(ioe)?;
     thread::sleep(Duration::from_secs(3));
-    let second = Command::new(&au).args(["--target", &name, "serve", "--mcp"]).env("AU_HOME", &home).stdin(Stdio::null()).output().map_err(ioe)?;
+    let second = Command::new(au).args(["--target", &name, "serve", "--mcp"]).env("AU_HOME", home).stdin(Stdio::null()).output().map_err(ioe)?;
     let refused = String::from_utf8_lossy(&second.stdout).contains("already driving");
     let _ = first.kill();
     let _ = first.wait();
@@ -99,24 +124,5 @@ pub fn run(root: &Path) -> Result<(), String> {
             .map(|_| ()),
     ));
 
-    if env::var("E2E_DESTROY").is_ok_and(|v| v == "1") {
-        ok(au_run(&["emulator", "destroy", &name, "--yes"])?, "destroy")?;
-    } else {
-        ok(au_run(&["emulator", "stop", &name])?, "stop")?;
-    }
-    let mut failed = 0;
-    for (what, result) in &checks {
-        match result {
-            Ok(()) => println!("pass  {what}"),
-            Err(why) => {
-                failed += 1;
-                println!("FAIL  {what}: {why}");
-            }
-        }
-    }
-    if failed > 0 {
-        return Err(format!("{failed} of {} emulator checks failed", checks.len()));
-    }
-    println!("emulator-e2e: {} checks passed", checks.len());
-    Ok(())
+    Ok(checks)
 }

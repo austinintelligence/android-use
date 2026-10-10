@@ -6,7 +6,7 @@ An emulator is a test device. It has no accounts, no personal data, and no real 
 
 ## Prerequisites
 
-The Android SDK with the `emulator` package and one `google_apis` system image that matches your computer (arm64 on Apple silicon, x86_64 elsewhere). `au emulator doctor` checks this. `au emulator install` runs Google's `sdkmanager` for whatever is missing in your terminal, so you read and accept the SDK license yourself (it needs a JDK for `sdkmanager`). No JDK or `avdmanager` is needed; Android Use writes the virtual device files itself.
+The Android SDK with the `emulator` package and one `google_apis` system image that matches your computer (arm64 on Apple silicon, x86_64 elsewhere). `au emulator doctor` checks this. `au emulator install` runs Google's `sdkmanager` for whatever is missing in your terminal, so you read and accept the SDK license yourself (`sdkmanager` itself needs a JDK; Android Use does not). Android Use writes the virtual device files itself, so `avdmanager` is not needed.
 
 ## Create, start, use
 

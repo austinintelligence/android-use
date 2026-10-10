@@ -49,7 +49,7 @@ fn sdk_root() -> Result<PathBuf> {
     candidates
         .into_iter()
         .flatten()
-        .find(|dir| dir.join("platform-tools").is_dir() || dir.join("emulator").is_dir())
+        .find(|dir| dir.join("platform-tools").is_dir() || dir.join("emulator").is_dir() || dir.join("cmdline-tools").is_dir())
         .ok_or_else(|| Error::new(Code::Device, "no Android SDK found; install Android Studio or the command-line tools, or set ANDROID_HOME"))
 }
 
