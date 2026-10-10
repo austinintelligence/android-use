@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Publish a GitHub release to npm: three @android-use/<platform> packages, then android-use.
+// Publish a GitHub release to npm: three @androiduse/<platform> packages, then android-use.
 // Usage: node install/publish-npm.mjs vX.Y.Z [--dry-run]
 // Needs `gh` and an npm login that can publish both names. npm may ask for a 2FA confirmation
 // (a browser link or a one-time code), so run it in a terminal you are watching. Archives are checked against the
@@ -53,7 +53,7 @@ const main = join(work, "pkg-main");
 mkdirSync(main);
 for (const name of ["cli.mjs", "LICENSE", "package.json"]) cpSync(join(here, name), join(main, name));
 const manifest = JSON.parse(readFileSync(join(main, "package.json"), "utf8"));
-manifest.optionalDependencies = Object.fromEntries(platforms.map(([key]) => [`@android-use/${key}`, version]));
+manifest.optionalDependencies = Object.fromEntries(platforms.map(([key]) => [`@androiduse/${key}`, version]));
 writeFileSync(join(main, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 publish(main);
 console.log(`${dryRun ? "Dry run complete" : "Published"}: android-use@${version}`);

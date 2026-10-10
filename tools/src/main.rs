@@ -112,7 +112,7 @@ fn package(root: &Path) -> Result<(), String> {
     let manifest_path = bundle.join("package.json");
     let mut package_json: Value = serde_json::from_slice(&fs::read(&manifest_path).map_err(ioe)?).map_err(ioe)?;
     let version = env!("CARGO_PKG_VERSION");
-    package_json["optionalDependencies"] = json!({"@android-use/darwin-arm64": version, "@android-use/linux-x64": version, "@android-use/win32-x64": version});
+    package_json["optionalDependencies"] = json!({"@androiduse/darwin-arm64": version, "@androiduse/linux-x64": version, "@androiduse/win32-x64": version});
     fs::write(&manifest_path, serde_json::to_vec_pretty(&package_json).map_err(ioe)?).map_err(ioe)?;
     fs::write(bundle.join("manifest.json"), serde_json::to_vec(&json!({"schema":1,"version":env!("CARGO_PKG_VERSION"),"files":files})).map_err(|e| e.to_string())?).map_err(ioe)?;
     manifest(root)

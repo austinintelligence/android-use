@@ -33,9 +33,9 @@ test("passes read screen through verbatim",posix,async(t)=>{assert.deepEqual(awa
 test("passes act 'tap \"A\"' through as one argument",posix,async(t)=>{assert.deepEqual(await argvThrough(t,["act",'tap "A"']),["act",'tap "A"'])});
 test("falls back to the optional platform package when AU_BIN is unset",posix,async(t)=>{
   const root=await mkdtemp(join(tmpdir(),"android-use-optional-"));t.after(()=>rm(root,{recursive:true,force:true}));
-  const key=`${process.platform}-${process.arch}`,pkg=join(root,"node_modules","@android-use",key),bin=join(pkg,"bin","au");
+  const key=`${process.platform}-${process.arch}`,pkg=join(root,"node_modules","@androiduse",key),bin=join(pkg,"bin","au");
   await mkdir(join(pkg,"bin"),{recursive:true});
-  await writeFile(join(pkg,"package.json"),JSON.stringify({name:`@android-use/${key}`,version:"1.0.0"}));
+  await writeFile(join(pkg,"package.json"),JSON.stringify({name:`@androiduse/${key}`,version:"1.0.0"}));
   await writeFile(bin,'#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify(process.argv.slice(2)) + "\\n");\n');
   await chmod(bin,0o755);await copyFile(cli,join(root,"cli.mjs"));
   const r=await run(process.execPath,[join(root,"cli.mjs"),"serve","--mcp"],{env:{...process.env,AU_BIN:""}});

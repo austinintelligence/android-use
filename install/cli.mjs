@@ -38,10 +38,10 @@ const fail = (message) => {
   process.exit(1);
 };
 
-// npm installs ship the binary in an optional platform package, e.g. @android-use/darwin-arm64.
+// npm installs ship the binary in an optional platform package, e.g. @androiduse/darwin-arm64.
 const optionalDir = (() => {
   try {
-    return dirname(createRequire(import.meta.url).resolve(`@android-use/${platform}/package.json`));
+    return dirname(createRequire(import.meta.url).resolve(`@androiduse/${platform}/package.json`));
   } catch {
     return null;
   }

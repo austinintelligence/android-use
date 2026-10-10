@@ -273,9 +273,9 @@ Every config entry uses the server name `android-use` and the arguments `["serve
 1. **npm.**
    - `android-use` becomes a thin launcher, already in `install/`.
    - Optional per-platform packages hold only the binary, which now carries the APK:
-     - `@android-use/darwin-arm64`
-     - `@android-use/linux-x64`
-     - `@android-use/win32-x64`
+     - `@androiduse/darwin-arm64`
+     - `@androiduse/linux-x64`
+     - `@androiduse/win32-x64`
      - and later `linux-arm64` and `darwin-x64`, which today have no release build.
    - The launcher currently allows only `setup/repair/doctor/status/update/uninstall`. It must also pass through `serve`, `read`, `act`, `install` and `version`, so that `npx -y android-use serve --mcp` works as a zero-install MCP command.
    - `npx -y android-use setup` runs setup **and then** `au install` (Goal 5.5).

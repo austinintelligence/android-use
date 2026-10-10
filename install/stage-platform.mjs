@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Stage a publishable @android-use/<key> platform package.
+// Stage a publishable @androiduse/<key> platform package.
 // Usage: node install/stage-platform.mjs <key> <path-to-au-binary> <out-dir>
 import { createHash } from "node:crypto";
 import { chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -28,7 +28,7 @@ await chmod(target, 0o755);
 const sha256 = createHash("sha256").update(await readFile(target)).digest("hex");
 
 const pkg = {
-  name: `@android-use/${key}`,
+  name: `@androiduse/${key}`,
   version,
   description: `Android Use ${os} ${cpu} binary`,
   os: [os],

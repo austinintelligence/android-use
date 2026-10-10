@@ -4,6 +4,8 @@
 
 This is the first release since 1.0.0. The `v1.1.0` and `v1.1.1` tags exist but never produced a release, and tags cannot be moved once pushed. The release workflow did not install the npm dev tools its lint step needs (now `npm ci`), and the 1,000,000-byte binary limit, calibrated on macOS, rejected the larger Linux build (now 1,300,000 on Linux).
 
+The npm launcher is published as `android-use`, with its platform binaries in `@androiduse/darwin-arm64`, `linux-x64`, and `win32-x64` (the `@android-use` scope was not available).
+
 ### Breaking
 
 - The MCP tools are named `android_read` and `android_act`. Some model APIs reject dots in tool names. The dotted names are still accepted in `tools/call`, but are no longer listed.

@@ -30,7 +30,7 @@ test("stages a darwin-arm64 package with every required field", async (t) => {
   const { pkg, manifest, out } = await stageFake(t, "darwin-arm64");
   const install = JSON.parse(await readFile(join(here, "..", "package.json"), "utf8"));
   const version = (await readFile(join(here, "..", "..", "VERSION"), "utf8")).trim();
-  assert.equal(pkg.name, "@android-use/darwin-arm64");
+  assert.equal(pkg.name, "@androiduse/darwin-arm64");
   assert.equal(pkg.version, version);
   assert.deepEqual(pkg.os, ["darwin"]);
   assert.deepEqual(pkg.cpu, ["arm64"]);
@@ -45,7 +45,7 @@ test("stages a darwin-arm64 package with every required field", async (t) => {
 
 test("stages a win32-x64 package with au.exe", async (t) => {
   const { pkg, manifest, out } = await stageFake(t, "win32-x64");
-  assert.equal(pkg.name, "@android-use/win32-x64");
+  assert.equal(pkg.name, "@androiduse/win32-x64");
   assert.deepEqual(pkg.os, ["win32"]);
   assert.deepEqual(pkg.cpu, ["x64"]);
   assert.equal(await readFile(join(out, "bin", "au.exe"), "utf8"), body);
