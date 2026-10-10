@@ -8,7 +8,7 @@
       "name": "android-use",
       "source": "./",
       "description": "Android Use: MCP tools and skill for controlling one Android device.",
-      "version": "1.1.1",
+      "version": "1.1.2",
       "category": "automation"
     }
   ]

@@ -1,8 +1,8 @@
 # Changelog
 
-## 1.1.1 — 2026-10-10
+## 1.1.2 — 2026-10-10
 
-This is the first release since 1.0.0. The `v1.1.0` tag exists but never produced a release: the release workflow did not install the npm dev tools its lint step needs, and a tag cannot be moved once pushed. The workflow now runs `npm ci`.
+This is the first release since 1.0.0. The `v1.1.0` and `v1.1.1` tags exist but never produced a release, and tags cannot be moved once pushed. The release workflow did not install the npm dev tools its lint step needs (now `npm ci`), and the 1,000,000-byte binary limit, calibrated on macOS, rejected the larger Linux build (now 1,300,000 on Linux).
 
 ### Breaking
 
@@ -56,7 +56,7 @@ This is the first release since 1.0.0. The `v1.1.0` tag exists but never produce
 ### Maintenance
 
 - `cargo xtask benchmark-live` drives the shipped commands over MCP on a device and reports calls, tokens, time, and success per task, with p50/p95 per action and optional gates (`BENCH_GATE=1`). The `aubench` fixture gains duplicate, near-miss, slow, and unlabeled controls. Baselines are in `docs/design/baseline/`.
-- Product code may not use `uiautomator`. Release artifacts are size-gated: host binary at most 1,000,000 bytes, helper APK at most 60,000 (now 39,148, from 52,454, by dropping Kotlin metadata).
+- Product code may not use `uiautomator`. Release artifacts are size-gated: host binary at most 1,000,000 bytes (1,300,000 on Linux, whose binaries are about 30% larger), helper APK at most 60,000 (now 39,148, from 52,454, by dropping Kotlin metadata).
 - Budgets (formatted lines): Rust production 7,450, Java 3,450, authored code 15,100, automation 1,400. Rust production is about 7,380 against 5,620 in 1.0.0 after removing about 650 lines of legacy protocol; the additions are the install command, the spec table, handles and marks, the journal, compression, the agent layer, and emulator targets. `install/publish-npm.mjs` publishes a release to npm.
 - Dependency: `serde_json` with `preserve_order` (adds `indexmap`), so editing an agent's configuration keeps its key order.
 

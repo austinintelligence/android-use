@@ -3,7 +3,7 @@
 class AndroidUse < Formula
   desc "Give AI agents fast, bounded access to one Android device"
   homepage "https://github.com/austinintelligence/android-use"
-  version "1.1.1"
+  version "1.1.2"
   license "MIT"
 
   on_macos do
