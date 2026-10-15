@@ -70,6 +70,12 @@ impl Bridge {
         }
         Ok((u64v(&a[2])?, u32::try_from(u64v(&a[3])?).map_err(|_| Error::new(Code::Protocol, "capability mask overflow"))?))
     }
+    /// Every window and its nodes; `capabilities` is the mask from `status`.
+    pub fn tree(&mut self, capabilities: u32) -> Result<crate::tree::Tree> {
+        let a = self.call(|s| json!([s, "tree"]))?;
+        ok(&a)?;
+        crate::tree::parse(&a, capabilities)
+    }
     pub fn observe(&mut self, base: Option<&str>, detail: u8) -> Result<Observation> {
         let a = self.call(|s| json!([s, "observe", base, detail]))?;
         ok(&a)?;

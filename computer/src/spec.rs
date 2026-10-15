@@ -7,7 +7,7 @@ pub const READ_TOOL: &str = "android_read";
 pub const ACT_TOOL: &str = "android_act";
 
 /// Sent once at `initialize`; kept to what an agent cannot learn from the tool descriptions.
-pub const INSTRUCTIONS: &str = "Controls one Android device. Read `screen` once if the state is unknown, then act on names you saw. \
+pub const INSTRUCTIONS: &str = "Controls one Android device. Act on a name you expect; read `screen` only if the state is unknown. \
 Rows are names to quote, with a tag for non-buttons: `sw Wi-Fi=on`, `edit Email=\"x\"`; `Save#2` means `tap \"Save\" number 2`; `e7` has no label: tap e7. \
 Every action returns the new screen or only what `Changed:`. stale: retry. partial or unknown: read before acting again, never repeat. \
 Ask first: purchases, messages, account or security changes, deletes, camera, microphone, location, recording.";
@@ -46,6 +46,7 @@ pub const FORMS: &[Form] = &[
     read(false, r#"image hash "NAME" | image difference "A" and "B""#, &[r#"image hash "screen""#, r#"image difference "screen" and "photo""#]),
     act(true, r#"tap "LABEL" [number N] | tap eN"#, &[r#"tap "Wi-Fi""#, r#"tap "Save" number 2"#, "tap e12"]),
     act(true, r#"toggle "LABEL""#, &[r#"toggle "Wi-Fi""#]),
+    act(false, r#"set "LABEL" on|off"#, &[r#"set "Wi-Fi" on"#, r#"set "Wi-Fi" off"#]),
     act(true, r#"type "TEXT" in "FIELD""#, &[r#"type "hello" in "Message""#]),
     act(
         true,
@@ -62,6 +63,11 @@ pub const FORMS: &[Form] = &[
         true,
         r#"page open "URL" | page click "LABEL" | page type "TEXT" in "FIELD""#,
         &[r#"page open "https://example.com""#, r#"page click "More""#, r#"page type "hi" in "Search""#],
+    ),
+    act(
+        false,
+        r#"click "LABEL" | turn on|off "LABEL" | go back (also: curly quotes, a screen row such as "sw Wi-Fi=on" as LABEL)"#,
+        &[r#"click "Wi-Fi""#, r#"turn on "Wi-Fi""#, "go back"],
     ),
     act(false, r#"hold "LABEL""#, &[r#"hold "Photo""#]),
     act(false, r#"open setting "wifi|bluetooth|display|sound|notifications|apps|battery|accessibility|date and time|developer options""#, &[r#"open setting "wifi""#]),
@@ -80,8 +86,8 @@ pub const FORMS: &[Form] = &[
     ),
     act(
         false,
-        r#"open notification "TITLE" | dismiss notification "TITLE" | run notification action "TITLE""#,
-        &[r#"open notification "Messages""#, r#"dismiss notification "Messages""#, r#"run notification action "Messages""#],
+        r#"open notification "TITLE" | dismiss notification "TITLE" | run notification action ["ACTION" on] "TITLE""#,
+        &[r#"open notification "Messages""#, r#"dismiss notification "Messages""#, r#"run notification action "Messages""#, r#"run notification action "Archive" on "Messages""#],
     ),
     act(
         false,
