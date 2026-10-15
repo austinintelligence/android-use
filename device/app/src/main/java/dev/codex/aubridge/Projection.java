@@ -9,7 +9,7 @@ import android.os.Build;
 /** Process-local, user-granted screen-capture token. It is never persisted. */
 final class Projection {
     private static final Recording.Token<Intent> TOKEN = new Recording.Token<>();
-    private static int resultCode;
+    private static volatile int resultCode;
 
     private Projection() {}
 

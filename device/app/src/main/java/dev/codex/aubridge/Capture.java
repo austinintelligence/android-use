@@ -46,6 +46,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 final class Capture {
@@ -386,7 +387,15 @@ final class Capture {
         if (!Projection.available()) throw new Vm.Permission();
         Recording order = new Recording();
         BridgeService.projectionStarted();
-        order.reach(Recording.Step.SERVICE_PROMOTED);
+        try {
+            order.reach(Recording.Step.SERVICE_PROMOTED);
+            return record(seconds, order);
+        } finally {
+            BridgeService.projectionStopped();
+        }
+    }
+
+    private String record(int seconds, Recording order) throws Exception {
         MediaProjection projection;
         try {
             projection = Projection.acquire(context);
@@ -411,9 +420,16 @@ final class Capture {
         MediaRecorder recorder = new MediaRecorder();
         VirtualDisplay display = null;
         boolean started = false, ok = false;
+        AtomicBoolean stopped = new AtomicBoolean();
         try {
             projection.registerCallback(
-                    new MediaProjection.Callback() {}, new Handler(Looper.getMainLooper()));
+                    new MediaProjection.Callback() {
+                        @Override
+                        public void onStop() {
+                            stopped.set(true);
+                        }
+                    },
+                    new Handler(Looper.getMainLooper()));
             order.reach(Recording.Step.CALLBACK_REGISTERED);
             recorder.setVideoSource(MediaRecorder.VideoSource.SURFACE);
             recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
@@ -441,6 +457,7 @@ final class Capture {
             started = true;
             SystemClock.sleep(seconds * 1000L);
             recorder.stop();
+            if (stopped.get()) throw new IOException("screen sharing stopped");
             if (output.length() > MAX_ARTIFACT) throw new IOException("recording too large");
             ok = true;
             return id;
@@ -450,7 +467,8 @@ final class Capture {
                     recorder.stop();
                 } catch (RuntimeException ignored) {
                 }
-            throw e;
+            // An expired or revoked grant surfaces here as a SecurityException.
+            throw e instanceof SecurityException ? new Vm.Permission() : e;
         } finally {
             if (display != null) display.release();
             try {
