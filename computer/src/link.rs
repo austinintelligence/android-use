@@ -98,6 +98,10 @@ impl DeviceLink for AdbLink {
         if let Ok(bridge) = Self::handshake(&adb, &device) {
             return Ok(bridge);
         }
+        // A failed upgrade leaves the installed helper in place; `au setup` or `au uninstall` fixes it.
+        if let Err(e) = crate::install::upgrade_helper(&adb, &device) {
+            eprintln!("au: could not upgrade the helper ({}); run au setup, or au uninstall first", e.message);
+        }
         adb.start_helper(&device)?;
         let deadline = Instant::now() + Duration::from_secs(8);
         loop {

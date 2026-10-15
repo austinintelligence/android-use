@@ -321,10 +321,29 @@ impl Adb {
         }
         Ok(stream)
     }
-    pub fn install(&self, d: &Device, apk: &Path) -> Result<()> {
+    /// Installs or upgrades the helper, never downgrading (no `-d`). A release `au` installs only its
+    /// own embedded helper or an APK signed by the pinned release key; `-t` is for dev builds alone.
+    pub fn install(&self, d: &Device, apk: &Path, embedded: bool) -> Result<()> {
         let p = apk.to_str().ok_or_else(|| Error::new(Code::Args, "APK path is not UTF-8"))?;
-        self.run(Some(&d.endpoint), &["install", "-r", "-d", "-t", p], Duration::from_secs(120))?;
+        let dev = cfg!(debug_assertions) || env::var_os("AU_DEV_APK").is_some();
+        if !(embedded || dev || crate::apk::trusted(&std::fs::read(apk)?)) {
+            return Err(Error::new(Code::Args, "the helper APK is not signed by the Android Use release key"));
+        }
+        let flags: &[&str] = if dev { &["install", "-r", "-t"] } else { &["install", "-r"] };
+        self.run(Some(&d.endpoint), &[flags, &[p]].concat(), Duration::from_secs(120)).map_err(|e| {
+            let downgrade = e.message.contains("VERSION_DOWNGRADE");
+            if downgrade {
+                Error::new(e.code, "a newer helper is installed; run au uninstall first to go back to an older one")
+            } else {
+                e
+            }
+        })?;
         Ok(())
+    }
+    /// The installed helper's `versionCode`, or `None` when it is not installed.
+    pub fn helper_version_code(&self, d: &Device) -> Result<Option<u64>> {
+        let out = self.run(Some(&d.endpoint), &["shell", "dumpsys", "package", "dev.codex.aubridge"], Duration::from_secs(10))?;
+        Ok(String::from_utf8_lossy(&out).split_whitespace().find_map(|w| w.strip_prefix("versionCode=")?.parse().ok()))
     }
     pub fn uninstall_helper(&self, d: &Device) -> Result<()> {
         self.run(Some(&d.endpoint), &["uninstall", "dev.codex.aubridge"], Duration::from_secs(30))?;

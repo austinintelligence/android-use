@@ -6,8 +6,11 @@
 
 - Debug and example Android builds never use the release signing key; the helper's release build uses it only when `AUBRIDGE_SIGNING_PROPERTIES` names a signing file.
 
+- A release `au` installs only its embedded helper or an APK whose signer certificate matches the pinned release key (`device/release-signer.sha256`), checked on the host before `adb install`. It never passes `-d` (downgrade), and passes `-t` only in dev builds or with `AU_DEV_APK` set.
+
 ### Changed
 
+- au 1.3 upgrades the helper to 1.3 by itself on connect (it reads the installed helper's `versionCode`); going back to 1.2 needs `au uninstall` first.
 - The helper's `versionCode` is computed from `VERSION` (1.3.0 is 1,003,000), and `cargo xtask version` checks it.
 - Host state is private and artifacts expire after 7 days; a shared AU_HOME on CI must become per user. On macOS and Linux the state folder, `device.json`, journal, locks, logs, artifacts, and `screen-space.json` are created 0700/0600, existing ones owned by you are tightened at startup, and artifacts older than 7 days are deleted.
 - The npm launcher fails closed: `android-use` and each `@androiduse/<platform>` package ship a `manifest.json` with SHA-256 digests, and a missing manifest, a missing entry for your platform, or a checksum mismatch exits 1 instead of running an unchecked binary. `AU_BIN` still overrides the binary but warns on stderr every time. The launcher forwards SIGINT, SIGTERM, and SIGHUP to `au` and exits with its code. A binary swapped between the check and the launch is not defended against: anyone who can write `node_modules` can rewrite the launcher itself.

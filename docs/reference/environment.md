@@ -12,6 +12,7 @@
 | `AU_IMAGE_BUDGET_KB` | `au` | Target image size in KB (32–4096). Default 350. |
 | `AU_BIN` | npm launcher | Use this `au` instead of the packaged one (for testing a local build). Skips the integrity check and warns on stderr every run. |
 | `ANDROID_USE_VERSION`, `AU_INSTALL_DIR` | install scripts | Install a specific release; install somewhere other than the default folder. |
+| `AU_DEV_APK` | running `au` | Any value lets a release `au` install a helper APK that is not signed by the release key, with `-t`; for tests and source builds. Debug builds always allow it. |
 | `AU_EMBED_APK` | building `au` | Path of the helper APK to compile in; set by the release build. |
 
 Development variables (`BENCH_*`, `E2E_*`, `AU_GRADLE`) are in [testing](../contributing/testing.md).

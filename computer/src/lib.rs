@@ -3,6 +3,7 @@
 pub mod adapter;
 mod agent;
 pub mod api;
+mod apk;
 mod artifact;
 pub mod bridge;
 mod browser;
