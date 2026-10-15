@@ -22,7 +22,6 @@ public final class Ui extends AccessibilityService {
     private final Object guard = new Object();
     // Events only bump these, never take the lock; a scene older than the generation is rebuilt on demand.
     private final AtomicLong generation = new AtomicLong(1);
-    private volatile long lastInvalidation;
     private volatile long lastEvent;
     private volatile Scene scene;
 
@@ -95,10 +94,6 @@ public final class Ui extends AccessibilityService {
     }
 
     private void invalidate() {
-        long now = SystemClock.uptimeMillis();
-        Scene s = scene;
-        if (now - lastInvalidation < 40 && (s == null || s.generation != generation.get())) return;
-        lastInvalidation = now;
         generation.incrementAndGet();
     }
 
