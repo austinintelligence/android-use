@@ -14,6 +14,10 @@ Then ask your agent: "Open Settings and tell me which Wi-Fi network is connected
 
 `npx android-use <command>` runs any `au` command: `setup`, `doctor`, `status`, `install`, `serve --mcp`, `read`, `act`, `update`, `uninstall`. Run it with no device to see `au doctor` explain what is missing. For emulators, see `au emulator`.
 
+## Integrity
+
+Each package carries a `manifest.json` with the SHA-256 of the files it ships. Before running anything, the launcher checks the `au` binary (and the helper APK, when listed) against it, and exits 1 with a message if the manifest or this platform's entry is missing or a digest differs; it never runs an unchecked binary. `AU_BIN=/path/to/au` overrides the binary, skips the check, and prints a warning to stderr on every run. SIGINT, SIGTERM, and SIGHUP are forwarded to `au`, and the launcher exits with its code. `au setup` run through `npx` registers `npx -y android-use@1.2.0 serve --mcp` (the version you ran) with your agents, not a path in the npx cache.
+
 ## Platforms
 
 | Computer | Package |

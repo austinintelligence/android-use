@@ -10,7 +10,7 @@
 | `ANDROID_HOME`, `ANDROID_SDK_ROOT` | `au emulator` | Android SDK location (also searched in the usual Android Studio folders). |
 | `AU_IMAGE_MAX_EDGE` | `au` | Longest side of screen images in pixels (256–4096). Each screen uses the lower of this and its own limit: 1568 dense text, 1280 ordinary UI, 960 sparse. |
 | `AU_IMAGE_BUDGET_KB` | `au` | Target image size in KB (32–4096). Default 350. |
-| `AU_BIN` | npm launcher | Use this `au` instead of the packaged one (for testing a local build). |
+| `AU_BIN` | npm launcher | Use this `au` instead of the packaged one (for testing a local build). Skips the integrity check and warns on stderr every run. |
 | `ANDROID_USE_VERSION`, `AU_INSTALL_DIR` | install scripts | Install a specific release; install somewhere other than the default folder. |
 | `AU_EMBED_APK` | building `au` | Path of the helper APK to compile in; set by the release build. |
 
