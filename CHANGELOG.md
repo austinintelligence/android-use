@@ -2,16 +2,22 @@
 
 ## Unreleased
 
+### Changed
+
+- Acting is 10 to 40 ms faster: the journal is reloaded only when another process wrote it.
+
 ### Fixed
 
 - `cargo xtask` gates fail closed: a missing release artifact fails the size gate instead of measuring 0 bytes, and the stale-version check flags only standalone versions such as `v2` or `v3.1`, not words that contain one (`dev2`).
+- `au serve --mcp` answers a bad frame with a JSON-RPC error and keeps serving: an oversized line (`-32600`, its rest discarded), invalid JSON (`-32700`), and a batch array (`-32600`, batches are not supported) used to end the server or get a non-JSON-RPC reply. An oversized operation journal is saved aside once, with a warning, and a fresh one keeps its pending records and newest receipts; owner sidecar files left by exited processes are removed.
 - `cargo xtask golden-capture NAME` needs `--reviewed`, confirming the screen shows nothing personal, and refuses a screen with what looks like an email address, phone number, or card number.
 - Every wait now has a deadline: a hung `adb`, `emulator`, or `sdkmanager` child or a stalled output pipe is stopped with a clear error, each Chrome DevTools command times out instead of waiting forever, `au emulator snapshot` and `destroy` touch only emulators `au emulator create` made (a foreign AVD or emulator is refused), and a failed `au emulator start` kills the emulator it spawned.
 
 ### Maintenance
 
-- Budgets (formatted lines), raised once for 1.3.0: Rust production 8,650, Java 4,100, automation 2,350, authored code 19,100. They were full (Rust 7,489 of 7,520, authored 15,512 of 15,550), and 1.3.0 adds the device link, preflight, and the helper's status screen.
+- Budgets (formatted lines), raised once for 1.3.0: Rust production 9,100, Java 4,700, automation 3,200, authored code 22,800. They were full (Rust 7,489 of 7,520, authored 15,512 of 15,550). The new caps are what the 33 other 1.3.0 PRs measure together (Rust 8,689, Java 4,382, automation 2,923, authored 21,358) plus about 5% for review fixes. The largest additions are the all-windows tree op (Java +361), the helper handshake (Java +225), the real-model benchmark (automation +355) and the workflow policy check (automation +187).
 - Screen presentation (the text view, `Changed:` diffs, and screen images for the model) moved out of `agent.rs` into `present.rs`; no behavior change.
+- `DeviceLink` is now the one seam between the engine and a device: `AdbLink` is the real adb and bridge path, and a scripted in-process `FakeLink` replaces the socket-based test helper. No behavior or wire change.
 
 ## 1.2.0 — 2026-10-10
 
