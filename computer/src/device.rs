@@ -391,6 +391,7 @@ const ARTIFACT_TTL: Duration = Duration::from_secs(7 * 24 * 3600);
 
 /// Options for a new host-state file: mode 0600 from creation on Unix, so no umask window exists.
 pub(crate) fn private_file() -> fs::OpenOptions {
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut options = fs::OpenOptions::new();
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
