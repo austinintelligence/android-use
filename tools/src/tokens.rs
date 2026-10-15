@@ -92,7 +92,7 @@ pub fn personal_data(value: &Value) -> Option<&'static str> {
 
 fn personal_text(text: &str) -> Option<&'static str> {
     let email = text.split(|c: char| c.is_whitespace() || "<>()[]\",;:".contains(c)).any(|word| {
-        let Some((local, domain)) = word.split_once('@') else { return false };
+        let Some((local, domain)) = word.trim_end_matches(['.', '!', '?']).split_once('@') else { return false };
         !local.is_empty() && domain.split('.').count() >= 2 && domain.split('.').all(|part| !part.is_empty() && part.chars().all(|c| c.is_alphanumeric() || c == '-'))
     });
     if email {
@@ -153,6 +153,7 @@ mod tests {
     #[test]
     fn captures_refuse_rows_that_look_personal() {
         assert_eq!(personal_data(&json!([["Signed in as ada@example.com", "", "text"]])), Some("an email address"));
+        assert_eq!(personal_data(&json!([["Sent to ada@example.com.", "", "text"]])), Some("an email address"));
         assert_eq!(personal_data(&json!([["Call +1 (650) 555-0134", "", "button"]])), Some("a phone number"));
         assert_eq!(personal_data(&json!({"rows": [["4111 1111 1111 1111"]]})), Some("a card number"));
         assert_eq!(personal_data(&json!([["2026-10-15 650 555 0134"]])), Some("a phone number"));
