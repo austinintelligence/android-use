@@ -18,11 +18,12 @@ test("plugin, marketplace, and npm package agree on the version", async () => {
   assert.equal(marketplace.plugins[0].name, plugin.name);
 });
 
-test("MCP config launches the pinned npm server", async () => {
+test("MCP config launches the npm server pinned to VERSION", async () => {
+  const version = (await readFile(join(root, "VERSION"), "utf8")).trim();
   const mcp = await json(".mcp.json");
   assert.deepEqual(mcp.mcpServers["android-use"], {
     command: "npx",
-    args: ["-y", "android-use@1", "serve", "--mcp"],
+    args: ["-y", `android-use@${version}`, "serve", "--mcp"],
   });
 });
 

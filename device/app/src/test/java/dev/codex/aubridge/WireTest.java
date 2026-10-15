@@ -20,7 +20,7 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 
 public final class WireTest {
-    private static JSONObject golden() throws Exception {
+    static JSONObject golden() throws Exception {
         for (String candidate :
                 new String[] {
                     "protocol-golden.json", "../protocol-golden.json", "../../protocol-golden.json"

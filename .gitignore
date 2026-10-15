@@ -34,6 +34,7 @@ coverage/
 *.jks
 *.keystore
 *.apk
+!computer/tests/fixtures/*.apk
 *.mp4
 *.wav
 *.jpg
