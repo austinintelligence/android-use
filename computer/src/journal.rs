@@ -24,7 +24,7 @@ use std::{
     fs::{self, OpenOptions},
     io::{ErrorKind, Read, Seek, Write},
     path::PathBuf,
-    time::SystemTime,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 const MAX_FILE: u64 = 2 * 1024 * 1024;
@@ -80,7 +80,7 @@ impl Journal {
     pub(crate) fn open(paths: &Paths) -> Result<Self> {
         let mut journal = Self::default();
         (journal.path, journal.lock_path, journal.owner) = (paths.journal.clone(), paths.journal.with_extension("lock"), session_id().into());
-        journal.locked(|_| Ok(()))?;
+        journal.locked(|journal| journal.reclaim_owners())?;
         Ok(journal)
     }
 
@@ -187,7 +187,7 @@ impl Journal {
             Err(error) => return Err(error.into()),
         };
         if bytes.len() as u64 > MAX_FILE {
-            return Err(Error::new(Code::Bounds, "operation journal exceeds 2 MiB"));
+            return self.set_aside(&bytes);
         }
         // A record without its newline was torn by a crash (appends hold the
         // lock, so no writer is mid-record). Drop it before anything follows it.
@@ -203,6 +203,47 @@ impl Journal {
         if self.trim(MAX_ENTRIES)? {
             self.compact()?;
         }
+        Ok(())
+    }
+
+    /// Removes owner files whose process has exited. A live owner holds its file's OS lock, so an
+    /// unlocked file is stale. Owners are created under the journal lock, which this runs under too.
+    fn reclaim_owners(&self) -> Result<()> {
+        let (Some(dir), Some(stem)) = (self.path.parent(), self.path.file_stem().and_then(|stem| stem.to_str())) else { return Ok(()) };
+        let prefix = format!("{stem}.owner-");
+        for entry in fs::read_dir(dir)?.flatten() {
+            if !entry.file_name().to_str().is_some_and(|name| name.starts_with(&prefix)) {
+                continue;
+            }
+            // Owners start only under the journal lock, so a file that takes its lock has no live owner.
+            if let Ok(file) = fs::File::open(entry.path()) {
+                if file.try_lock().is_ok() {
+                    let _ = fs::remove_file(entry.path());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Saves an oversized journal aside and starts a fresh one. The fresh journal keeps the
+    /// pending records, which still fence new mutations, and the newest completed receipts.
+    /// The old file is copied before it is replaced, so a crash leaves a journal either way.
+    fn set_aside(&mut self, bytes: &[u8]) -> Result<()> {
+        let mut kept = Self::default();
+        kept.path = self.path.clone();
+        for line in String::from_utf8_lossy(bytes).lines().filter(|line| line.len() <= MAX_RECORD) {
+            if let Ok(value) = serde_json::from_str::<Value>(line) {
+                kept.apply(&value);
+            }
+        }
+        kept.trim(MAX_ENTRIES)?;
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+        let aside = self.path.with_extension(format!("oversized-{nanos}"));
+        fs::write(&aside, bytes)?;
+        eprintln!("warning: operation journal exceeded 2 MiB; saved it to {} and started a new one", aside.display());
+        kept.compact()?;
+        self.states = std::mem::take(&mut kept.states);
+        self.order = std::mem::take(&mut kept.order);
         Ok(())
     }
 
@@ -406,6 +447,42 @@ mod tests {
         assert_eq!(j.states.len(), MAX_ENTRIES);
         assert!(j.states.contains_key("keep"), "pending survives eviction");
         assert!(!j.states.contains_key("done0"));
+    }
+
+    fn aside_files(dir: &tempfile::TempDir) -> Vec<String> {
+        fs::read_dir(dir.path()).unwrap().filter_map(|e| e.ok()?.file_name().into_string().ok()).filter(|n| n.contains(".oversized-")).collect()
+    }
+
+    #[test]
+    fn an_oversized_journal_is_saved_aside_once_and_keeps_its_pending_records() {
+        let d = tempfile::tempdir().unwrap();
+        let path = Paths::at(d.path().to_path_buf()).unwrap().journal;
+        let mut bytes = format!("{}\n", json!(["crashed", "p", A, 1, "gone", ""])).into_bytes();
+        bytes.extend(vec![b'#'; MAX_FILE as usize + 1]);
+        bytes.push(b'\n');
+        fs::write(&path, &bytes).unwrap();
+        let mut j = open(&d);
+        assert_eq!(aside_files(&d).len(), 1, "the oversized file was saved aside");
+        assert_eq!(fs::read(&path).unwrap().len(), format!("{}\n", json!(["crashed", "p", A, 1, "gone", ""])).len());
+        assert_eq!(j.begin("fresh", 2, B, ANDROID).unwrap().unwrap().e.as_deref(), Some("unknown"), "the pending record still fences");
+        drop(j);
+        let _ = open(&d);
+        assert_eq!(aside_files(&d).len(), 1, "a fresh journal is not saved aside again");
+    }
+
+    #[test]
+    fn a_stale_owner_file_is_reclaimed_and_a_live_one_is_kept() {
+        let d = tempfile::tempdir().unwrap();
+        let paths = Paths::at(d.path().to_path_buf()).unwrap();
+        let stale = paths.journal.with_extension("owner-stale");
+        fs::write(&stale, b"").unwrap();
+        let live = paths.journal.with_extension("owner-live");
+        let held = fs::File::create(&live).unwrap();
+        held.lock().unwrap();
+        let _ = open(&d);
+        assert!(!stale.exists(), "an owner whose process exited is reclaimed");
+        assert!(live.exists(), "an owner that still holds its lock is kept");
+        drop(held);
     }
 
     #[test]

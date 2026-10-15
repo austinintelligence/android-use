@@ -9,6 +9,7 @@
 ### Fixed
 
 - `cargo xtask` gates fail closed: a missing release artifact fails the size gate instead of measuring 0 bytes, and the stale-version check flags only standalone versions such as `v2` or `v3.1`, not words that contain one (`dev2`).
+- `au serve --mcp` answers a bad frame with a JSON-RPC error and keeps serving: an oversized line (`-32600`, its rest discarded), invalid JSON (`-32700`), and a batch array (`-32600`, batches are not supported) used to end the server or get a non-JSON-RPC reply. An oversized operation journal is saved aside once, with a warning, and a fresh one keeps its pending records and newest receipts; owner sidecar files left by exited processes are removed.
 - `cargo xtask golden-capture NAME` needs `--reviewed`, confirming the screen shows nothing personal, and refuses a screen with what looks like an email address, phone number, or card number.
 
 ### Maintenance
