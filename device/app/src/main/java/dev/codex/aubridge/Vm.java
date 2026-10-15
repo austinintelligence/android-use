@@ -352,17 +352,17 @@ final class Vm {
                             throw new Bridge.Limit();
                         facing = facing + "|" + width + "x" + height;
                     }
-                    return new P(n, null, facing, 0, null, null, true);
+                    return new P(n, null, facing, 0, null, null, false);
                 case "microphone":
                     exact(a, 2);
                     int seconds = a.getInt(1);
                     if (seconds < 1 || seconds > 30) throw new Bridge.Limit();
-                    return new P(n, null, "microphone", seconds, null, null, true);
+                    return new P(n, null, "microphone", seconds, null, null, false);
                 case "screen_record":
                     exact(a, 2);
                     int duration = a.getInt(1);
                     if (duration < 1 || duration > 30) throw new Bridge.Limit();
-                    return new P(n, null, "screen_record", duration, null, null, true);
+                    return new P(n, null, "screen_record", duration, null, null, false);
                 case "notification_open":
                 case "notification_dismiss":
                 case "notification_action":

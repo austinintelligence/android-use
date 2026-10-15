@@ -4,6 +4,7 @@ import android.Manifest;
 import android.accessibilityservice.AccessibilityService;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.content.pm.ServiceInfo;
 import android.graphics.Bitmap;
 import android.graphics.ColorSpace;
 import android.graphics.ImageFormat;
@@ -196,6 +197,7 @@ final class Capture {
         Throwable[] failure = new Throwable[1];
         CameraDevice[] device = new CameraDevice[1];
         CameraCaptureSession[] session = new CameraCaptureSession[1];
+        Safety.Abandon late = new Safety.Abandon();
         reader.setOnImageAvailableListener(
                 source -> {
                     try (android.media.Image image = source.acquireLatestImage();
@@ -213,13 +215,16 @@ final class Capture {
                     }
                 },
                 handler);
+        BridgeService.capturing(ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA, "Camera capture");
         try {
             manager.openCamera(
                     camera,
                     new CameraDevice.StateCallback() {
                         @Override
                         public void onOpened(CameraDevice opened) {
-                            device[0] = opened;
+                            // After a timeout nobody closes this camera, so close it here.
+                            late.offer(() -> device[0] = opened, opened::close);
+                            if (device[0] != opened) return;
                             try {
                                 List<Surface> surfaces = new ArrayList<>();
                                 surfaces.add(reader.getSurface());
@@ -322,10 +327,12 @@ final class Capture {
                 throw new IOException("camera produced no JPEG");
             return id;
         } finally {
+            late.abandon();
             if (session[0] != null) session[0].close();
             if (device[0] != null) device[0].close();
             reader.close();
             thread.quitSafely();
+            BridgeService.settle();
             if (!output.isFile() || output.length() == 0 || output.length() > MAX_ARTIFACT)
                 output.delete();
             prune();
@@ -354,7 +361,8 @@ final class Capture {
         File output = file(id);
         byte[] buffer = new byte[min];
         long data = 0;
-        boolean ok = false;
+        boolean ok = false, sound = false;
+        BridgeService.capturing(ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE, "Recording audio");
         try (RandomAccessFile out = new RandomAccessFile(output, "rw")) {
             out.write(new byte[44]);
             record.startRecording();
@@ -364,17 +372,20 @@ final class Capture {
                 if (n > 0) {
                     out.write(buffer, 0, n);
                     data += n;
+                    sound |= !Safety.silent(buffer, n);
                 } else {
                     SystemClock.sleep(10);
                 }
             }
             if (data == 0) throw new IOException("microphone produced no samples");
+            if (!sound) throw new IOException("microphone produced only silence");
             out.seek(0);
             wav(out, data, rate);
             ok = true;
         } finally {
             if (record.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) record.stop();
             record.release();
+            BridgeService.settle();
             if (!ok || output.length() > MAX_ARTIFACT) output.delete();
             prune();
         }
@@ -459,6 +470,7 @@ final class Capture {
             }
             recorder.release();
             projection.stop();
+            BridgeService.settle();
             if (!ok || output.length() > MAX_ARTIFACT) output.delete();
             prune();
         }
