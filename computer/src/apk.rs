@@ -1,5 +1,6 @@
 //! Reads the signer certificates from an APK's v2/v3 signing block, so a release `au` can refuse an
 //! untrusted helper (v2 `0x7109871a`, v3 `0xf05368c0`, v3.1 `0x1b93ad61`) before `adb install`. Android still verifies the signature itself when installing.
+//! Signature-scheme blocks with other IDs are ignored: Android verifies only v2, v3 and v3.1.
 use sha2::{Digest, Sha256};
 
 const PINNED_SIGNER: &str = include_str!("../../device/release-signer.sha256");
