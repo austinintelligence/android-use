@@ -297,6 +297,8 @@ mod tests {
     #[test]
     fn a_compliant_workflow_passes() {
         assert_eq!(check(FIXED), Vec::<String>::new());
+        let statuses = FIXED.replace("steps:", "permissions:\n      statuses: write\n    steps:");
+        assert_eq!(check(&statuses), Vec::<String>::new(), "`statuses: write` is not a `uses:` key");
     }
 
     #[test]
