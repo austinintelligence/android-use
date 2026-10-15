@@ -93,14 +93,18 @@ impl Engine {
     }
 
     pub(crate) fn semantic_rows(&mut self, focus: &str) -> Result<Vec<SemanticRow>> {
-        let before = self.ensure_scene().ok().map(|scene| (scene.package, scene.generation));
+        let before = self.scene_id();
         let value = self.bridge_read(|bridge| bridge.query("semantic", Value::String(focus.to_owned())))?;
         let rows = parse_semantic_rows(&value)?;
         // Each listing renumbers the helper's handles, so `eN` is good only for this screen;
         // a screen that moved during the read leaves no handle valid.
-        let after = self.ensure_scene().ok().map(|scene| (scene.package, scene.generation));
-        self.agent.marked_in = before.filter(|before| Some(before) == after.as_ref());
+        self.agent.marked_in = before.filter(|before| Some(before) == self.scene_id().as_ref());
         Ok(rows)
+    }
+
+    /// Which screen the helper is showing now: the identity `eN` handles are stamped with.
+    fn scene_id(&mut self) -> Option<(Box<str>, u64)> {
+        self.ensure_scene().ok().map(|scene| (scene.package, scene.generation))
     }
 
     pub(crate) fn capture_screen_for_model(&mut self) -> Option<(ModelImage, String)> {
@@ -120,6 +124,7 @@ impl Engine {
     /// The capture with a numbered box over each control (set-of-marks), or `None` when the helper
     /// reports none. Best effort: the plain image is always a fine fallback.
     fn marked(&mut self, bytes: &[u8]) -> Option<Vec<u8>> {
+        let before = self.scene_id();
         let rows = self.bridge_read(|bridge| bridge.query("marks", Value::Null)).ok()?;
         let marks: Vec<Mark> = rows
             .as_array()?
@@ -133,7 +138,7 @@ impl Engine {
         if marks.is_empty() {
             return None;
         }
-        self.agent.marked_in = self.scene.as_ref().map(|scene| (scene.package.clone(), scene.generation));
+        self.agent.marked_in = before.filter(|before| Some(before) == self.scene_id().as_ref());
         let mut image = visual::decode(bytes).ok()?;
         marks::draw(&mut image, &marks);
         visual::encode(image.w, image.h, &image.pixels, usize::MAX).ok()
