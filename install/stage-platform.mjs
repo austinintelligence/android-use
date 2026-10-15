@@ -32,7 +32,7 @@ const pkg = {
   description: `Android Use ${os} ${cpu} binary`,
   os: [os],
   cpu: [cpu],
-  files: ["bin", "README.md"],
+  files: ["bin", "manifest.json", "README.md"],
   license: "MIT",
   repository: install.repository,
   publishConfig: { access: "public" },

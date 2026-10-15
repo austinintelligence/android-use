@@ -33,7 +33,7 @@ const work = mkdtempSync(join(tmpdir(), "au-npm-"));
 run("gh", ["release", "download", tag, "--dir", work, "-p", "*.tar.gz", "-p", "*.zip", "-p", "SHA256SUMS"]);
 
 const repo = process.env.GITHUB_REPOSITORY ?? "austinintelligence/android-use";
-for (const name of readdirSync(work)) run("gh", verifyArgs(join(work, name), repo));
+for (const name of readdirSync(work)) run("gh", verifyArgs(join(work, name), repo, tag));
 
 const sums = parseSums(readFileSync(join(work, "SHA256SUMS"), "utf8"));
 const platforms = JSON.parse(readFileSync(join(here, "platforms.json"), "utf8")).map((p) => [p.npm, `android-use-${tag}-${p.asset}.${p.archive}`, p.binary]);

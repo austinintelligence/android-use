@@ -97,12 +97,14 @@ fn jobs(lines: &[&str]) -> Vec<String> {
         if body.contains("secrets.AUBRIDGE") && !signing {
             out.push(format!("job {name}: signing secrets belong only in a release-signing job"));
         }
-        let env = body.lines().find_map(|l| l.trim().strip_prefix("environment:")).map_or("", str::trim);
-        if body.contains("id-token: write") && !["release", "npm"].contains(&env) {
+        // A tripwire on the usual spellings, not a YAML parser: job-level `environment:` only, quotes and spacing ignored.
+        let env = body.lines().find_map(|l| l.strip_prefix("    environment:")).map_or("", |e| e.trim().trim_matches(['\'', '"']));
+        let flat = body.replace(['\'', '"'], "").split_whitespace().collect::<Vec<_>>().join(" ");
+        if flat.contains("id-token: write") && !["release", "npm"].contains(&env) {
             out.push(format!("job {name}: id-token: write belongs only in the release and npm environments"));
         }
-        let code = body.lines().filter(|l| !l.trim_start().starts_with('#')).collect::<String>();
-        if (code.contains("publish-npm.mjs") || code.contains("npm publish")) && env != "npm" {
+        let publishes = |l: &str| l.contains("publish-npm.mjs") || l.split_whitespace().any(|w| w == "npm") && l.split_whitespace().any(|w| ["publish", "pub"].contains(&w));
+        if body.lines().any(|l| !l.trim_start().starts_with('#') && publishes(l)) && env != "npm" {
             out.push(format!("job {name}: npm publishing belongs only in an npm-environment job"));
         }
         for banned in ["actions/checkout", "actions/setup-", "cargo ", "npm ", "gradle", "xtask"] {
@@ -198,6 +200,8 @@ mod tests {
         assert_eq!(check(&job("npm", "id-token: write", "node install/publish-npm.mjs v1.3.0")), Vec::<String>::new());
         assert!(mentions(&check(&job("none", "id-token: write", "true")), "id-token: write belongs only"));
         assert!(mentions(&check(&job("release", "contents: read", "node install/publish-npm.mjs v1")), "npm publishing belongs only"));
+        assert!(mentions(&check(&job("none", "id-token:  'write'", "true")), "id-token: write belongs only"));
+        assert!(mentions(&check(&job("none", "id-token: write", "npm  pub")), "npm publishing belongs only"));
     }
 
     #[test]

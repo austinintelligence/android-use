@@ -69,7 +69,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const dir = mkdtempSync(join(tmpdir(), "au-formula-"));
     file = join(dir, "SHA256SUMS");
     execFileSync("gh", ["release", "download", tag, "-p", "SHA256SUMS", "--dir", dir], { stdio: "inherit" });
-    execFileSync("gh", verifyArgs(file, process.env.GITHUB_REPOSITORY ?? "austinintelligence/android-use"), { stdio: "inherit" });
+    execFileSync("gh", verifyArgs(file, process.env.GITHUB_REPOSITORY ?? "austinintelligence/android-use", tag), { stdio: "inherit" });
   }
   process.stdout.write(renderFormula(tag, parseSums(readFileSync(file, "utf8"))));
 }

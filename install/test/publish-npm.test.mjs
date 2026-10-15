@@ -21,7 +21,7 @@ test("a real publish passes --provenance and a dry run does not", () => {
 });
 
 test("assets are verified against this repository's release workflow", () => {
-  assert.deepEqual(verifyArgs("f", "o/r").slice(-2), ["--signer-workflow", "o/r/.github/workflows/release.yml"]);
+  assert.deepEqual(verifyArgs("f", "o/r", "v1.3.0").slice(-4), ["--signer-workflow", "o/r/.github/workflows/release.yml", "--source-ref", "refs/tags/v1.3.0"]);
 });
 
 test("render-formula refuses checksums that were not verified", () => {

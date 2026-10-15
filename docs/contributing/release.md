@@ -34,7 +34,7 @@ These are repository settings; the workflow cannot create them.
 4. **Tag ruleset** (Settings → Rules → Rulesets): target tags `v*`, restrict creation to maintainers, and block updates and deletions.
 5. `npm` is the environment of the workflow's `npm` job, the only job that publishes to npm. It holds no secret: npm trusted publishing signs in with the workflow's OIDC identity. Register the trusted publisher on npmjs.com (step 4 below).
 
-Until step 3 is done the `sign` job fails for lack of secrets, which stops the release before publishing.
+Steps 1 to 4 are preconditions, not guards the workflow enforces. GitHub creates a missing environment on first use, and repository-level secrets stay readable by any job until step 3 is done. Until `npm` is limited to `v*` tags, a writer can run a modified `release.yml` from a branch in that environment, and npm's trusted-publisher match (workflow file and environment, not ref) would accept it. Finish the settings before the first tag.
 
 ## 4. Publish
 

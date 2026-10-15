@@ -34,7 +34,7 @@ test("stages a darwin-arm64 package with every required field", async (t) => {
   assert.equal(pkg.version, version);
   assert.deepEqual(pkg.os, ["darwin"]);
   assert.deepEqual(pkg.cpu, ["arm64"]);
-  assert.deepEqual(pkg.files, ["bin", "README.md"]);
+  assert.deepEqual(pkg.files, ["bin", "manifest.json", "README.md"]);
   assert.equal(pkg.license, "MIT");
   assert.deepEqual(pkg.repository, install.repository);
   assert.deepEqual(pkg.publishConfig, { access: "public" });
