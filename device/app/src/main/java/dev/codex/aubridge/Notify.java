@@ -23,6 +23,11 @@ public final class Notify extends NotificationListenerService {
     @Override
     public void onListenerConnected() {
         instance = this;
+        try {
+            StatusBarNotification[] active = getActiveNotifications();
+            if (active != null) for (StatusBarNotification sbn : active) onNotificationPosted(sbn);
+        } catch (Exception ignored) {
+        }
     }
 
     @Override
@@ -46,6 +51,12 @@ public final class Notify extends NotificationListenerService {
             item.put("title", cut(title, 160));
             item.put("text", cut(body, 512));
             item.put("time", sbn.getPostTime());
+            JSONArray actions = new JSONArray();
+            if (n != null && n.actions != null)
+                for (Notification.Action a : n.actions)
+                    if (a != null && a.actionIntent != null && a.title != null)
+                        actions.put(cut(a.title.toString(), 80));
+            item.put("actions", actions);
             synchronized (recent) {
                 current.put(sbn.getKey(), sbn);
                 recent.removeIf(v -> sbn.getKey().equals(v.optString("id")));
@@ -92,22 +103,32 @@ public final class Notify extends NotificationListenerService {
         }
     }
 
-    static boolean action(String key) {
+    /** Runs the action titled by the label after \u0001, or the only action when none is given. */
+    static boolean action(String request) {
         Notify n = instance;
         if (n == null) return false;
+        int split = request.indexOf('\u0001');
+        String key = split < 0 ? request : request.substring(0, split);
+        String label = split < 0 ? null : request.substring(split + 1);
         try {
             StatusBarNotification sbn;
             synchronized (n.recent) {
                 sbn = n.current.get(key);
             }
             if (sbn == null || sbn.getNotification().actions == null) return false;
+            Notification.Action chosen = null;
+            int runnable = 0;
             for (Notification.Action action : sbn.getNotification().actions) {
-                if (action != null && action.actionIntent != null) {
-                    action.actionIntent.send();
-                    return true;
-                }
+                if (action == null || action.actionIntent == null) continue;
+                runnable++;
+                if (label == null
+                        ? chosen == null
+                        : action.title != null && label.equalsIgnoreCase(action.title.toString()))
+                    chosen = action;
             }
-            return false;
+            if (chosen == null || (label == null && runnable > 1)) return false;
+            chosen.actionIntent.send();
+            return true;
         } catch (Exception ignored) {
             return false;
         }

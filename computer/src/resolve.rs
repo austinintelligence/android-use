@@ -129,6 +129,32 @@ pub(crate) fn notification_label(item: &Value) -> String {
     label.unwrap_or_else(|| "(no title or text)".into())
 }
 
+/// Resolves `run notification action`: the notification's key and the action label to send. A
+/// notification with several actions needs the label; nothing runs without it.
+pub(crate) fn notification_action(value: &Value, target: &Target, label: Option<&str>) -> Result<(Box<str>, Option<Box<str>>)> {
+    let key = notification(value, target)?;
+    let actions: Vec<&str> = notification_items(value)
+        .into_iter()
+        .find(|item| item.get("id").and_then(Value::as_str) == Some(&*key))
+        .and_then(|item| item.get("actions")?.as_array())
+        .map(|list| list.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let listed = || actions.iter().map(|a| format!("\"{a}\"")).collect::<Vec<_>>().join(", ");
+    let title = display(&target.label);
+    match (label, actions.len()) {
+        (_, 0) => Err(Error::plain(Code::Missing, format!("The \"{title}\" notification has no actions. Nothing ran."))),
+        (None, 1) => Ok((key, None)),
+        (None, _) => Err(Error::plain(
+            Code::Ambiguous,
+            format!("The \"{title}\" notification has several actions: {}. Say run notification action \"ACTION\" on \"{title}\". Nothing ran.", listed()),
+        )),
+        (Some(wanted), _) => match actions.iter().find(|a| a.eq_ignore_ascii_case(wanted)) {
+            Some(found) => Ok((key, Some((*found).into()))),
+            None => Err(Error::plain(Code::Missing, format!("The \"{title}\" notification has no action \"{}\". Its actions: {}. Nothing ran.", display(wanted), listed()))),
+        },
+    }
+}
+
 pub(crate) fn notification(value: &Value, target: &Target) -> Result<Box<str>> {
     if value.get("enabled").and_then(Value::as_bool) != Some(true) {
         return Err(Error::plain(Code::Permission, crate::format::NOTIFICATION_ACCESS_OFF));
@@ -211,6 +237,22 @@ mod tests {
         assert_eq!(pick(&target("Inbox 3", None), &candidates, "screen").unwrap(), 1);
         assert_eq!(pick(&target("[]", None), &candidates, "screen").unwrap_err().code, Code::Missing);
         assert!(ambiguity("Photo", 40).contains("more specific label"));
+    }
+
+    #[test]
+    fn notification_with_several_actions_needs_a_label() {
+        let value = json!({"enabled":true,"items":[
+            {"id":"k-one","title":"Backup","actions":["Open"]},
+            {"id":"k-many","title":"Messages","actions":["Reply","Mark read"]},
+            {"id":"k-none","title":"Calendar"}]});
+        let run = |title: &str, label: Option<&str>| notification_action(&value, &target(title, None), label);
+        assert_eq!(run("Backup", None).unwrap(), ("k-one".into(), None), "one action runs without a label");
+        assert_eq!(run("Messages", Some("mark read")).unwrap(), ("k-many".into(), Some("Mark read".into())));
+        let error = run("Messages", None).unwrap_err();
+        assert_eq!(error.code, Code::Ambiguous);
+        assert!(error.message.contains("\"Reply\", \"Mark read\"") && error.message.contains("Nothing ran"));
+        assert_eq!(run("Messages", Some("Archive")).unwrap_err().code, Code::Missing);
+        assert_eq!(run("Calendar", None).unwrap_err().code, Code::Missing);
     }
 
     #[test]

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Changed
+
+- `run notification action` needs a label when a notification has several actions: `run notification action "Reply" on "Messages"`. With several actions and no label nothing runs and the reply lists the action labels; a notification with one action still runs without a label. Notifications already showing when the listener connects are now listed, not only later ones.
+
+### Security
+
+- Device-side captures expire after 24 hours. Password fields are also recognized by their input type (text, visible, web, and number passwords), so their text is redacted wherever `isPassword()` was not set. Setup asks for notification permission (Android 13+) for the helper's own foreground notification.
+
 ### Fixed
 
 - `cargo xtask` gates fail closed: a missing release artifact fails the size gate instead of measuring 0 bytes, and the stale-version check flags only standalone versions such as `v2` or `v3.1`, not words that contain one (`dev2`).

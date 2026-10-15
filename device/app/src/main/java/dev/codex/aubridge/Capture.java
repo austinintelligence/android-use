@@ -458,6 +458,7 @@ final class Capture {
 
     JSONArray read(long seq, String id, Long from, Long to) throws Exception {
         if (!id.matches("a[0-9a-z]{1,32}")) throw new Bridge.Limit();
+        prune();
         File f = file(id);
         if (!f.isFile() || Files.isSymbolicLink(f.toPath())) throw new IOException("artifact");
         long size = f.length();
@@ -558,10 +559,23 @@ final class Capture {
         le(out, v & 65535);
     }
 
+    /** Captures live on the phone for 24 hours at most. */
+    static final long TTL_MS = 24L * 60 * 60 * 1000;
+
+    static boolean expired(long lastModified, long now) {
+        return now - lastModified > TTL_MS;
+    }
+
     private void prune() {
         File[] files = dir.listFiles(File::isFile);
-        if (files == null || files.length <= 16) return;
+        if (files == null) return;
+        long now = System.currentTimeMillis();
+        int kept = files.length;
         Arrays.sort(files, Comparator.comparingLong(File::lastModified));
-        for (int i = 0; i < files.length - 16; i++) files[i].delete();
+        for (File f : files) {
+            if (expired(f.lastModified(), now) || kept > 16) {
+                if (f.delete()) kept--;
+            }
+        }
     }
 }

@@ -85,7 +85,8 @@ pub enum AndroidAction {
     ScreenRecord(u16),
     NotificationOpen(Target),
     NotificationDismiss(Target),
-    NotificationAction(Target),
+    /// The optional first field is the action's label, needed when a notification has several.
+    NotificationAction(Target, Option<Box<str>>),
     PointTap {
         x: u16,
         y: u16,
@@ -298,6 +299,16 @@ fn seconds_at(tokens: &[Lexeme], index: usize) -> Result<u16> {
         return Err(Error::new(Code::Bounds, "seconds must be 0..30"));
     }
     Ok(seconds as u16)
+}
+
+/// `["ACTION" on] "TITLE"` after `run notification action`.
+fn notification_action_at(t: &[Lexeme], index: usize) -> Result<AndroidAction> {
+    let (label, index) = if is_word(t, index + 1, "on") { (Some(quoted_at(t, index, "notification action")?), index + 2) } else { (None, index) };
+    let (target, next) = target_at(t, index)?;
+    if next != t.len() {
+        return Err(Error::new(Code::Args, "notification run action accepts one target"));
+    }
+    Ok(AndroidAction::NotificationAction(target, label))
 }
 
 fn target_at(tokens: &[Lexeme], index: usize) -> Result<(Target, usize)> {
@@ -559,19 +570,11 @@ fn parse_android_action(t: &[Lexeme]) -> Result<AndroidAction> {
         return Ok(if is_word(t, 0, "open") { AndroidAction::NotificationOpen(target) } else { AndroidAction::NotificationDismiss(target) });
     }
     if t.len() >= 4 && is_word(t, 0, "run") && is_word(t, 1, "notification") && is_word(t, 2, "action") {
-        let (target, next) = target_at(t, 3)?;
-        if next != t.len() {
-            return Err(Error::new(Code::Args, "notification run action accepts one target"));
-        }
-        return Ok(AndroidAction::NotificationAction(target));
+        return notification_action_at(t, 3);
     }
     if t.len() >= 3 && is_word(t, 0, "notification") {
         if is_word(t, 1, "run") && is_word(t, 2, "action") {
-            let (target, next) = target_at(t, 3)?;
-            if next != t.len() {
-                return Err(Error::new(Code::Args, "notification run action accepts one target"));
-            }
-            return Ok(AndroidAction::NotificationAction(target));
+            return notification_action_at(t, 3);
         }
         let (target, next) = target_at(t, 2)?;
         if next != t.len() {

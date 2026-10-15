@@ -80,8 +80,8 @@ pub const FORMS: &[Form] = &[
     ),
     act(
         false,
-        r#"open notification "TITLE" | dismiss notification "TITLE" | run notification action "TITLE""#,
-        &[r#"open notification "Messages""#, r#"dismiss notification "Messages""#, r#"run notification action "Messages""#],
+        r#"open notification "TITLE" | dismiss notification "TITLE" | run notification action ["ACTION" on] "TITLE""#,
+        &[r#"open notification "Messages""#, r#"dismiss notification "Messages""#, r#"run notification action "Messages""#, r#"run notification action "Reply" on "Messages""#],
     ),
     act(
         false,
