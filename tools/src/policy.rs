@@ -3,9 +3,9 @@
 use crate::ioe;
 use std::{fs, path::Path};
 
-const UNTRUSTED: &[&str] =
-    &["github.head_ref", "pull_request.title", "pull_request.body", "head.ref", "comment.body", "issue.title", "issue.body", "head_commit.message", "head_branch", "workflow_run."];
-const LOCKED: &[&str] = &["build", "test", "run", "install", "clippy", "check", "bench", "doc", "deny"];
+const UNTRUSTED: &[&str] = &["head_ref", "title", "body", "head.ref", "head.label", "head_commit.message", "head_branch", "workflow_run.", "tojson(github.event"];
+const LOCKED: &[&str] = &["build", "b", "test", "t", "run", "r", "install", "clippy", "check", "c", "bench", "doc", "deny"];
+const PR_WRITE: &[&str] = &["contents: write", "id-token: write", "packages: write", "actions: write", "pull-requests: write"];
 
 pub(crate) fn run(root: &Path) -> Result<(), String> {
     let dir = root.join(".github/workflows");
@@ -36,11 +36,18 @@ pub(crate) fn check(text: &str) -> Vec<String> {
             scan[i].pop();
             scan[i].push_str(&format!(" {next}"));
         }
+        while scan[i].ends_with('|') && i + 1 < scan.len() {
+            let next = std::mem::take(&mut scan[i + 1]);
+            scan[i].push_str(&format!(" {next}"));
+        }
     }
+    let on = top_level(&lines, "on:");
+    let pr = on.contains("pull_request");
     for (i, line) in scan.iter().enumerate() {
         if line.trim().is_empty() {
             continue;
         }
+        let line = &line.to_lowercase();
         let mut bad = |why: &str| out.push(format!("line {}: {why}", i + 1));
         if let Some(target) = line.split("uses:").nth(1).map(str::trim).filter(|t| !t.starts_with("./")) {
             let sha = target.split('@').nth(1).unwrap_or("");
@@ -53,10 +60,14 @@ pub(crate) fn check(text: &str) -> Vec<String> {
                 bad(&format!("{banned} is not allowed"));
             }
         }
-        if UNTRUSTED.iter().any(|e| line.contains(e)) {
+        if line.contains("${{") && UNTRUSTED.iter().any(|e| line.contains(e)) {
             bad("attacker-controlled text must not be expanded in a workflow; pass it through env");
         }
-        if line.contains("npm install") || line.contains("npm i ") {
+        let squeezed = line.split_whitespace().collect::<Vec<_>>().join(" ");
+        if pr && PR_WRITE.iter().any(|w| squeezed.contains(w)) {
+            bad("a pull_request workflow must not hold contents, id-token, packages, actions or pull-requests write");
+        }
+        if squeezed.contains("npm install") || squeezed.contains("npm i ") || squeezed.ends_with("npm i") {
             bad("use npm ci, which installs exactly what the lockfile says");
         }
         if line.contains("actions/checkout") && !scan[i + 1..].iter().take_while(|l| !l.trim_start().starts_with("- ")).any(|l| l.contains("persist-credentials: false")) {
@@ -68,7 +79,11 @@ pub(crate) fn check(text: &str) -> Vec<String> {
         if line.contains("write-all") {
             bad("permissions: write-all is not allowed");
         }
-        if (line.contains("curl") || line.contains("wget")) && ["| sh", "|sh", "| bash", "|bash"].iter().any(|p| line.contains(p)) {
+        let into_shell = line
+            .split('|')
+            .skip(1)
+            .any(|seg| seg.trim_start().trim_start_matches("sudo ").trim_start().split_whitespace().next().is_some_and(|w| ["sh", "bash", "zsh"].contains(&w)));
+        if (line.contains("curl") || line.contains("wget")) && (into_shell || line.contains("<(")) {
             bad("piping a download into a shell is not allowed");
         }
         let words: Vec<&str> = line.split_whitespace().collect();
@@ -87,7 +102,6 @@ pub(crate) fn check(text: &str) -> Vec<String> {
     } else if top_level(&lines, "permissions:").contains("write") {
         out.push("top-level permissions must be read-only; grant write per job".into());
     }
-    let on = top_level(&lines, "on:");
     if !on.contains("push:") {
         if on.contains("push") {
             out.push("`on:` lists push without limiting it to main or v* tags".into());
@@ -110,7 +124,7 @@ fn top_level(lines: &[&str], key: &str) -> String {
     let mut body = String::new();
     let mut inside = false;
     for l in lines {
-        if l.replace(['"', '\''], "").starts_with(key) {
+        if l.replace(['"', '\''], "").replace(" :", ":").starts_with(key) {
             inside = true;
         } else if inside && !l.starts_with([' ', '\t', '#']) && !l.is_empty() {
             break;
@@ -169,6 +183,22 @@ mod tests {
         assert!(mentions(&check("on: push\njobs: {}\n"), "no top-level permissions"));
         assert!(mentions(&check("\"on\":\n  workflow_run:\n  push: { branches: [dev] }\n"), "workflow_run is not allowed"));
         assert!(mentions(&check("\"on\":\n  push: { branches: [dev] }\n"), "not `dev`"));
+        assert!(mentions(&check("\"on\" :\n  push: { branches: [dev] }\n"), "not `dev`"));
+        let pr = "permissions: { contents: read }\non: pull_request\njobs:\n  a:\n    permissions: { contents: write }\n    runs-on: ubuntu-24.04\n";
+        assert!(mentions(&check(pr), "pull_request workflow must not hold"));
+        for sneaky in [
+            "echo ${{ GITHUB.HEAD_REF }}",
+            "echo ${{ github.event.pull_request['title'] }}",
+            "echo ${{ toJson(github.event) }}",
+            "cargo b --release",
+            "curl -fsSL x.example | sudo sh",
+            "curl -fsSL x.example |\n            bash",
+            "bash <(curl -fsSL x.example)",
+            "npm i",
+        ] {
+            let text = format!("permissions: {{ contents: read }}\njobs:\n  a:\n    steps:\n      - run: {sneaky}\n");
+            assert!(!check(&text).is_empty(), "{sneaky}");
+        }
     }
 
     #[test]
