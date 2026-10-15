@@ -5,7 +5,7 @@ A release is a version bump merged to `main`, a tag, and then three publishing s
 ## 1. Prepare
 
 - Move `CHANGELOG.md`'s unreleased entries under `## X.Y.Z — DATE` with a short **Highlights** paragraph. Breaking changes need a major bump and an upgrade note.
-- Bump `VERSION`, the workspace version in `Cargo.toml`, `install/package.json`, `package-lock.json`, `install/cli.mjs`, the plugin and marketplace manifests, and the README status line. `cargo xtask version` fails until every one agrees, and also checks that `install/platforms.json`, `release.yml`, and both install scripts name the same platforms.
+- Bump `VERSION`, the workspace version in `Cargo.toml`, `install/package.json`, `package-lock.json`, `install/cli.mjs`, the plugin and marketplace manifests, and the README status line. Also update the pins: `.mcp.json` (`android-use@X.Y.Z`), the `npx -y android-use@X.Y.Z` commands in the README, `install/README.md`, and the install guides, and the release-tag install URLs (`.../android-use/vX.Y.Z/install/...`). `cargo xtask version` fails until every one agrees, and also checks that `install/platforms.json`, `release.yml`, and both install scripts name the same platforms.
 - Open the PR and let CI pass.
 
 ## 2. Rehearse

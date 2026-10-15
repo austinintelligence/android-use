@@ -254,8 +254,36 @@ fn version(root: &Path) -> Result<(), String> {
         }
     }
     platforms_agree(root)?;
+    pins_agree(root, version)?;
     println!("version={version}");
     Ok(())
+}
+/// Docs that show an install or launch command an agent may run. Each pin in them must name VERSION.
+const PINNED_DOCS: [&str; 5] = ["README.md", "install/README.md", "docs/agents/install.md", "docs/agents/quickstart.md", "docs/guides/install.md"];
+/// `.mcp.json` launches `android-use@VERSION` (never `latest` or a range), and every npm command or release-tag
+/// install URL in [`PINNED_DOCS`] names VERSION, so the release bump updates all of them.
+fn pins_agree(root: &Path, version: &str) -> Result<(), String> {
+    let mcp = fs::read_to_string(root.join(".mcp.json")).map_err(ioe)?;
+    if !mcp.contains(&format!("\"android-use@{version}\"")) {
+        return Err(format!(".mcp.json must launch android-use@{version}"));
+    }
+    for path in PINNED_DOCS {
+        let text = fs::read_to_string(root.join(path)).map_err(ioe)?;
+        if let Some(pin) = pin_mismatch(&text, version) {
+            return Err(format!("{path} pins {pin}, not VERSION {version}"));
+        }
+    }
+    Ok(())
+}
+/// The first `android-use@X` (npm) or `android-use/vX/` (release URL) in `text` whose X is not `version`.
+fn pin_mismatch<'a>(text: &'a str, version: &str) -> Option<&'a str> {
+    ["android-use@", "android-use/v"].into_iter().find_map(|marker| {
+        text.match_indices(marker).find_map(|(at, _)| {
+            let rest = &text[at + marker.len()..];
+            let end = rest.find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '-'))).unwrap_or(rest.len());
+            (&rest[..end] != version).then(|| &text[at..at + marker.len() + end])
+        })
+    })
 }
 /// A standalone `v2` or `v3` version (`v2`, `v3.1`, `v2.0.0`), the product's old names. Words that only
 /// contain one (`dev2`, `v2ray`, `MP3v2`) are not versions.
@@ -691,7 +719,18 @@ fn release_notes(root: &Path) -> Result<(), String> {
 }
 #[cfg(test)]
 mod tests {
-    use super::{changelog_section, file_bytes, over_budget, stale_version_marker};
+    use super::{changelog_section, file_bytes, over_budget, pin_mismatch, stale_version_marker};
+
+    #[test]
+    fn a_mismatched_pin_names_itself() {
+        assert_eq!(pin_mismatch("npx -y android-use@1.2.0 setup", "1.2.0"), None);
+        assert_eq!(pin_mismatch("| sh && au setup", "1.2.0"), None);
+        assert_eq!(pin_mismatch("curl .../android-use/v1.2.0/install/install.sh", "1.2.0"), None);
+        for (text, pin) in [("\"android-use@1\"", "android-use@1"), ("npx -y android-use@latest setup", "android-use@latest"), ("android-use/v1.1.2/install", "android-use/v1.1.2")]
+        {
+            assert_eq!(pin_mismatch(text, "1.2.0"), Some(pin), "{text}");
+        }
+    }
 
     #[test]
     fn a_missing_artifact_fails_instead_of_measuring_zero() {

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Security
+
+- The MCP config and install docs pin the release an agent runs (`npx -y android-use@1.2.0`, and the `v1.2.0` install URLs) instead of `android-use@1` or `main`; `cargo xtask version` fails when a pin disagrees with `VERSION`, so a broken or compromised `latest` cannot change what an agent executes.
+
 ### Fixed
 
 - `cargo xtask` gates fail closed: a missing release artifact fails the size gate instead of measuring 0 bytes, and the stale-version check flags only standalone versions such as `v2` or `v3.1`, not words that contain one (`dev2`).
