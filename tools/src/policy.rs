@@ -68,7 +68,11 @@ pub(crate) fn check(text: &str) -> Vec<String> {
         if pr && PR_WRITE.iter().any(|w| squeezed.contains(w)) {
             bad("a pull_request workflow must not hold contents, id-token, packages, actions or pull-requests write");
         }
-        if squeezed.contains("npm install") || squeezed.contains("npm i ") || squeezed.ends_with("npm i") {
+        // The one exception is npm itself at an exact version (trusted publishing needs npm 11.5.1 or newer).
+        let pinned_npm = squeezed
+            .strip_prefix("- run: npm install --global npm@")
+            .is_some_and(|v| v.split('.').count() == 3 && v.split('.').all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())));
+        if !pinned_npm && (squeezed.contains("npm install") || squeezed.contains("npm i ") || squeezed.ends_with("npm i")) {
             bad("use npm ci, which installs exactly what the lockfile says");
         }
         if line.contains("actions/checkout") && !scan[i + 1..].iter().take_while(|l| !l.trim_start().starts_with("- ")).any(|l| l.contains("persist-credentials: false")) {
@@ -111,9 +115,10 @@ pub(crate) fn check(text: &str) -> Vec<String> {
     out
 }
 
-/// Signing secrets live only in a job in the `release-signing` environment. That job runs no
-/// repository code (no checkout, toolchain, or script from anywhere), uses only the artifact actions,
-/// and refuses to run until the owner marks the environment ready.
+/// `id-token: write` only in the `release` (attest) and `npm` (trusted publishing) environments, and npm
+/// publishing only in `npm`. Signing secrets live only in a job in the `release-signing` environment.
+/// That job runs no repository code (no checkout, toolchain, or script from anywhere), uses only the
+/// artifact actions, and refuses to run until the owner marks the environment ready.
 fn jobs(lines: &[&str]) -> Vec<String> {
     let mut in_jobs = false;
     let mut blocks: Vec<(&str, String)> = Vec::new();
@@ -137,6 +142,16 @@ fn jobs(lines: &[&str]) -> Vec<String> {
         let signing = body.contains("environment: release-signing");
         if !signing && ["secrets.", "secrets[", "tojson(secrets", "secrets: inherit"].iter().any(|s| body.contains(s)) {
             out.push(format!("job {name}: secrets belong only in a release-signing job, and by name"));
+        }
+        // A tripwire on the usual spellings, not a YAML parser: job-level `environment:` only, quotes and spacing ignored.
+        let env = body.lines().find_map(|l| l.strip_prefix("    environment:")).map_or("", |e| e.trim().trim_matches(['\'', '"']));
+        let flat = body.replace(['\'', '"'], "").split_whitespace().collect::<Vec<_>>().join(" ");
+        if flat.contains("id-token: write") && !["release", "npm"].contains(&env) {
+            out.push(format!("job {name}: id-token: write belongs only in the release and npm environments"));
+        }
+        let publishes = |l: &str| l.contains("publish-npm.mjs") || l.split_whitespace().any(|w| w == "npm") && l.split_whitespace().any(|w| ["publish", "pub"].contains(&w));
+        if body.lines().any(|l| !l.trim_start().starts_with('#') && publishes(l)) && env != "npm" {
+            out.push(format!("job {name}: npm publishing belongs only in an npm-environment job"));
         }
         if !signing {
             continue;
@@ -292,6 +307,27 @@ mod tests {
             let leaked = format!("permissions: {{ contents: read }}\njobs:\n  build:\n    steps:\n      - run: echo {leak}\n");
             assert!(mentions(&check(&leaked), "belong only in a release-signing job"), "{leak}");
         }
+    }
+
+    #[test]
+    fn only_an_exactly_pinned_npm_may_be_installed() {
+        let run = |cmd: &str| check(&format!("permissions: {{ contents: read }}\njobs:\n  a:\n    steps:\n      - run: {cmd}\n"));
+        assert_eq!(run("npm install --global npm@11.5.1"), Vec::<String>::new());
+        for loose in ["npm install --global npm@11", "npm install --global npm@latest", "npm install --global npm@11.5.1 left-pad", "npm install"] {
+            assert!(mentions(&run(loose), "use npm ci"), "{loose}");
+        }
+    }
+
+    #[test]
+    fn oidc_and_npm_publishing_stay_in_their_environments() {
+        let job = |env: &str, perm: &str, run: &str| {
+            format!("permissions: {{ contents: read }}\njobs:\n  j:\n    environment: {env}\n    permissions:\n      {perm}\n    steps:\n      - run: {run}\n")
+        };
+        assert_eq!(check(&job("npm", "id-token: write", "node install/publish-npm.mjs v1.3.0")), Vec::<String>::new());
+        assert!(mentions(&check(&job("none", "id-token: write", "true")), "id-token: write belongs only"));
+        assert!(mentions(&check(&job("release", "contents: read", "node install/publish-npm.mjs v1")), "npm publishing belongs only"));
+        assert!(mentions(&check(&job("none", "id-token:  'write'", "true")), "id-token: write belongs only"));
+        assert!(mentions(&check(&job("none", "id-token: write", "npm  pub")), "npm publishing belongs only"));
     }
 
     #[test]

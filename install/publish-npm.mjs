@@ -1,21 +1,25 @@
 #!/usr/bin/env node
 // Publish a GitHub release to npm: one @androiduse/<platform> package per supported platform, then android-use.
 // Usage: node install/publish-npm.mjs vX.Y.Z [--dry-run]
-// Needs `gh` and an npm login that can publish both names. npm may ask for a 2FA confirmation
-// (a browser link or a one-time code), so run it in a terminal you are watching. Archives are checked against the
-// release's SHA256SUMS before anything is staged.
+// Runs in the release workflow's `npm` job, where npm trusted publishing (OIDC) signs in and --provenance
+// records the build; no npm token exists. Outside CI it refuses unless --dry-run. Every downloaded asset must pass
+// `gh attestation verify`, and the archives must match the attested SHA256SUMS, before anything is staged.
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseSums, sha256, writeManifest } from "./manifest.mjs";
+import { parseSums, publishArgs, sha256, verifyArgs, writeManifest } from "./manifest.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const [tag, ...flags] = process.argv.slice(2);
 const dryRun = flags.includes("--dry-run");
 if (!/^v\d+\.\d+\.\d+$/.test(tag ?? "")) {
   console.error("Usage: node install/publish-npm.mjs vX.Y.Z [--dry-run]");
+  process.exit(2);
+}
+if (!dryRun && process.env.GITHUB_ACTIONS !== "true") {
+  console.error("Refusing to publish outside GitHub Actions: releases publish from the `npm` job. Use --dry-run to rehearse.");
   process.exit(2);
 }
 const version = tag.slice(1);
@@ -27,6 +31,9 @@ if (version !== readFileSync(join(here, "..", "VERSION"), "utf8").trim()) {
 const run = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, stdio: "inherit" });
 const work = mkdtempSync(join(tmpdir(), "au-npm-"));
 run("gh", ["release", "download", tag, "--dir", work, "-p", "*.tar.gz", "-p", "*.zip", "-p", "SHA256SUMS"]);
+
+const repo = process.env.GITHUB_REPOSITORY ?? "austinintelligence/android-use";
+for (const name of readdirSync(work)) run("gh", verifyArgs(join(work, name), repo, tag));
 
 const sums = parseSums(readFileSync(join(work, "SHA256SUMS"), "utf8"));
 const platforms = JSON.parse(readFileSync(join(here, "platforms.json"), "utf8")).map((p) => [p.npm, `android-use-${tag}-${p.asset}.${p.archive}`, p.binary]);
@@ -41,7 +48,7 @@ const published = (name) => {
 // Skips a package that is already on npm, so a run that stopped part-way can be repeated.
 const publish = (dir, name) => {
   if (!dryRun && published(name)) return console.log(`${name}@${version} is already published`);
-  run("npm", ["publish", "--access", "public", ...(dryRun ? ["--dry-run"] : [])], dir);
+  run("npm", publishArgs(dryRun), dir);
 };
 
 for (const [key, archive, binary] of platforms) {

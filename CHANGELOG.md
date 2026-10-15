@@ -62,6 +62,8 @@
 
 - Acting is 10 to 40 ms faster: the journal is reloaded only when another process wrote it.
 
+- npm publishing moves into CI with npm trusted publishing (OIDC) and `--provenance`: a new `npm` job in the release workflow, in the `npm` environment and the only job with `id-token: write` besides attestation, publishes `android-use` and the six `@androiduse/<platform>` packages with no npm token. `install/publish-npm.mjs` refuses to run outside GitHub Actions unless `--dry-run`, and runs `gh attestation verify` on every release asset before staging; any failure stops it. `install/render-formula.mjs` renders the Homebrew formula only from an attestation-verified `SHA256SUMS` (it verifies one it downloads, and refuses a file without `--verified`). `workflow-policy` pins where `id-token: write` and npm publishing may appear. The owner-side registration is in [releasing](docs/contributing/release.md). This branch contains #63 until it merges.
+
 ### Fixed
 
 - Camera, microphone, and location capture on Android 14+ (#5, #21, #22, #24): the helper declares and claims the matching foreground-service types, a microphone that returns only zeros is an error instead of a silent recording, a camera that opens after the capture timed out is closed at once, a location read always completes (including when a provider is disabled), and captures no longer hold the UI lock, so taps and reads keep working during them. Overlapping captures keep each other's service types, so a location read cannot stop a screen recording.
