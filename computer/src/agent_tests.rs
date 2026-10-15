@@ -39,26 +39,8 @@ fn only_package_shaped_names_skip_lookup() {
 /// with "Wi-Fi" and "Bluetooth".
 mod flows {
     use super::*;
-    use crate::{bridge::Bridge, device::Device};
+    use crate::link::FakeLink;
     use base64::{engine::general_purpose::STANDARD, Engine as _};
-    use std::{
-        io::{Read as _, Write as _},
-        net::{TcpListener, TcpStream},
-    };
-
-    fn frame_in(s: &mut TcpStream) -> Option<Value> {
-        let mut header = [0u8; 4];
-        s.read_exact(&mut header).ok()?;
-        let mut body = vec![0; u32::from_be_bytes(header) as usize];
-        s.read_exact(&mut body).ok()?;
-        serde_json::from_slice(&body).ok()
-    }
-
-    fn frame_out(s: &mut TcpStream, value: &Value) {
-        let body = serde_json::to_vec(value).unwrap();
-        s.write_all(&(body.len() as u32).to_be_bytes()).unwrap();
-        s.write_all(&body).unwrap();
-    }
 
     fn labels(screen: &str) -> &'static [&'static str] {
         if screen == "settings" {
@@ -72,13 +54,13 @@ mod flows {
         }
     }
 
-    fn fake_helper(stream: &mut TcpStream, capture: &[u8]) {
+    fn fake_helper(capture: Vec<u8>) -> impl FnMut(&Value) -> Option<Value> {
         let (mut screen, mut generation) = ("home", 1u64);
         // A screen that replaces the current one by itself at a given time.
         let mut later: Option<(std::time::Instant, &str)> = None;
         // The loading screen starts its 120 ms when it is first read, whatever the host did before.
         let mut unread = false;
-        while let Some(q) = frame_in(stream) {
+        move |q| {
             if let Some((_, next)) = later.filter(|(at, _)| *at <= std::time::Instant::now()) {
                 (screen, generation, later) = (next, generation + 1, None);
             }
@@ -122,7 +104,7 @@ mod flows {
                     generation += 1;
                     json!([seq, 1, generation, 0])
                 }
-                "run" if screen == "settings" && q[6].as_array().unwrap().iter().any(|op| op[0] == "tap" && op[1] == 1) => return, // Tapping "Bluetooth" drops the connection mid-plan.
+                "run" if screen == "settings" && q[6].as_array().unwrap().iter().any(|op| op[0] == "tap" && op[1] == 1) => return None, // Tapping "Bluetooth" drops the connection mid-plan.
                 "run" => {
                     let mut changes = 0;
                     let (mut failed, mut artifact) = (None, None);
@@ -161,7 +143,7 @@ mod flows {
                 }
                 _ => json!([seq, 5]),
             };
-            frame_out(stream, &reply);
+            Some(reply)
         }
     }
 
@@ -173,15 +155,9 @@ mod flows {
     }
 
     fn engine() -> (Engine, tempfile::TempDir) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let capture = phone_screenshot();
-        std::thread::spawn(move || fake_helper(&mut listener.accept().unwrap().0, &capture));
         let dir = tempfile::tempdir().unwrap();
-        let mut engine = Engine::at(crate::device::Paths::at(dir.path().to_path_buf()).unwrap()).unwrap();
-        let device = Device { endpoint: "fake".into(), hardware: "fake-serial".into() };
-        engine.attach(Bridge::over(TcpStream::connect(address).unwrap(), device.clone()), device);
-        (engine, dir)
+        let link = FakeLink::new(fake_helper(phone_screenshot()));
+        (Engine::with_link(crate::device::Paths::at(dir.path().to_path_buf()).unwrap(), Box::new(link)).unwrap(), dir)
     }
 
     trait Words {
