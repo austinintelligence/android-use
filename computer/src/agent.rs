@@ -17,7 +17,10 @@ use crate::{
     resolve, visual,
 };
 use serde_json::{json, Value};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 /// Quiet time the helper waits for after a change before the reply is built, and the longest it
 /// waits: a tap redraws quickly, typed text feeds debounced search lists, a launched app cold-starts.
@@ -68,6 +71,12 @@ pub(crate) struct AgentState {
     pub(crate) mapping: Vec<String>,
     /// Whether the last target resolved by a containing label rather than an exact one.
     pub(crate) loose: bool,
+    /// A served session limits labels the agent was never shown (see `unseen_label_runs`).
+    pub(crate) strict: bool,
+    /// Normalized labels of every row shown to the agent this session.
+    pub(crate) seen: HashSet<String>,
+    /// The last plan launched an app, so its screen is the one the agent just chose to enter.
+    pub(crate) opened: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -287,6 +296,7 @@ impl Engine {
         let mut ops = ops;
         if ops.iter().any(Op::mutates) {
             let package = ops.iter().rev().find_map(|op| if let Op::Launch(package) = op { Some(package.clone()) } else { None });
+            self.agent.opened = package.is_some();
             let typed = ops.iter().any(|op| matches!(op, Op::Text(..)));
             ops.push(Op::Settle {
                 quiet_ms: if typed { TYPED_QUIET_MS } else { QUIET_MS },
@@ -410,6 +420,9 @@ impl Engine {
                 if let (Some(handle), true) = (target.handle, refs.is_empty()) {
                     return Err(Error::plain(Code::Missing, format!("e{handle} is not on the current screen; read the screen again for current handles")));
                 }
+                if !self.unseen_label_runs(target, tier, refs.len(), &labels) {
+                    return Err(resolve::missing(&target.label, "screen"));
+                }
                 // A single control whose label only contains the request is acted on when it is
                 // plainly what was meant, and the result names it; otherwise it counts as missing.
                 if tier >= 2 && refs.len() == 1 && target.ordinal.is_none() {
@@ -428,6 +441,17 @@ impl Engine {
             Err(error) if error.code == Code::Unsupported => resolve::scene_target(scene, target),
             Err(error) => Err(error),
         }
+    }
+
+    /// In a served session, a label the agent was never shown runs only as an exact, unique, safe
+    /// match in the app it just opened; anything else is a miss that shows the screen.
+    fn unseen_label_runs(&self, target: &Target, tier: u64, count: usize, labels: &[String]) -> bool {
+        let needle = normalized(&target.label);
+        let state = &self.agent;
+        if !state.strict || target.handle.is_some() || state.seen.iter().any(|row| row.contains(&needle)) {
+            return true;
+        }
+        state.opened && tier < 2 && count == 1 && target.ordinal.is_none() && !resolve::risky(&needle) && !labels.iter().any(|label| resolve::risky(label))
     }
 
     /// The scrollable area a bare `scroll DIRECTION` should move: the helper

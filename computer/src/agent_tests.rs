@@ -211,6 +211,26 @@ mod flows {
     }
 
     #[test]
+    fn a_label_never_shown_runs_only_when_exact_unique_safe_and_just_opened() {
+        let (mut engine, _dir) = engine();
+        engine.agent.strict = true;
+        let cold = act(&mut engine, r#"tap "Settings""#).unwrap();
+        assert!(cold.text.starts_with("No item labeled \"Settings\"") && cold.text.contains("Nothing was run"), "an unseen label with no app opened: {}", cold.text);
+        engine.agent.seen.clear();
+        assert!(act(&mut engine, r#"open app "Settings" then tap "Wi-Fi""#).unwrap().text.starts_with("Done."), "exact, unique, safe, in the app just opened");
+        for risky in [r#"tap "Save and delete all""#, r#"tap "draft""#] {
+            engine.agent.seen.clear();
+            let response = act(&mut engine, &format!(r#"open app "Settings" then {risky}"#)).unwrap();
+            assert!(response.text.contains("Partly done: Opened Settings.") && response.text.contains("remaining steps were not run"), "{risky}: {}", response.text);
+        }
+        engine.agent.seen.clear();
+        engine.agent.opened = false;
+        assert!(act(&mut engine, r#"tap "Wi-Fi""#).unwrap().text.contains("Nothing was run"), "the last act did not open the app");
+        engine.model_read(CommandRead::Screen { full: false, matching: None, delta: false }).unwrap();
+        assert!(act(&mut engine, r#"tap "Wi-Fi""#).unwrap().text.starts_with("Done."), "a shown label runs as before");
+    }
+
+    #[test]
     fn the_same_screen_after_an_action_is_reported_as_changes_not_listed_again() {
         let (mut engine, _dir) = engine();
         let first = act(&mut engine, r#"open app "Settings" then tap "Wi-Fi""#).unwrap().text;

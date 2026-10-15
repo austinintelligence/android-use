@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 use std::io::{self, BufRead, BufReader, Write};
 
 pub fn mcp(mut engine: Engine) -> Result<()> {
+    engine.agent.strict = true;
     serve(move |v| rpc(&mut engine, v))
 }
 

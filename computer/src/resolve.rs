@@ -168,6 +168,11 @@ const RISKY: [&str; 20] = [
     "factory",
 ];
 
+/// Whether any word of a label is one that makes acting on a guess unsafe.
+pub(crate) fn risky(label: &str) -> bool {
+    normalized(label).split(' ').any(|word| RISKY.contains(&word))
+}
+
 /// Whether the only control whose label merely contains `wanted` is plainly what the agent meant:
 /// the wanted words lead or trail the label, at most two other words come with them, and none of
 /// those is destructive.

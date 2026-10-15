@@ -19,6 +19,7 @@ impl Engine {
     pub(crate) fn read_screen(&mut self, full: bool, matching: Option<&str>, delta: bool) -> Result<ModelResponse> {
         let focus = matching.unwrap_or("");
         let rows = self.semantic_rows(focus)?;
+        self.note_seen(&rows);
         let previous = if focus.is_empty() { self.agent.snapshot.replace(rows.clone()) } else { None };
         let mut text = match (delta, previous) {
             (true, Some(previous)) => format_semantic_delta(&semantic_delta(&previous, &rows)),
@@ -45,6 +46,7 @@ impl Engine {
         let mut readable = 0;
         if let Ok(rows) = self.semantic_rows("") {
             readable = rows.iter().filter(|row| row.kind != "heading").count();
+            self.note_seen(&rows);
             text.push_str("\nOn screen now:\n");
             text.push_str(&format_semantic_rows(&rows, false, ""));
             self.agent.snapshot = Some(rows);
@@ -78,11 +80,17 @@ impl Engine {
                     Some(changes) => format!("Changed:\n{changes}"),
                     None => format!("Now on screen:\n{}", format_semantic_rows(&rows, false, "")),
                 };
+                self.note_seen(&rows);
                 self.agent.snapshot = Some(rows);
                 Some(text)
             }
             Surface::Browser => self.read_page().ok().map(|page| format!("Now: {}", format_browser_page(&page))),
         }
+    }
+
+    /// Remembers which labels the agent has been shown, for `unseen_label_runs`.
+    fn note_seen(&mut self, rows: &[SemanticRow]) {
+        self.agent.seen.extend(rows.iter().map(|row| normalized(&row.label)));
     }
 
     pub(crate) fn semantic_rows(&mut self, focus: &str) -> Result<Vec<SemanticRow>> {
