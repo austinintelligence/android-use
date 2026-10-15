@@ -16,8 +16,9 @@ for f in cli.mjs manifest.mjs LICENSE README.md package.json; do cp "$ROOT/insta
 node --input-type=module -e '
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 const [root, main, key, version] = process.argv.slice(1);
-const { writeManifest } = await import(join(root, "install", "manifest.mjs"));
+const { writeManifest } = await import(pathToFileURL(join(root, "install", "manifest.mjs")).href);
 const pj = JSON.parse(readFileSync(join(main, "package.json"), "utf8"));
 pj.optionalDependencies = { [`@androiduse/${key}`]: version };
 writeFileSync(join(main, "package.json"), JSON.stringify(pj, null, 2));
