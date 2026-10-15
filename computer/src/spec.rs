@@ -46,6 +46,7 @@ pub const FORMS: &[Form] = &[
     read(false, r#"image hash "NAME" | image difference "A" and "B""#, &[r#"image hash "screen""#, r#"image difference "screen" and "photo""#]),
     act(true, r#"tap "LABEL" [number N] | tap eN"#, &[r#"tap "Wi-Fi""#, r#"tap "Save" number 2"#, "tap e12"]),
     act(true, r#"toggle "LABEL""#, &[r#"toggle "Wi-Fi""#]),
+    act(false, r#"set "LABEL" on|off"#, &[r#"set "Wi-Fi" on"#, r#"set "Wi-Fi" off"#]),
     act(true, r#"type "TEXT" in "FIELD""#, &[r#"type "hello" in "Message""#]),
     act(
         true,

@@ -19,6 +19,7 @@ Join up to 16 steps with `then`. Quote names as `screen` shows them; `Name#2` is
 
 - tap "LABEL" [number N] | tap eN
 - toggle "LABEL"
+- set "LABEL" on|off
 - type "TEXT" in "FIELD"
 - scroll up|down|left|right [in "AREA"] [until "TEXT"]
 - press back|home|recents|notifications|enter

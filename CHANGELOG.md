@@ -5,6 +5,7 @@
 ### Changed
 
 - Agents act first: the instructions, `AGENTS.md`, and the skill no longer ask for a first read of the screen. In a served session, a label the agent was never shown runs only on an exact, unique, non-risky match inside the app it just opened; anything else is a miss that shows the screen. A label the agent never saw no longer runs if it is risky. (`au act` from a shell has no session and is unchanged.)
+- `set "X" on|off` is new: it does nothing when the switch is already in that state, and otherwise taps and checks the state changed. `toggle` checks that it flipped and says so ("Wi-Fi is now on"), failing when it did not.
 
 ### Fixed
 
