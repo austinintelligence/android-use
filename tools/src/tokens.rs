@@ -155,6 +155,7 @@ mod tests {
         assert_eq!(personal_data(&json!([["Signed in as ada@example.com", "", "text"]])), Some("an email address"));
         assert_eq!(personal_data(&json!([["Call +1 (650) 555-0134", "", "button"]])), Some("a phone number"));
         assert_eq!(personal_data(&json!({"rows": [["4111 1111 1111 1111"]]})), Some("a card number"));
+        assert_eq!(personal_data(&json!([["2026-10-15 650 555 0134"]])), Some("a phone number"));
         let ordinary = json!([
             ["Wi-Fi", "on", "switch"],
             ["Updated 2026-10-15 12:30", "", "text"],
