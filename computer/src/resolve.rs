@@ -51,7 +51,7 @@ pub(crate) fn pick_safe<T: Clone + PartialEq>(target: &Target, candidates: &[Can
 pub(crate) fn loose<T: Clone + PartialEq>(target: &Target, near: Vec<(T, impl AsRef<str>)>, surface: &str) -> Result<T> {
     let needle = normalized(&target.label);
     if let ([(value, label)], None) = (near.as_slice(), target.ordinal) {
-        if near_miss(&needle, label.as_ref()) {
+        if near_miss(&needle, label.as_ref()) && !lookalikes(label.as_ref()) {
             return Ok(value.clone());
         }
     }
@@ -61,6 +61,11 @@ pub(crate) fn loose<T: Clone + PartialEq>(target: &Target, near: Vec<(T, impl As
         miss.message = format!("{}. Similar items that were not chosen: {}. Use the full label.", miss.message, names.join(", "));
     }
     Err(miss)
+}
+
+/// Latin text mixed with Cyrillic, Greek, or fullwidth letters can spell a risky word invisibly.
+fn lookalikes(label: &str) -> bool {
+    label.chars().any(|c| c.is_ascii_alphabetic()) && label.chars().any(|c| matches!(c, '\u{0370}'..='\u{052F}' | '\u{FF01}'..='\u{FF5E}'))
 }
 
 /// A risky word, or an inflection of one ("payments", "delete-all", "removed").
@@ -86,6 +91,11 @@ fn risky_word(word: &str) -> bool {
             "install",
             "uninstall",
             "factory",
+            "withdraw",
+            "unsubscribe",
+            "cancel",
+            "checkout",
+            "donat",
         ]
         .iter()
         .any(|stem| word.starts_with(stem))
@@ -234,7 +244,8 @@ const RISKY: [&str; 21] = [
 pub(crate) fn near_miss(wanted: &str, actual: &str) -> bool {
     let (wanted, actual) = (normalized(wanted), normalized(actual));
     let aligned = actual.starts_with(&format!("{wanted} ")) || actual.ends_with(&format!(" {wanted}"));
-    let extra: Vec<&str> = actual.split([' ', '-']).filter(|word| !wanted.split([' ', '-']).any(|w| w == *word)).collect();
+    let extra: Vec<&str> =
+        actual.split(|c: char| !c.is_alphanumeric()).filter(|word| !word.is_empty()).filter(|word| !wanted.split(|c: char| !c.is_alphanumeric()).any(|w| w == *word)).collect();
     aligned && extra.len() <= 2 && !extra.iter().any(|word| risky_word(word))
 }
 
@@ -341,6 +352,16 @@ mod tests {
             ("Apps Uninstaller", "Apps"),
             ("Account Signout", "Account"),
             ("Bank Tr\u{200B}ansfer", "Bank"),
+        ] {
+            assert_eq!(app(&json!([["x", name]]), query).unwrap_err().code, Code::Missing, "{name}");
+        }
+        for (name, query) in [
+            ("Bank (Transfer)", "Bank"),
+            ("Bank \u{0422}ransfer", "Bank"),
+            ("Bank \u{FF34}ransfer", "Bank"),
+            ("Shop Checkout", "Shop"),
+            ("Plan Cancel", "Plan"),
+            ("Bank Tr\u{034F}ansfer", "Bank"),
         ] {
             assert_eq!(app(&json!([["x", name]]), query).unwrap_err().code, Code::Missing, "{name}");
         }
