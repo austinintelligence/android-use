@@ -21,7 +21,10 @@ impl Engine {
         let rows = self.semantic_rows(focus)?;
         let previous = if focus.is_empty() { self.agent.snapshot.replace(rows.clone()) } else { None };
         let mut text = match (delta, previous) {
-            (true, Some(previous)) => format_semantic_delta(&semantic_delta(&previous, &rows)),
+            (true, Some(previous)) => {
+                self.agent.marked_in = None; // A diff does not show the new numbering.
+                format_semantic_delta(&semantic_delta(&previous, &rows))
+            }
             _ => format_semantic_rows(&rows, full, focus),
         };
         let mut image = None;
@@ -75,7 +78,11 @@ impl Engine {
                 // sent; a different screen is sent whole.
                 let changes = self.agent.snapshot.as_deref().and_then(|before| screen_changes(before, &rows));
                 let text = match changes {
-                    Some(changes) => format!("Changed:\n{changes}"),
+                    Some(changes) => {
+                        // A diff does not show the numbering the re-read just gave the helper.
+                        self.agent.marked_in = None;
+                        format!("Changed:\n{changes}")
+                    }
                     None => format!("Now on screen:\n{}", format_semantic_rows(&rows, false, "")),
                 };
                 self.agent.snapshot = Some(rows);

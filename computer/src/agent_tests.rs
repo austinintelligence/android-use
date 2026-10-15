@@ -205,6 +205,7 @@ mod flows {
         let (mut engine, _dir) = engine();
         act(&mut engine, r#"open app "Settings""#).unwrap();
         assert_eq!(act(&mut engine, "tap e0").unwrap().status, "done");
+        engine.model_read(CommandRead::Screen { full: false, matching: None, delta: false }).unwrap();
         let gone = act(&mut engine, "tap e40").unwrap_err_or_text();
         assert!(gone.contains("e40 is not on the current screen"), "{gone}");
     }
@@ -255,6 +256,8 @@ mod flows {
         }
         engine.model_read(CommandRead::Screen { full: false, matching: None, delta: false }).unwrap();
         assert_eq!(act(&mut engine, "tap e0").unwrap().status, "done");
+        // That tap led to an unchanged-screen diff, which does not show the helper's numbering.
+        assert!(act(&mut engine, "tap e0").unwrap_err_or_text().contains("none was read"));
     }
 
     #[test]
