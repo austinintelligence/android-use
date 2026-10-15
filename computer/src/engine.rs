@@ -133,7 +133,15 @@ impl Engine {
                     std::thread::sleep(std::time::Duration::from_millis(600));
                     (g, cap) = self.bridge_read(|bridge| bridge.status())?;
                 }
-                Ok(json!({"ok":1,"g":g,"cap":cap}))
+                let mut status = json!({"ok":1,"g":g,"cap":cap});
+                if let Ok(env) = self.bridge_read(|bridge| bridge.query("env", Value::Null)) {
+                    for key in ["battery_exempt", "talkback"] {
+                        if let Some(flag) = env.get(key) {
+                            status[key] = flag.clone();
+                        }
+                    }
+                }
+                Ok(status)
             }
             Read::Browser { op } => self.browser_read(|browser| browser.read(op.clone())).and_then(|page| self.journal.reconcile(BROWSER).map(|_| page)),
             Read::Capabilities => self.bridge_read(|bridge| bridge.query("capabilities", Value::Null)),
@@ -160,6 +168,49 @@ impl Engine {
         };
         self.scene = Some(scene.clone());
         Ok(scene)
+    }
+
+    /// The phone's `env` over the cached connection, or a new one to a helper that is already
+    /// running. Never starts a helper: one that is not there is `helper_killed`. A missing device,
+    /// a timeout or a failed authentication keeps its own code and next step.
+    fn helper_env(&mut self) -> Result<Value> {
+        let unreachable =
+            |error: Error| if matches!(error.code, Code::Device | Code::Identity | Code::Timeout | Code::Auth | Code::Permission) { error } else { crate::link::helper_killed() };
+        let mut last = crate::link::helper_killed();
+        for fresh in [false, true] {
+            let mut bridge = match self.bridge.take() {
+                Some(cached) if !fresh => cached,
+                _ => self.link.attach().map_err(unreachable)?,
+            };
+            match bridge.query("env", Value::Null) {
+                Ok(env) => {
+                    self.bridge = Some(bridge);
+                    return Ok(env);
+                }
+                // A helper from before 1.3 has no `env`; it is running, so let the act proceed.
+                Err(error) if error.code == Code::Unsupported => {
+                    self.bridge = Some(bridge);
+                    return Ok(json!({}));
+                }
+                Err(error) => last = unreachable(error),
+            }
+        }
+        Err(last)
+    }
+
+    /// Asks the phone for its state before the first act of a session and after any failure, and
+    /// turns the states no act can work in into one typed result with one next step each.
+    pub(crate) fn preflight(&mut self) -> Result<()> {
+        let env = self.helper_env()?;
+        let on = |key: &str, default: bool| env.get(key).and_then(Value::as_bool).unwrap_or(default);
+        let (code, message) = if !on("screen_on", true) {
+            (Code::ScreenOff, "The screen is off. Press the phone's power button, then resend.")
+        } else if on("locked", false) {
+            (Code::Locked, "The phone is locked. Unlock it, then resend.")
+        } else {
+            return Ok(());
+        };
+        Err(Error::plain(code, message))
     }
 
     pub(crate) fn read_page(&mut self) -> Result<Value> {

@@ -1,15 +1,19 @@
 package dev.codex.aubridge;
 
+import android.app.KeyguardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ResolveInfo;
 import android.net.Credentials;
 import android.net.LocalServerSocket;
 import android.net.LocalSocket;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.util.Base64;
 
 import org.json.JSONArray;
 import org.json.JSONException;
+import org.json.JSONObject;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -20,6 +24,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.util.Locale;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -201,6 +206,8 @@ final class Bridge implements AutoCloseable {
                     return new JSONArray().put(seq).put(0).put(ui.scroller(q.optString(2)));
                 case "capabilities":
                     return new JSONArray().put(seq).put(0).put(Capture.capabilities(context));
+                case "env":
+                    return new JSONArray().put(seq).put(0).put(env(context));
                 case "location":
                     return new JSONArray().put(seq).put(0).put(Location.read(context));
                 case "notifications":
@@ -221,6 +228,24 @@ final class Bridge implements AutoCloseable {
         } catch (Exception e) {
             return err(seq, e instanceof Limit ? 6 : e instanceof Vm.Permission ? 10 : 9);
         }
+    }
+
+    /** What the phone is doing, for the host's preflight and status. */
+    static JSONObject env(Context context) throws JSONException {
+        PowerManager power = context.getSystemService(PowerManager.class);
+        String on =
+                Settings.Secure.getString(
+                        context.getContentResolver(),
+                        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+        on = on == null ? "" : on.toLowerCase(Locale.ROOT);
+        return new JSONObject()
+                .put("screen_on", power.isInteractive())
+                .put("locked", context.getSystemService(KeyguardManager.class).isKeyguardLocked())
+                .put("accessibility", Ui.get() != null)
+                .put(
+                        "battery_exempt",
+                        power.isIgnoringBatteryOptimizations(context.getPackageName()))
+                .put("talkback", on.contains("talkback"));
     }
 
     private static final long APPS_TTL_MS = 30_000;

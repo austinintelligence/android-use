@@ -252,7 +252,19 @@ pub fn doctor() -> Result<Value> {
     let answering = match (helper && accessibility, device.as_ref()) {
         (true, Some(d)) => {
             use crate::link::DeviceLink as _;
-            crate::link::AdbLink::to(paths.clone(), adb.clone(), d.clone()).helper().and_then(|mut bridge| bridge.status()).is_ok()
+            let mut bridge = crate::link::AdbLink::to(paths.clone(), adb.clone(), d.clone()).helper();
+            let answered = bridge.as_mut().is_ok_and(|bridge| bridge.status().is_ok());
+            if let Some(env) = bridge.as_mut().ok().filter(|_| answered).and_then(|bridge| bridge.query("env", Value::Null).ok()) {
+                for (name, flag, ready, bad) in [
+                    ("battery", "battery_exempt", true, "Battery optimization is on; exempt Android-Use under Settings → Battery so Android keeps the helper alive"),
+                    ("talkback", "talkback", false, "TalkBack is on and can change what the screen reports"),
+                ] {
+                    if env.get(flag).and_then(Value::as_bool).is_some_and(|on| on != ready) {
+                        checks.insert(name.into(), json!({"state":"optional","message":bad}));
+                    }
+                }
+            }
+            answered
         }
         _ => true,
     };

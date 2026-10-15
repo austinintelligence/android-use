@@ -6,7 +6,7 @@ use au::{
     clients::{self, Client, Dirs, Options},
     emulator,
     engine::{plain_error, Engine, ModelResponse},
-    install,
+    env_notes, install,
 };
 use serde_json::Value;
 use std::{env, io::IsTerminal, path::Path};
@@ -209,7 +209,7 @@ fn human_value(command: &str, value: &Value) -> String {
         "help" | "--help" | "-h" => "Android Use — Give AI an Android device.\n\nGet connected:\n  au devices      List connected Android devices\n  au setup        Prepare and remember one device\n  au status       Check whether Android Use is ready\n  au doctor       Explain anything that needs attention\n\nUse the device (same commands as the MCP tools):\n  au read screen                 List what is on screen\n  au read 'find \"Wi-Fi\"'          Look for one item\n  au read page                   Read the current Chrome page\n  au act 'tap \"Settings\"'         Tap a visible label\n  au act 'open app \"Chrome\" then page open \"https://example.com\"'\n\nConnect an agent:\n  au install [AGENT]     Register with Claude Code, Codex, Cursor, ... (au install --dry-run first)\n  au serve --mcp         Model Context Protocol over stdio\n\nTry it on an emulator instead of your phone:\n  au emulator doctor     Check the Android SDK (au emulator install fetches what is missing)\n  au targets             List targets; add --target NAME to any command\n\nMaintenance:\n  au update       Update the Android helper\n  au uninstall    Remove Android Use and its local state\n\nRun `au help --json` for the complete machine-readable command list.".into(),
         "version" | "--version" => format!("Android Use {}", value.get("version").and_then(Value::as_str).unwrap_or(env!("CARGO_PKG_VERSION"))),
         "status" => match (value.get("ok").and_then(Value::as_u64) == Some(1), value.get("cap").and_then(Value::as_u64).unwrap_or(0) != 0) {
-            (true, true) => "Android Use is ready\n\n✓ Android helper connected\n✓ Accessibility control is on".into(),
+            (true, true) => env_notes(value).iter().fold("Android Use is ready\n\n✓ Android helper connected\n✓ Accessibility control is on".to_owned(), |out, note| format!("{out}\n! {note}")),
             (true, false) => "Android Use is almost ready\n\n✓ Android helper connected\n! Accessibility control is off\n\nOn Android, open Settings → Accessibility → Android-Use and turn it on.\nThen run: au status".into(),
             _ => "Android Use is not ready.\nRun: au doctor".into(),
         },

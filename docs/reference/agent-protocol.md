@@ -24,8 +24,9 @@ A successful action says `Done.` (plus a note when a label was only a close matc
 | `Check failed` / `Waited …` | A verify or wait was false. | Read, then decide. |
 | `Partly done` | Some steps changed the device, then one failed. | Read and reconcile; never repeat the whole command. |
 | `uncertain` | `unknown`: it may have run. | Read before any other change. |
+| `locked`, `screen_off`, `helper_killed` | Nothing ran. | Do the step named, resend. |
 | `missing the Android permission` | Android denied a capability. | Ask the user to grant it on the device. |
 
 ## Images and coordinates
 
-When a screen exposes little text, or you capture it, its image is attached, compressed for you (usually 20–200 KB) with a numbered box over each control; the text states its size and scale. `tap eN` is the first choice; `tap point X Y` and `swipe from X1 Y1 to X2 Y2 over MS milliseconds` use coordinates on that image, and the result confirms the device pixel hit. Points outside the image are refused. Any screen change ends the image: capture again before using points, and after rotating. Audio and video are saved to a file path.
+When a screen exposes little text, or you capture it, its image is attached with a numbered box over each control; the text states its size and scale. `tap eN` is the first choice; `tap point X Y` and `swipe from X1 Y1 to X2 Y2 over MS milliseconds` use coordinates on that image, and the result confirms the device pixel hit. Points outside the image are refused. Any screen change ends the image: capture again before using points, and after rotating. Audio and video are saved to a file path.

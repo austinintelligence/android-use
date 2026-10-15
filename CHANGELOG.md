@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Device preflight: before the first action of a session and after any failure, Android Use checks the phone and returns a typed `locked`, `screen_off`, or `helper_killed` result with one next step, instead of a timeout or a permission error. The helper has a new `env` operation. `au status` and `au doctor` report when battery optimization is on for Android-Use or TalkBack is enabled. `cargo xtask emulator-e2e` covers the three results.
+
 ### Security
 
 - The helper now proves itself before `au` sends anything. The helper keeps a random per-process key that only the ADB shell user can read; `au` sends a random challenge on both helper sockets and continues only if each answer is the right HMAC-SHA256, so an app that binds the helper socket first can no longer impersonate the helper. A wrong or missing answer fails with "the process on the helper socket is not the Android-Use helper".
