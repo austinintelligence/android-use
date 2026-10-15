@@ -6,6 +6,10 @@
 
 - Agents act first: the instructions, `AGENTS.md`, and the skill no longer ask for a first read of the screen. In a served session, a label the agent was never shown runs only on an exact, unique, non-risky match inside the app it just opened; anything else is a miss that shows the screen. A label the agent never saw no longer runs if it is risky. (`au act` from a shell has no session and is unchanged.)
 - `set "X" on|off` is new: it does nothing when the switch is already in that state, and otherwise taps and checks the state changed. `toggle` checks that it flipped and says so ("Wi-Fi is now on"), failing when it did not.
+- A missing label now suggests up to three near labels from the screen and one `fix:` command to send as is (never with a risky label), and an ambiguous label says what each `number N` is.
+- Lenient targets: a row copied from `screen` (`sw Wi-Fi=on`, `Save#2`) names its control when its text is not itself a label, curly quotes work as straight ones, and `click`, `turn on|off "LABEL"` (taps only a switch or checkbox that is not already so, and refuses anything else) and `go back` are accepted. Every 1.x command parses as before; `computer/tests/command_corpus.rs` checks that against the commands in the docs, recorded from 1.2.0.
+- Lenient targets: a row copied from `screen` (`sw Wi-Fi=on`, `Save#2`) names its control when its text is not itself a label, curly quotes work as straight ones, and `click`, `turn on|off "LABEL"` (the same as `set "LABEL" on|off`) and `go back` are accepted. Every 1.x command parses as before; `computer/tests/command_corpus.rs` checks that against the commands in the docs, recorded from 1.2.0.
+- `set "X" on|off` is new: it does nothing when the switch is already in that state, and otherwise taps and checks the state changed. `toggle` checks that it flipped and says so ("Wi-Fi is now on"), failing when it did not.
 - Accessibility events no longer take the helper's UI lock (they bump an atomic generation and the last-event time, and a stale scene is rebuilt on demand), and `notificationTimeout` is 0 instead of 50. The quiet window after an action stays 200 ms but can be set with `AU_QUIET_MS`; `BENCH_QUIET_MS=200,150,120 cargo xtask benchmark-live` compares values.
 - After an action, the screen is reported as soon as it is ready: the host polls the helper's screen generation every 40 ms instead of sleeping 500 ms up to three times while a screen is empty or "Loading", and a tap that left the generation unchanged waits up to 600 ms for a late change before reporting.
 
@@ -63,6 +67,8 @@
 
 ### Maintenance
 
+- `cargo xtask benchmark-live` has an `act-first` policy (`BENCH_POLICY`) and fails a run that misses its absolute success, call-count, or latency gates.
+- Budgets (formatted lines), raised once for 1.3.0: Rust production 8,650, Java 4,100, automation 2,350, authored code 19,100. They were full (Rust 7,489 of 7,520, authored 15,512 of 15,550), and 1.3.0 adds the device link, preflight, and the helper's status screen.
 - Budgets (formatted lines), raised once for 1.3.0: Rust production 9,100, Java 4,700, automation 3,200, authored code 22,800. They were full (Rust 7,489 of 7,520, authored 15,512 of 15,550). The new caps are what the 33 other 1.3.0 PRs measure together (Rust 8,689, Java 4,382, automation 2,923, authored 21,358) plus about 5% for review fixes. The largest additions are the all-windows tree op (Java +361), the helper handshake (Java +225), the real-model benchmark (automation +355) and the workflow policy check (automation +187).
 - Screen presentation (the text view, `Changed:` diffs, and screen images for the model) moved out of `agent.rs` into `present.rs`; no behavior change.
 - `DeviceLink` is now the one seam between the engine and a device: `AdbLink` is the real adb and bridge path, and a scripted in-process `FakeLink` replaces the socket-based test helper. No behavior or wire change.

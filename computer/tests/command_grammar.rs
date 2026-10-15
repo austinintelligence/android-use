@@ -201,3 +201,24 @@ fn every_documented_form_parses_and_the_descriptions_list_the_common_ones() {
     assert_eq!(schemas[0]["annotations"]["readOnlyHint"], true);
     assert!(spec::help_text().contains("tap point X Y") && !act.contains("tap point"), "rare forms live behind help");
 }
+
+#[test]
+fn curly_quotes_and_verb_aliases_parse_as_their_canonical_forms() {
+    for (alias, canonical) in [
+        ("click “Wi-Fi”", r#"tap "Wi-Fi""#),
+        (r#"click "Save" number 2"#, r#"tap "Save" number 2"#),
+        ("go back", "press back"),
+        ("GO BACK then click “More”", r#"press back then tap "More""#),
+        (r#"type “hi” in “Message”"#, r#"type "hi" in "Message""#),
+    ] {
+        assert_eq!(parse_act_command(alias).unwrap(), parse_act_command(canonical).unwrap(), "{alias}");
+    }
+    for (command, on) in [(r#"turn on "Wi-Fi""#, true), (r#"turn off “Wi-Fi”"#, false)] {
+        assert_eq!(
+            format!("{:?}", parse_act_command(command).unwrap()),
+            format!("[Android(Set {{ target: Target {{ label: \"Wi-Fi\", ordinal: None, handle: None }}, on: {on} }})]")
+        );
+    }
+    assert!(parse_act_command("tap “Wi-Fi").is_err(), "an unclosed curly quote is still an error");
+    assert_eq!(parse_act_command(r#"tap "it’s “fine”""#).unwrap(), parse_act_command("tap \"it’s “fine”\"").unwrap(), "curly marks inside straight quotes stay text");
+}

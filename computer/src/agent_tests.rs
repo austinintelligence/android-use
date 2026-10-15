@@ -229,7 +229,7 @@ mod flows {
         assert!(unsafe_guess.contains("closest label is \"Save and delete all\", which was not tapped"), "{unsafe_guess}");
         // Two containing labels are ambiguous, never guessed.
         let two = act(&mut engine, r#"tap "Save""#).unwrap_err_or_text();
-        assert!(two.contains("matches 2 items"), "{two}");
+        assert!(two.contains("matches 2 items") && two.contains("1 = Save draft after \"Flaky\"; 2 = Save and delete all after \"Save draft\"."), "{two}");
     }
 
     #[test]
@@ -250,6 +250,43 @@ mod flows {
         assert!(act(&mut engine, r#"tap "Wi-Fi""#).unwrap().text.contains("Nothing was run"), "the last act did not open the app");
         engine.model_read(CommandRead::Screen { full: false, matching: None, delta: false }).unwrap();
         assert!(act(&mut engine, r#"tap "Wi-Fi""#).unwrap().text.starts_with("Done."), "a shown label runs as before");
+    }
+
+    #[test]
+    fn rows_curly_quotes_and_verb_aliases_name_the_same_control() {
+        let (mut engine, _dir) = engine();
+        act(&mut engine, r#"open app "Settings""#).unwrap();
+        for command in [r#"tap "sw Wi-Fi=on""#, r#"click “Wi-Fi”"#, r#"tap "Wi-Fi#1""#] {
+            assert!(act(&mut engine, command).unwrap().text.starts_with("Done."), "{command}");
+        }
+        for turn in [r#"turn on "Wi-Fi""#, r#"turn off "sw Wi-Fi=on""#, r#"turn on "Wi-Fi#1""#, r#"turn on "Wi-Fi" number 2"#] {
+            assert!(act(&mut engine, turn).is_err(), "{turn}: turn never taps what it cannot read as one switch");
+        }
+        // `turn on|off` is `set`, and a row copied from the screen names its switch.
+        act(&mut engine, r#"open app "com.example.switches""#).unwrap();
+        assert!(act(&mut engine, r#"turn on "sw Dark mode=on""#).unwrap().text.ends_with("was already on."));
+        assert!(act(&mut engine, r#"turn off "Dark mode""#).unwrap().text.starts_with("Done. Dark mode is now off."));
+        act(&mut engine, r#"open app "Settings""#).unwrap();
+        let numbered = act(&mut engine, r#"tap "Save" number 2"#).unwrap_err_or_text();
+        assert!(numbered.contains("which was not tapped"), "a number does not skip the risky check: {numbered}");
+        assert!(act(&mut engine, r#"tap "Save #2""#).unwrap().text.starts_with("No item labeled"), "text with a space before # is a label");
+        assert!(act(&mut engine, r#"tap "sw Missing=on""#).unwrap().text.starts_with("No item labeled \"sw Missing=on\""), "a miss reports what was asked");
+    }
+
+    #[test]
+    fn a_miss_names_near_labels_and_one_safe_fix() {
+        let (mut engine, _dir) = engine();
+        act(&mut engine, r#"open app "Settings""#).unwrap();
+        let miss = act(&mut engine, r#"tap "Blue tooth""#).unwrap().text;
+        assert!(miss.contains("\nNear: \"Bluetooth\"\nfix: tap \"Bluetooth\"\nOn screen now:"), "{miss}");
+        let typed = act(&mut engine, r#"type "x" in "Wifi""#).unwrap().text;
+        assert!(typed.contains("fix: type \"x\" in \"Wi-Fi\""), "{typed}");
+        // Risky labels are named as near but never offered in a fix.
+        let risky = act(&mut engine, r#"tap "Save and delete everything""#).unwrap().text;
+        assert!(risky.contains("Near: \"Save and delete all\"") && !risky.contains("fix:"), "{risky}");
+        let long = act(&mut engine, &format!(r#"type "{}" in "Wifi""#, "x".repeat(100))).unwrap().text;
+        assert!(long.contains("Near:") && !long.contains("fix:"), "a long text is not repeated in a fix");
+        assert!(!act(&mut engine, r#"tap "Zebra""#).unwrap().text.contains("Near:"));
     }
 
     #[test]

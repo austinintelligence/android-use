@@ -10,6 +10,8 @@ What Android Use costs an agent, how we measure it, and the numbers behind the c
 - **Tokens:** counted with the o200k tokenizer as a stand-in. Ratios matter; absolute counts vary by model. `baseline/trace_tokens.py` recounts a `BENCH_TRACE` file.
 - **Tasks:** thirteen over Settings, the `aubench` fixture app, and Chrome, ten runs each; the nine that exist in both harnesses are compared.
 
+Run it per policy: `BENCH_RUNS=10 BENCH_POLICY=1.2 cargo xtask benchmark-live` (the table below) and `BENCH_POLICY=act-first` (no first read, `then` chains, `set` for switches). Each ends with its absolute gates, listed in [testing](../contributing/testing.md).
+
 ## Results
 
 | Metric | Before | Now | Change |
@@ -75,3 +77,7 @@ python3 docs/design/baseline/trace_tokens.py target/trace.json
 ```
 
 The device or emulator needs the helper enabled and the fixture installed; [testing](../contributing/testing.md) explains both.
+
+## Not done here
+
+- The 1.3.0 gates have not been run on the reference emulator (this build had no Android SDK); the act-first numbers are unmeasured until `BENCH_POLICY=act-first` is run there.

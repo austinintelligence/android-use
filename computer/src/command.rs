@@ -199,12 +199,18 @@ fn lex(input: &str) -> Result<Vec<Lexeme>> {
         if first.is_whitespace() {
             continue;
         }
-        if first == '"' {
+        if first == '"' || first == '\u{201c}' {
+            // Pasted or typed by a keyboard that curls quotes: “label” is "label".
+            let curly = first != '"';
             let mut value = String::new();
             let mut closed = false;
             while let Some(current) = chars.next() {
                 match current {
                     '"' => {
+                        closed = true;
+                        break;
+                    }
+                    '\u{201d}' if curly => {
                         closed = true;
                         break;
                     }
@@ -445,12 +451,22 @@ fn parse_android_action(t: &[Lexeme]) -> Result<AndroidAction> {
         }
         return Ok(AndroidAction::PointTap { x: u16v_word(t, 2, "x")?, y: u16v_word(t, 3, "y")? });
     }
-    if t.len() >= 2 && (is_word(t, 0, "tap") || is_word(t, 0, "hold") || is_word(t, 0, "toggle")) {
+    if t.len() >= 3 && is_word(t, 0, "turn") && (is_word(t, 1, "on") || is_word(t, 1, "off")) {
+        let (target, next) = target_at(t, 2)?;
+        if next != t.len() {
+            return Err(Error::new(Code::Args, "turn on or off accepts one target"));
+        }
+        return Ok(AndroidAction::Set { target, on: is_word(t, 1, "on") });
+    }
+    if t.len() == 2 && is_word(t, 0, "go") && is_word(t, 1, "back") {
+        return Ok(AndroidAction::Key(Key::Back));
+    }
+    if t.len() >= 2 && (is_word(t, 0, "tap") || is_word(t, 0, "click") || is_word(t, 0, "hold") || is_word(t, 0, "toggle")) {
         let (target, next) = target_at(t, 1)?;
         if next != t.len() {
             return Err(Error::new(Code::Args, "tap or hold accepts one target"));
         }
-        return Ok(if is_word(t, 0, "tap") {
+        return Ok(if is_word(t, 0, "tap") || is_word(t, 0, "click") {
             AndroidAction::Tap(target)
         } else if is_word(t, 0, "hold") {
             AndroidAction::Hold(target)
