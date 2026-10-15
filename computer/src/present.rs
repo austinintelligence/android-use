@@ -138,10 +138,12 @@ impl Engine {
         if marks.is_empty() {
             return None;
         }
-        self.agent.marked_in = before.filter(|before| Some(before) == self.scene_id().as_ref());
+        let still = before.filter(|before| Some(before) == self.scene_id().as_ref());
         let mut image = visual::decode(bytes).ok()?;
         marks::draw(&mut image, &marks);
-        visual::encode(image.w, image.h, &image.pixels, usize::MAX).ok()
+        let marked = visual::encode(image.w, image.h, &image.pixels, usize::MAX).ok()?;
+        self.agent.marked_in = still;
+        Some(marked)
     }
 
     /// Compresses a screen capture for the model and remembers how its
@@ -151,6 +153,10 @@ impl Engine {
         let marked = self.marked(&bytes);
         let Ok(compressed) = compress::for_model(marked.as_deref().unwrap_or(&bytes), &Policy::from_env()) else {
             // Sent unchanged, so the image is full resolution and its pixels are device pixels.
+            // It carries no numbers, so what the marks just renumbered was never shown.
+            if marked.is_some() {
+                self.agent.marked_in = None;
+            }
             self.agent.space = visual::decode(&bytes).ok().map(|image| ImageSpace { device: (image.w, image.h), image: (image.w, image.h) });
             self.agent.originals.insert("screen".into(), bytes.clone().into());
             let mime_type = mime_type(&bytes);
