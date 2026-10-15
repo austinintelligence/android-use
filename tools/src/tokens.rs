@@ -79,7 +79,7 @@ pub fn capture(root: &Path, name: &str, reviewed: bool) -> Result<(), String> {
 
 /// The kind of the first string in `value` that looks like personal data: an email address, a card
 /// number (13 to 19 digits passing the Luhn check), or a phone number (10 to 15 digits, possibly
-/// grouped by spaces, dashes or brackets; ISO dates do not count). A backstop to `--reviewed`,
+/// grouped by spaces, dashes or brackets; dates and times do not count). A backstop to `--reviewed`,
 /// not a substitute: names and messages cannot be recognized.
 pub fn personal_data(value: &Value) -> Option<&'static str> {
     match value {
@@ -98,7 +98,14 @@ fn personal_text(text: &str) -> Option<&'static str> {
     if email {
         return Some("an email address");
     }
-    let chars: Vec<char> = text.chars().collect();
+    let mut chars: Vec<char> = text.chars().collect();
+    // Dates and times sit next to other numbers on ordinary screens; blank them so they never
+    // join a digit run.
+    for at in 0..chars.len() {
+        if let Some(len) = ["dddd-dd-dd", "dd-dd-dddd", "dd:dd", "d:dd"].iter().find(|shape| shaped(&chars[at..], shape)).map(|shape| shape.len()) {
+            chars[at..at + len].fill('x');
+        }
+    }
     let mut at = 0;
     while at < chars.len() {
         if !(chars[at].is_ascii_digit() || chars[at] == '+' || chars[at] == '(') {
@@ -111,15 +118,25 @@ fn personal_text(text: &str) -> Option<&'static str> {
         }
         let run: String = chars[start..at].iter().collect();
         let digits: Vec<u32> = run.chars().filter_map(|c| c.to_digit(10)).collect();
-        let date = run.len() >= 10 && run.as_bytes()[..10].iter().enumerate().all(|(i, b)| if i == 4 || i == 7 { *b == b'-' } else { b.is_ascii_digit() });
         if (13..=19).contains(&digits.len()) && luhn(&digits) {
             return Some("a card number");
         }
-        if (10..=15).contains(&digits.len()) && !date {
+        if (10..=15).contains(&digits.len()) {
             return Some("a phone number");
         }
     }
     None
+}
+
+/// `chars` starts with `shape`: `d` is a digit, `-` a date separator (`-`, `/` or `.`), anything
+/// else itself.
+fn shaped(chars: &[char], shape: &str) -> bool {
+    chars.len() >= shape.len()
+        && shape.chars().zip(chars).all(|(want, &c)| match want {
+            'd' => c.is_ascii_digit(),
+            '-' => "-/.".contains(c),
+            _ => c == want,
+        })
 }
 
 fn luhn(digits: &[u32]) -> bool {
@@ -141,6 +158,10 @@ mod tests {
         let ordinary = json!([
             ["Wi-Fi", "on", "switch"],
             ["Updated 2026-10-15 12:30", "", "text"],
+            ["(2026-10-15 12:30)", "", "text"],
+            ["12:30 2026-10-15", "", "text"],
+            ["15-10-2026 12:30", "", "text"],
+            ["2026-10-15 - 2026-10-17", "", "text"],
             ["Storage 64.0 GB", "", "text"],
             ["Version 1.2.0 (1002000)", "", "text"],
             ["Build 1.2.0.1003000", "", "text"],

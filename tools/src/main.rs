@@ -258,9 +258,9 @@ fn version(root: &Path) -> Result<(), String> {
     Ok(())
 }
 /// A standalone `v2` or `v3` version (`v2`, `v3.1`, `v2.0.0`), the product's old names. Words that only
-/// contain one (`dev2`, `v2ray`, `MP3v2`) are not versions.
+/// contain one (`dev2`, `v2ray`, `MP3v2`) are not versions; `app_v2` is.
 fn stale_version_marker(text: &str) -> Option<&str> {
-    let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let word = |c: char| c.is_alphanumeric();
     text.match_indices(['v', 'V']).find_map(|(at, _)| {
         let rest = &text[at + 1..];
         let end = rest.find(|c: char| !c.is_ascii_digit() && c != '.').unwrap_or(rest.len());
@@ -707,10 +707,10 @@ mod tests {
 
     #[test]
     fn only_version_shaped_markers_are_stale() {
-        for text in ["Use v2 now.", "see (v3.1)", "V2.0.0", "v3."] {
+        for text in ["Use v2 now.", "see (v3.1)", "V2.0.0", "v3.", "android_use_v2"] {
             assert!(stale_version_marker(text).is_some(), "{text}");
         }
-        for text in ["dev2 build", "v2ray", "MP3v2", "/api/v2x", "v1.2.0", "v20", "kv3", "v"] {
+        for text in ["dev2 build", "v2ray", "MP3v2", "/api/v2x", "v1.2.0", "v20", "kv3", "v", "év2"] {
             assert_eq!(stale_version_marker(text), None, "{text}");
         }
     }
