@@ -98,8 +98,8 @@ final class Vm {
                 if (SystemClock.elapsedRealtime() > end) throw new Fail(i, true);
                 boolean ok;
                 if (p.mutates && !guarded && p.name.equals("scroll_until")) {
-                    // A long loop must not hold the guard, or the scene could not be rebuilt
-                    // as the screen scrolls.
+                    // A long loop must not hold the guard: it would block other workers' observe
+                    // and semantic reads for as long as it scrolls.
                     synchronized (ui.guard()) {
                         if (ui.snapshot().generation != expected) throw new Stale();
                     }
