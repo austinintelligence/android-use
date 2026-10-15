@@ -10,7 +10,7 @@
 ### Security
 
 - Every cargo call in the workflows, `cargo xtask`, and the contributor docs uses `--locked`. `cargo-audit` and `cargo-deny` are installed at pinned versions, `deny.toml` rejects yanked crates, runners are `ubuntu-24.04`/`windows-2022` rather than `-latest`, and CI runs on pushes to `main` and on pull requests only.
-- New `cargo xtask workflow-policy`, run by `check` and `verify`: workflows must pin every action to a commit SHA, keep top-level permissions read-only, avoid `pull_request_target`, limit push triggers to `main` and `v*` tags, and never pipe a download into a shell.
+- New `cargo xtask workflow-policy`, run by `check` and `verify`: workflows must pin every action to a commit SHA, keep top-level permissions read-only, avoid `pull_request_target`, limit push triggers to `main` and `v*` tags, never pipe a download into a shell, and keep `persist-credentials: false` on every checkout. It is a text-level tripwire, not a YAML parser. Gradle dependencies are not yet locked.
 
 ### Maintenance
 
