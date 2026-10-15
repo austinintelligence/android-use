@@ -75,6 +75,11 @@
 - `verify eN` checks that handle instead of searching for the label "eN"; `wait for eN`, `verify eN is gone`, and `verify "X" number N is gone` are rejected instead of silently dropping the handle or number; a reconnect to the helper clears the cached screen; an `eN` from an earlier screen is refused with "read the screen again".
 - Every wait now has a deadline: a hung `adb`, `emulator`, or `sdkmanager` child or a stalled output pipe is stopped with a clear error, each Chrome DevTools command times out instead of waiting forever, `au emulator snapshot` and `destroy` touch only emulators `au emulator create` made (a foreign AVD or emulator is refused), and a failed `au emulator start` kills the emulator it spawned.
 
+### Security
+
+- Every cargo call in the workflows, `cargo xtask`, and the contributor docs uses `--locked`. `cargo-audit` and `cargo-deny` are installed at pinned versions, `deny.toml` rejects yanked crates, runners are `ubuntu-24.04`/`windows-2022` rather than `-latest`, and CI runs on pushes to `main` and on pull requests only.
+- New `cargo xtask workflow-policy`, run by `check` and `verify`: workflows must pin every action to a commit SHA, keep top-level permissions read-only, avoid `pull_request_target`, limit push triggers to `main` and `v*` tags, never pipe a download into a shell, and keep `persist-credentials: false` on every checkout. It is a text-level tripwire, not a YAML parser. Gradle dependencies are not yet locked.
+
 ### Maintenance
 
 - Budgets (formatted lines), raised once for 1.3.0: Rust production 9,100, Java 4,700, automation 3,200, authored code 22,800. They were full (Rust 7,489 of 7,520, authored 15,512 of 15,550). The new caps are what the 33 other 1.3.0 PRs measure together (Rust 8,689, Java 4,382, automation 2,923, authored 21,358) plus about 5% for review fixes. The largest additions are the all-windows tree op (Java +361), the helper handshake (Java +225), the real-model benchmark (automation +355) and the workflow policy check (automation +187).

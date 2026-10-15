@@ -10,24 +10,24 @@ on:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   dependency-audit:
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with: { persist-credentials: false }
       - name: Pin Rust toolchain
         shell: powershell
         run: rustup toolchain install 1.94.0 --profile minimal; rustup default 1.94.0
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        run: cargo install --locked --version 0.22.2 cargo-audit
       - name: Audit Rust dependencies
         run: cargo audit --file Cargo.lock
       - name: Install cargo-deny
-        run: cargo install cargo-deny --locked
+        run: cargo install --locked --version 0.20.2 cargo-deny
       - name: Check Rust licenses, bans, and sources
-        run: cargo deny check
+        run: cargo deny --locked check
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22.18.0'
@@ -37,7 +37,7 @@ jobs:
 
   dependency-review:
     if: github.event_name == 'pull_request'
-    runs-on: windows-latest
+    runs-on: windows-2022
     permissions:
       contents: read
       pull-requests: read

@@ -18,10 +18,14 @@ Point `ANDROID_HOME` (or `ANDROID_SDK_ROOT`) at the SDK and `JAVA_HOME` at the J
 ## Build
 
 ```console
-cargo build --release --bin au
+cargo build --locked --release --bin au
 cargo xtask android          # debug helper APK and the aubench fixture
 cargo xtask package          # release archive layout in dist/ (embeds the helper)
 ```
+
+## Workflows
+
+`cargo xtask workflow-policy` (also run by `check` and `verify`, so in CI) holds `.github/workflows/` to these rules: every `uses:` is pinned to a full 40-character commit SHA; a top-level `permissions:` block exists and grants no write (jobs ask for their own); no `pull_request_target`; `push` triggers name only `main` and `v*` tags; runners name a version, never `-latest`; every `cargo build|test|run|install|clippy|check|deny` has `--locked`; `cargo install` has `--version`; nothing pipes a download into a shell; every checkout sets `persist-credentials: false`; `npm ci`, never `npm install`; no `workflow_run` trigger and no attacker-controlled text (PR titles, branch names, comment bodies) expanded in a workflow. A `pull_request` workflow may not hold contents, id-token, packages, actions or pull-requests write. The check reads the YAML as text (case-insensitively, joining `\` and trailing-`|` continuations), so treat it as a tripwire that catches mistakes, not a proof: review changes under `.github/` by hand, and give them a CODEOWNERS entry. "Locked" covers Cargo and npm only; the Gradle build still resolves dependencies without verification metadata, which is remaining work. CI runs on pushes to `main` and on pull requests. `cargo-audit` and `cargo-deny` are installed at the versions pinned in `security.yml`; bump them there deliberately.
 
 ## Release
 
@@ -31,8 +35,8 @@ See [releasing](release.md).
 
 ```console
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-targets
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo test --locked --workspace --all-targets
 cargo xtask test             # Rust tests and helper unit tests
 cargo xtask verify           # every gate, including docs and source budgets
 npm test && npm run lint

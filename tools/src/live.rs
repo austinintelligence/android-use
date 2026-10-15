@@ -262,7 +262,7 @@ fn run_task(exe: &Path, quiet: Option<u16>, task: &Task, latency: &mut BTreeMap<
 pub fn run(root: &Path) -> Result<(), String> {
     let exe = env::var_os("AU_BIN").map(PathBuf::from).unwrap_or_else(|| root.join("target/dist").join(if cfg!(windows) { "au.exe" } else { "au" }));
     if !exe.is_file() {
-        return Err("build target/dist/au (cargo build --profile dist -p au) before running the live benchmark".into());
+        return Err("build target/dist/au (cargo build --locked --profile dist -p au) before running the live benchmark".into());
     }
     let runs: usize = env::var("BENCH_RUNS").ok().and_then(|value| value.parse().ok()).unwrap_or(3);
     // BENCH_QUIET_MS="200,150,120" runs the whole benchmark once per quiet window and compares taps.

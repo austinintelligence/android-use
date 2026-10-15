@@ -11,6 +11,7 @@ use std::{
 
 mod emulator_e2e;
 mod live;
+mod policy;
 mod tokens;
 
 fn main() {
@@ -24,11 +25,13 @@ fn run() -> Result<(), String> {
     match env::args().nth(1).as_deref().unwrap_or("help") {
         "check" => {
             cmd(&root, "cargo", &["fmt", "--all", "--", "--check"])?;
-            cmd(&root, "cargo", &["clippy", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings"])?;
+            cmd(&root, "cargo", &["clippy", "--locked", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings"])?;
+            policy::run(&root)?;
             gate(&root)
         }
+        "workflow-policy" => policy::run(&root),
         "test" => {
-            cmd(&root, "cargo", &["test", "--workspace", "--all-targets"])?;
+            cmd(&root, "cargo", &["test", "--locked", "--workspace", "--all-targets"])?;
             android(&root, "testDebugUnitTest")
         }
         "android" => android(&root, "assembleDebug"),
@@ -54,7 +57,7 @@ fn run() -> Result<(), String> {
         }
         _ => {
             println!(
-                "cargo xtask check|test|android|package|release|version|release-manifest DIR|release-notes|manifest|verify|benchmark|benchmark-live|emulator-e2e|size|docs [--write]|golden-capture NAME --reviewed"
+                "cargo xtask check|test|android|package|release|version|release-manifest DIR|release-notes|manifest|verify|workflow-policy|benchmark|benchmark-live|emulator-e2e|size|docs [--write]|golden-capture NAME --reviewed"
             );
             Ok(())
         }
@@ -63,16 +66,17 @@ fn run() -> Result<(), String> {
 fn verify(root: &Path) -> Result<(), String> {
     version(root)?;
     cmd(root, "cargo", &["fmt", "--all", "--", "--check"])?;
-    cmd(root, "cargo", &["clippy", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings"])?;
-    cmd(root, "cargo", &["test", "--workspace", "--all-targets"])?;
+    cmd(root, "cargo", &["clippy", "--locked", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings"])?;
+    cmd(root, "cargo", &["test", "--locked", "--workspace", "--all-targets"])?;
     let npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
     cmd(root, npm, &["test"])?;
     cmd(root, npm, &["run", "lint"])?;
     android(root, "testDebugUnitTest")?;
     android(root, "assembleRelease")?;
     gate(root)?;
+    policy::run(root)?;
     docs(root, false)?;
-    cmd(root, "cargo", &["build", "--profile", "dist", "-p", "au"])?;
+    cmd(root, "cargo", &["build", "--locked", "--profile", "dist", "-p", "au"])?;
     artifact_sizes(root)?;
     size(root).map(|_| ())
 }
@@ -94,7 +98,7 @@ fn package(root: &Path) -> Result<(), String> {
     android(root, "assembleRelease")?;
     // The release binary carries the helper, so `au setup` needs nothing beside it.
     env::set_var("AU_EMBED_APK", release_apk(root)?);
-    cmd(root, "cargo", &["build", "--profile", "dist", "-p", "au"])?;
+    cmd(root, "cargo", &["build", "--locked", "--profile", "dist", "-p", "au"])?;
     let dist = root.join("dist");
     fs::create_dir_all(&dist).map_err(ioe)?;
     let exe = if cfg!(windows) { "au.exe" } else { "au" };
@@ -139,7 +143,7 @@ fn manifest(root: &Path) -> Result<(), String> {
     fs::write(dist.join("manifest.json"), serde_json::to_vec(&json!({"schema":3,"version":env!("CARGO_PKG_VERSION"),"assets":assets})).map_err(|e| e.to_string())?).map_err(ioe)
 }
 fn benchmark(root: &Path) -> Result<(), String> {
-    cmd(root, "cargo", &["build", "--release", "-p", "au"])?;
+    cmd(root, "cargo", &["build", "--locked", "--release", "-p", "au"])?;
     let exe = root.join("target/release").join(if cfg!(windows) { "au.exe" } else { "au" });
     let mut samples = Vec::with_capacity(40);
     for _ in 0..40 {
