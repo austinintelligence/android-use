@@ -79,10 +79,7 @@ pub(crate) fn check(text: &str) -> Vec<String> {
         if line.contains("write-all") {
             bad("permissions: write-all is not allowed");
         }
-        let into_shell = line
-            .split('|')
-            .skip(1)
-            .any(|seg| seg.trim_start().trim_start_matches("sudo ").trim_start().split_whitespace().next().is_some_and(|w| ["sh", "bash", "zsh"].contains(&w)));
+        let into_shell = line.split('|').skip(1).any(|seg| seg.split_whitespace().find(|w| *w != "sudo").is_some_and(|w| ["sh", "bash", "zsh"].contains(&w)));
         if (line.contains("curl") || line.contains("wget")) && (into_shell || line.contains("<(")) {
             bad("piping a download into a shell is not allowed");
         }
