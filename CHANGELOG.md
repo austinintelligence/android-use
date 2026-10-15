@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Acting is 10 to 40 ms faster: the journal is reloaded only when another process wrote it.
+
 ### Fixed
 
 - `cargo xtask` gates fail closed: a missing release artifact fails the size gate instead of measuring 0 bytes, and the stale-version check flags only standalone versions such as `v2` or `v3.1`, not words that contain one (`dev2`).
