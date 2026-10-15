@@ -10,15 +10,16 @@
 | `ANDROID_HOME`, `ANDROID_SDK_ROOT` | `au emulator` | Android SDK location (also searched in the usual Android Studio folders). |
 | `AU_IMAGE_MAX_EDGE` | `au` | Longest side of screen images in pixels (256–4096). Each screen uses the lower of this and its own limit: 1568 dense text, 1280 ordinary UI, 960 sparse. |
 | `AU_IMAGE_BUDGET_KB` | `au` | Target image size in KB (32–4096). Default 350. |
-| `AU_BIN` | npm launcher | Use this `au` instead of the packaged one (for testing a local build). |
+| `AU_BIN` | npm launcher | Use this `au` instead of the packaged one (for testing a local build). Skips the integrity check and warns on stderr every run. |
 | `ANDROID_USE_VERSION`, `AU_INSTALL_DIR` | install scripts | Install a specific release; install somewhere other than the default folder. |
+| `AU_DEV_APK` | running `au` | Any value lets a release `au` install a helper APK that is not signed by the release key, with `-t`; for tests and source builds. Debug builds always allow it. |
 | `AU_EMBED_APK` | building `au` | Path of the helper APK to compile in; set by the release build. |
 
 Development variables (`BENCH_*`, `E2E_*`, `AU_GRADLE`) are in [testing](../contributing/testing.md).
 
 ## Files
 
-Everything lives under `AU_HOME`. The default target keeps `device.json` (the enrolled device), `operations.jsonl` (the journal), and `artifacts/`. An emulator target `NAME` keeps the same under `targets/NAME/`, plus `target.json`, `instance` (its identity), and `emulator.log`; emulator disks are under `emulators/avd/`. `au uninstall` removes the default target's state. `au emulator destroy NAME --yes` removes an emulator's.
+Everything lives under `AU_HOME`, private to your user on macOS and Linux (folders 0700, files 0600); artifacts older than 7 days are deleted at startup, so a shared `AU_HOME` on CI must become per user. The default target keeps `device.json` (the enrolled device), `operations.jsonl` (the journal), and `artifacts/`. An emulator target `NAME` keeps the same under `targets/NAME/`, plus `target.json`, `instance` (its identity), and `emulator.log`; emulator disks are under `emulators/avd/`. `au uninstall` removes the default target's state. `au emulator destroy NAME --yes` removes an emulator's.
 
 ## Output
 

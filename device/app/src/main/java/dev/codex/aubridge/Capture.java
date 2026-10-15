@@ -4,6 +4,7 @@ import android.Manifest;
 import android.accessibilityservice.AccessibilityService;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.content.pm.ServiceInfo;
 import android.graphics.Bitmap;
 import android.graphics.ColorSpace;
 import android.graphics.ImageFormat;
@@ -22,6 +23,7 @@ import android.media.projection.MediaProjection;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Base64;
 import android.util.DisplayMetrics;
@@ -45,6 +47,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 final class Capture {
@@ -195,6 +198,7 @@ final class Capture {
         Throwable[] failure = new Throwable[1];
         CameraDevice[] device = new CameraDevice[1];
         CameraCaptureSession[] session = new CameraCaptureSession[1];
+        Safety.Abandon late = new Safety.Abandon();
         reader.setOnImageAvailableListener(
                 source -> {
                     try (android.media.Image image = source.acquireLatestImage();
@@ -212,13 +216,16 @@ final class Capture {
                     }
                 },
                 handler);
+        BridgeService.begin(ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA);
         try {
             manager.openCamera(
                     camera,
                     new CameraDevice.StateCallback() {
                         @Override
                         public void onOpened(CameraDevice opened) {
-                            device[0] = opened;
+                            // After a timeout nobody closes this camera, so close it here.
+                            late.offer(() -> device[0] = opened, opened::close);
+                            if (device[0] != opened) return;
                             try {
                                 List<Surface> surfaces = new ArrayList<>();
                                 surfaces.add(reader.getSurface());
@@ -321,10 +328,12 @@ final class Capture {
                 throw new IOException("camera produced no JPEG");
             return id;
         } finally {
+            late.abandon();
             if (session[0] != null) session[0].close();
             if (device[0] != null) device[0].close();
             reader.close();
             thread.quitSafely();
+            BridgeService.end(ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA);
             if (!output.isFile() || output.length() == 0 || output.length() > MAX_ARTIFACT)
                 output.delete();
             prune();
@@ -353,7 +362,8 @@ final class Capture {
         File output = file(id);
         byte[] buffer = new byte[min];
         long data = 0;
-        boolean ok = false;
+        boolean ok = false, sound = false;
+        BridgeService.begin(ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
         try (RandomAccessFile out = new RandomAccessFile(output, "rw")) {
             out.write(new byte[44]);
             record.startRecording();
@@ -363,17 +373,20 @@ final class Capture {
                 if (n > 0) {
                     out.write(buffer, 0, n);
                     data += n;
+                    sound |= !Safety.silent(buffer, n);
                 } else {
                     SystemClock.sleep(10);
                 }
             }
             if (data == 0) throw new IOException("microphone produced no samples");
+            if (!sound) throw new IOException("microphone produced only silence");
             out.seek(0);
             wav(out, data, rate);
             ok = true;
         } finally {
             if (record.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) record.stop();
             record.release();
+            BridgeService.end(ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
             if (!ok || output.length() > MAX_ARTIFACT) output.delete();
             prune();
         }
@@ -383,6 +396,17 @@ final class Capture {
     String screenRecord(int seconds) throws Exception {
         if (Build.VERSION.SDK_INT < 21) throw new Vm.Unsupported();
         if (!Projection.available()) throw new Vm.Permission();
+        Recording order = new Recording();
+        BridgeService.begin(ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
+        try {
+            order.reach(Recording.Step.SERVICE_PROMOTED);
+            return record(seconds, order);
+        } finally {
+            BridgeService.end(ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
+        }
+    }
+
+    private String record(int seconds, Recording order) throws Exception {
         MediaProjection projection;
         try {
             projection = Projection.acquire(context);
@@ -390,6 +414,7 @@ final class Capture {
             throw new Vm.Permission();
         }
         if (projection == null) throw new Vm.Permission();
+        order.reach(Recording.Step.PROJECTION_OBTAINED);
         DisplayMetrics metrics = context.getResources().getDisplayMetrics();
         int width = Math.max(320, metrics.widthPixels),
                 height = Math.max(320, metrics.heightPixels),
@@ -406,8 +431,17 @@ final class Capture {
         MediaRecorder recorder = new MediaRecorder();
         VirtualDisplay display = null;
         boolean started = false, ok = false;
+        AtomicBoolean stopped = new AtomicBoolean();
         try {
-            BridgeService.projectionStarted();
+            projection.registerCallback(
+                    new MediaProjection.Callback() {
+                        @Override
+                        public void onStop() {
+                            stopped.set(true);
+                        }
+                    },
+                    new Handler(Looper.getMainLooper()));
+            order.reach(Recording.Step.CALLBACK_REGISTERED);
             recorder.setVideoSource(MediaRecorder.VideoSource.SURFACE);
             recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
             recorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264);
@@ -417,6 +451,7 @@ final class Capture {
                     Math.min(4_000_000, Math.max(800_000, width * height * 2)));
             recorder.setOutputFile(output.getAbsolutePath());
             recorder.prepare();
+            order.reach(Recording.Step.DISPLAY_CREATED);
             display =
                     projection.createVirtualDisplay(
                             "AU screen",
@@ -433,6 +468,7 @@ final class Capture {
             started = true;
             SystemClock.sleep(seconds * 1000L);
             recorder.stop();
+            if (stopped.get()) throw new IOException("screen sharing stopped");
             if (output.length() > MAX_ARTIFACT) throw new IOException("recording too large");
             ok = true;
             return id;
@@ -442,7 +478,8 @@ final class Capture {
                     recorder.stop();
                 } catch (RuntimeException ignored) {
                 }
-            throw e;
+            // An expired or revoked grant surfaces here as a SecurityException.
+            throw e instanceof SecurityException ? new Vm.Permission() : e;
         } finally {
             if (display != null) display.release();
             try {
@@ -458,6 +495,7 @@ final class Capture {
 
     JSONArray read(long seq, String id, Long from, Long to) throws Exception {
         if (!id.matches("a[0-9a-z]{1,32}")) throw new Bridge.Limit();
+        prune();
         File f = file(id);
         if (!f.isFile() || Files.isSymbolicLink(f.toPath())) throw new IOException("artifact");
         long size = f.length();
@@ -558,10 +596,23 @@ final class Capture {
         le(out, v & 65535);
     }
 
+    /** Captures live on the phone for 24 hours at most. */
+    static final long TTL_MS = 24L * 60 * 60 * 1000;
+
+    static boolean expired(long lastModified, long now) {
+        return now - lastModified > TTL_MS;
+    }
+
     private void prune() {
         File[] files = dir.listFiles(File::isFile);
-        if (files == null || files.length <= 16) return;
+        if (files == null) return;
+        long now = System.currentTimeMillis();
+        int kept = files.length;
         Arrays.sort(files, Comparator.comparingLong(File::lastModified));
-        for (int i = 0; i < files.length - 16; i++) files[i].delete();
+        for (File f : files) {
+            if (expired(f.lastModified(), now) || kept > 16) {
+                if (f.delete()) kept--;
+            }
+        }
     }
 }

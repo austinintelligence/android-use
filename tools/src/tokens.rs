@@ -62,9 +62,7 @@ pub fn capture(root: &Path, name: &str, reviewed: bool) -> Result<(), String> {
         return Err("golden fixtures are committed: check the screen on the device shows no names, accounts, messages, or numbers of yours, then pass --reviewed".into());
     }
     let paths = au::device::Paths::discover().map_err(|e| e.message)?;
-    let adb = au::device::Adb::discover().map_err(|e| e.message)?;
-    let device = adb.resolve(&paths).map_err(|e| e.message)?;
-    let mut bridge = au::bridge::Bridge::connect(adb, device).map_err(|e| e.message)?;
+    let mut bridge = au::link::DeviceLink::helper(&mut au::link::AdbLink::new(paths)).map_err(|e| e.message)?;
     let rows = bridge.query("semantic", Value::String(String::new())).map_err(|e| e.message)?;
     if let Some(found) = personal_data(&rows) {
         return Err(format!("the screen shows what looks like personal data ({found}); nothing was saved"));
@@ -92,7 +90,7 @@ pub fn personal_data(value: &Value) -> Option<&'static str> {
 
 fn personal_text(text: &str) -> Option<&'static str> {
     let email = text.split(|c: char| c.is_whitespace() || "<>()[]\",;:".contains(c)).any(|word| {
-        let Some((local, domain)) = word.split_once('@') else { return false };
+        let Some((local, domain)) = word.trim_end_matches(['.', '!', '?']).split_once('@') else { return false };
         !local.is_empty() && domain.split('.').count() >= 2 && domain.split('.').all(|part| !part.is_empty() && part.chars().all(|c| c.is_alphanumeric() || c == '-'))
     });
     if email {
@@ -100,9 +98,11 @@ fn personal_text(text: &str) -> Option<&'static str> {
     }
     let mut chars: Vec<char> = text.chars().collect();
     // Dates and times sit next to other numbers on ordinary screens; blank them so they never
-    // join a digit run.
+    // join a digit run. Only standalone ones: `4111-11-11-1111...` is a card, not a date.
+    let joined = |c: Option<&char>| c.is_some_and(|c| c.is_ascii_digit() || "-/.".contains(*c));
     for at in 0..chars.len() {
-        if let Some(len) = ["dddd-dd-dd", "dd-dd-dddd", "dd:dd", "d:dd"].iter().find(|shape| shaped(&chars[at..], shape)).map(|shape| shape.len()) {
+        let shape = ["dddd-dd-dd", "dd-dd-dddd", "dd:dd", "d:dd"].into_iter().find(|shape| shaped(&chars[at..], shape));
+        if let Some(len) = shape.map(str::len).filter(|&len| !joined(at.checked_sub(1).and_then(|i| chars.get(i))) && !joined(chars.get(at + len))) {
             chars[at..at + len].fill('x');
         }
     }
@@ -153,8 +153,11 @@ mod tests {
     #[test]
     fn captures_refuse_rows_that_look_personal() {
         assert_eq!(personal_data(&json!([["Signed in as ada@example.com", "", "text"]])), Some("an email address"));
+        assert_eq!(personal_data(&json!([["Sent to ada@example.com.", "", "text"]])), Some("an email address"));
         assert_eq!(personal_data(&json!([["Call +1 (650) 555-0134", "", "button"]])), Some("a phone number"));
-        assert_eq!(personal_data(&json!({"rows": [["4111 1111 1111 1111"]]})), Some("a card number"));
+        for card in ["4111 1111 1111 1111", "4111-1111-1111-1111", "4111111111111111", "4111-11-11-11111111"] {
+            assert_eq!(personal_data(&json!({"rows": [[card]]})), Some("a card number"), "{card}");
+        }
         assert_eq!(personal_data(&json!([["2026-10-15 650 555 0134"]])), Some("a phone number"));
         let ordinary = json!([
             ["Wi-Fi", "on", "switch"],

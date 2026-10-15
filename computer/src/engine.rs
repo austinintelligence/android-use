@@ -7,9 +7,10 @@ use crate::{
     artifact::{valid, Artifacts, MAX_ARTIFACT},
     bridge::{Bridge, Observation},
     browser::{Browser, Outcome},
-    device::{Adb, Device, Paths},
+    device::Paths,
     format,
     journal::{unknown, Journal, ANDROID, BROWSER},
+    link::{AdbLink, DeviceLink},
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -22,8 +23,7 @@ pub use crate::agent::{ModelImage, ModelResponse};
 
 pub struct Engine {
     paths: Paths,
-    adb: Option<Adb>,
-    device: Option<Device>,
+    link: Box<dyn DeviceLink>,
     bridge: Option<Bridge>,
     browser: Option<Browser>,
     pub(crate) scene: Option<Scene>,
@@ -35,6 +35,9 @@ pub struct Engine {
     /// durable; without the salt a new session could collide with old records.
     session: String,
     request_counter: u64,
+    /// The last `stopped` the helper reported; Chrome stays refused while it says stopped even
+    /// if the helper stops answering.
+    stopped: bool,
 }
 
 /// Transport failures worth one reconnect-and-retry for read-only calls.
@@ -51,71 +54,67 @@ impl Engine {
     }
 
     pub(crate) fn at(paths: Paths) -> Result<Self> {
+        let link = AdbLink::new(paths.clone());
+        Self::with_link(paths, Box::new(link))
+    }
+
+    /// An engine over any device link; tests pass a `FakeLink`.
+    pub(crate) fn with_link(paths: Paths, link: Box<dyn DeviceLink>) -> Result<Self> {
         Ok(Self {
             artifacts: Artifacts::new(paths.clone()),
             journal: Journal::open(&paths)?,
             paths,
-            adb: None,
-            device: None,
+            link,
             bridge: None,
             browser: None,
             scene: None,
             agent: AgentState::default(),
             session: session_id(),
             request_counter: 0,
+            stopped: false,
         })
-    }
-
-    /// Attaches a pre-connected helper bridge (a fake one in tests).
-    #[cfg(test)]
-    pub(crate) fn attach(&mut self, bridge: Bridge, device: Device) {
-        self.adb = Some(Adb::for_tests());
-        self.device = Some(device);
-        self.bridge = Some(bridge);
     }
 
     pub fn root(&self) -> &Path {
         &self.paths.root
     }
 
-    fn link(&mut self) -> Result<(Adb, Device)> {
-        let adb = match &self.adb {
-            Some(adb) => adb.clone(),
-            None => self.adb.insert(Adb::discover()?).clone(),
-        };
-        let device = match &self.device {
-            Some(device) => device.clone(),
-            None => self.device.insert(adb.resolve(&self.paths)?).clone(),
-        };
-        Ok((adb, device))
-    }
-
     pub(crate) fn bridge(&mut self) -> Result<&mut Bridge> {
         let bridge = match self.bridge.take() {
             Some(bridge) => bridge,
-            None => {
-                let (adb, device) = self.link()?;
-                Bridge::connect(adb, device)?
-            }
+            None => self.link.helper()?,
         };
         Ok(self.bridge.insert(bridge))
+    }
+
+    /// Stop must also end Chrome control, which never touches the helper: ask it before every
+    /// Chrome read and plan. A helper that does not answer is not known to be stopped, so Chrome
+    /// stays allowed unless the last answer said stopped (Chrome without the helper is allowed).
+    fn not_stopped(&mut self) -> Result<()> {
+        match self.bridge().and_then(|bridge| bridge.query("env", Value::Null)) {
+            Ok(env) => self.stopped = env.get("stopped").and_then(Value::as_bool) == Some(true),
+            Err(_) => self.bridge = None,
+        }
+        if self.stopped {
+            return Err(crate::link::stopped());
+        }
+        Ok(())
     }
 
     pub(crate) fn browser(&mut self) -> Result<&mut Browser> {
         let browser = match self.browser.take() {
             Some(browser) => browser,
-            None => {
-                let (adb, device) = self.link()?;
-                Browser::connect(adb, device)?
-            }
+            None => self.link.chrome()?,
         };
         Ok(self.browser.insert(browser))
     }
 
-    fn reset_connections(&mut self) {
+    pub(crate) fn reset_connections(&mut self) {
         self.bridge = None;
         self.browser = None;
-        self.device = None;
+        self.link.reset();
+        // Nothing resolves against a screen from before the reconnect.
+        self.scene = None;
     }
 
     /// Runs a read-only helper call, reconnecting once on transport failure.
@@ -131,6 +130,7 @@ impl Engine {
 
     /// Runs a read-only Chrome call, reconnecting once on transport failure.
     pub(crate) fn browser_read<T>(&mut self, mut f: impl FnMut(&mut Browser) -> Result<T>) -> Result<T> {
+        self.not_stopped()?;
         match self.browser().and_then(&mut f) {
             Err(error) if reconnectable(error.code) => {
                 self.reset_connections();
@@ -152,7 +152,18 @@ impl Engine {
                     std::thread::sleep(std::time::Duration::from_millis(600));
                     (g, cap) = self.bridge_read(|bridge| bridge.status())?;
                 }
-                Ok(json!({"ok":1,"g":g,"cap":cap}))
+                let mut status = json!({"ok":1,"g":g,"cap":cap});
+                if let Ok(env) = self.bridge_read(|bridge| bridge.query("env", Value::Null)) {
+                    if env.get("stopped").and_then(Value::as_bool) == Some(true) {
+                        return Err(crate::link::stopped());
+                    }
+                    for key in ["battery_exempt", "talkback"] {
+                        if let Some(flag) = env.get(key) {
+                            status[key] = flag.clone();
+                        }
+                    }
+                }
+                Ok(status)
             }
             Read::Browser { op } => self.browser_read(|browser| browser.read(op.clone())).and_then(|page| self.journal.reconcile(BROWSER).map(|_| page)),
             Read::Capabilities => self.bridge_read(|bridge| bridge.query("capabilities", Value::Null)),
@@ -166,13 +177,66 @@ impl Engine {
     pub(crate) fn ensure_scene(&mut self) -> Result<Scene> {
         let base = self.scene.as_ref().map(|scene| scene.observation.clone());
         let scene = match self.bridge_read(|bridge| bridge.observe(base.as_deref(), 0))? {
-            Observation::Unchanged(generation) => {
-                self.scene.clone().filter(|scene| scene.generation == generation).ok_or_else(|| Error::new(Code::Stale, "the Android scene changed; retry the command"))?
-            }
+            Observation::Unchanged(generation) => match self.scene.clone().filter(|scene| scene.generation == generation) {
+                Some(scene) => scene,
+                // A reconnect inside the call dropped the cache: fetch the screen afresh.
+                None if self.scene.is_none() => match self.bridge_read(|bridge| bridge.observe(None, 0))? {
+                    Observation::Scene(scene) => scene,
+                    Observation::Unchanged(_) => return Err(Error::new(Code::Stale, "the Android scene changed; retry the command")),
+                },
+                None => return Err(Error::new(Code::Stale, "the Android scene changed; retry the command")),
+            },
             Observation::Scene(scene) => scene,
         };
         self.scene = Some(scene.clone());
         Ok(scene)
+    }
+
+    /// The phone's `env` over the cached connection, or a new one to a helper that is already
+    /// running. Never starts a helper: one that is not there is `helper_killed`. A missing device,
+    /// a timeout or a failed authentication keeps its own code and next step.
+    fn helper_env(&mut self) -> Result<Value> {
+        let unreachable =
+            |error: Error| if matches!(error.code, Code::Device | Code::Identity | Code::Timeout | Code::Auth | Code::Permission) { error } else { crate::link::helper_killed() };
+        let mut last = crate::link::helper_killed();
+        for fresh in [false, true] {
+            let mut bridge = match self.bridge.take() {
+                Some(cached) if !fresh => cached,
+                _ => self.link.attach().map_err(unreachable)?,
+            };
+            match bridge.query("env", Value::Null) {
+                Ok(env) => {
+                    self.bridge = Some(bridge);
+                    return Ok(env);
+                }
+                // A helper from before 1.3 has no `env`; it is running, so let the act proceed.
+                Err(error) if error.code == Code::Unsupported => {
+                    self.bridge = Some(bridge);
+                    return Ok(json!({}));
+                }
+                Err(error) => last = unreachable(error),
+            }
+        }
+        Err(last)
+    }
+
+    /// Asks the phone for its state before the first act of a session and after any failure, and
+    /// turns the states no act can work in into one typed result with one next step each.
+    pub(crate) fn preflight(&mut self) -> Result<()> {
+        let env = self.helper_env()?;
+        let on = |key: &str, default: bool| env.get(key).and_then(Value::as_bool).unwrap_or(default);
+        self.stopped = on("stopped", false);
+        if self.stopped {
+            return Err(crate::link::stopped());
+        }
+        let (code, message) = if !on("screen_on", true) {
+            (Code::ScreenOff, "The screen is off. Press the phone's power button, then resend.")
+        } else if on("locked", false) {
+            (Code::Locked, "The phone is locked. Unlock it, then resend.")
+        } else {
+            return Ok(());
+        };
+        Err(Error::plain(code, message))
     }
 
     pub(crate) fn read_page(&mut self) -> Result<Value> {
@@ -198,6 +262,15 @@ impl Engine {
         }
         let receipt = match self.bridge().and_then(|bridge| bridge.act(p)) {
             Ok(receipt) => receipt,
+            Err(error) if error.code == Code::Stopped => {
+                // The helper refused before running anything: not uncertain, and not repeatable.
+                self.stopped = true;
+                // A resend after Resume must run, not meet this record: new ids from here on.
+                self.session = session_id();
+                let refused = Receipt { e: Some("stopped".into()), next: None, ..unknown(&p.id, p.generation) };
+                let _ = self.journal.finish(&digest, &refused);
+                return Err(error);
+            }
             Err(_) => {
                 // The plan may have reached the device. Record that as uncertain,
                 // so a retry is answered from the journal instead of dispatched again.
@@ -220,6 +293,7 @@ impl Engine {
     /// against an observation taken moments ago, so the tab list is not
     /// re-synchronized before running them.
     pub(crate) fn run_browser_plan(&mut self, p: &BrowserPlan, prepared: bool) -> Result<Receipt> {
+        self.not_stopped()?;
         let digest = self.digest(&p.wire(0), true)?;
         self.browser()?;
         if let Some(prior) = self.journal.begin(&p.id, p.generation, &digest, BROWSER)? {
@@ -247,7 +321,7 @@ impl Engine {
     fn digest(&mut self, wire: &Value, device_bound: bool) -> Result<String> {
         let mut hash = Sha256::new();
         if device_bound {
-            hash.update(self.link()?.1.hardware.as_bytes());
+            hash.update(self.link.device()?.hardware.as_bytes());
         }
         hash.update(serde_json::to_vec(wire).map_err(|e| Error::new(Code::Protocol, e.to_string()))?);
         Ok(hex(&hash.finalize()))
@@ -320,6 +394,50 @@ pub fn plain_error(error: &Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::link::FakeLink;
+    use std::{cell::Cell, rc::Rc};
+
+    fn engine_over(link: FakeLink) -> (Engine, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        (Engine::with_link(Paths::at(dir.path().to_path_buf()).unwrap(), Box::new(link)).unwrap(), dir)
+    }
+
+    #[test]
+    fn a_dropped_connection_reconnects_once_for_reads() {
+        let mut dropped = false;
+        let link = FakeLink::new(move |q| std::mem::replace(&mut dropped, true).then(|| json!([q[0], 0, 5, 7])));
+        let connects = link.helper_connects.clone();
+        let (mut engine, _dir) = engine_over(link);
+        assert_eq!(engine.read(Read::Status).unwrap(), json!({"ok":1,"g":5,"cap":7}));
+        assert_eq!(*connects.borrow(), 2, "the first connection dropped the request; the retry used a new one");
+    }
+
+    #[test]
+    fn a_plan_lost_with_its_connection_is_unknown_and_never_dispatched_twice() {
+        let runs = Rc::new(Cell::new(0));
+        let seen = runs.clone();
+        let link = FakeLink::new(move |q| {
+            seen.set(seen.get() + u32::from(q[1] == "run"));
+            (q[1] != "run").then(|| json!([q[0], 0, 1, 7]))
+        });
+        let (mut engine, _dir) = engine_over(link);
+        let plan = Plan { id: "p1".into(), generation: 1, deadline_ms: 1000, max_mutations: 1, ops: Box::new([crate::api::Op::Tap(0)]) };
+        for _ in 0..2 {
+            let receipt = engine.run_plan(&plan).unwrap();
+            assert_eq!((receipt.ok, receipt.e.as_deref()), (0, Some("unknown")));
+        }
+        assert_eq!(runs.get(), 1, "the retry was answered from the journal");
+    }
+
+    #[test]
+    fn a_run_refused_because_the_helper_was_stopped_is_stopped_not_unknown() {
+        let link = FakeLink::new(|q| Some(if q[1] == "run" { json!([q[0], 11]) } else { json!([q[0], 0, 1, 7]) }));
+        let (mut engine, _dir) = engine_over(link);
+        let before = engine.operation_id(Some("7"), "android");
+        let plan = Plan { id: "p2".into(), generation: 1, deadline_ms: 1000, max_mutations: 1, ops: Box::new([crate::api::Op::Tap(0)]) };
+        assert_eq!(engine.run_plan(&plan).err().map(|e| e.code), Some(Code::Stopped));
+        assert_ne!(engine.operation_id(Some("7"), "android"), before, "a resend after Resume gets a fresh id, not the refused record");
+    }
 
     #[test]
     fn operation_ids_are_valid_and_scoped_to_one_process() {

@@ -1,14 +1,10 @@
-use crate::{
-    api::{Code, Error, Node, Plan, Range, Receipt, Result, Scene, MAX_FRAME, MAX_INLINE},
-    device::{Adb, Device},
-};
+use crate::api::{Code, Error, Node, Plan, Range, Receipt, Result, Scene, MAX_FRAME, MAX_INLINE};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{json, Value};
 use std::{
     io::{Read, Write},
     net::TcpStream,
-    thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 /// Largest artifact slice requested per helper round trip. Base64 inflates it
@@ -16,8 +12,28 @@ use std::{
 /// reject anything above `MAX_INLINE`; `download` then falls back to that.
 pub const MAX_CHUNK: usize = 256 * 1024;
 
+/// One framed request/reply channel to the helper. `TcpStream` is the real
+/// one (length-prefixed JSON through an adb forward); `FakeLink` scripts it.
+pub trait Wire {
+    fn send(&mut self, value: &Value) -> Result<()>;
+    fn recv(&mut self) -> Result<Value>;
+    fn set_read_timeout(&self, timeout: Duration) -> Result<()>;
+}
+
+impl Wire for TcpStream {
+    fn send(&mut self, v: &Value) -> Result<()> {
+        send(self, v)
+    }
+    fn recv(&mut self) -> Result<Value> {
+        recv(self)
+    }
+    fn set_read_timeout(&self, timeout: Duration) -> Result<()> {
+        Ok(TcpStream::set_read_timeout(self, Some(timeout))?)
+    }
+}
+
 pub struct Bridge {
-    stream: TcpStream,
+    wire: Box<dyn Wire>,
     seq: u64,
     chunk: usize,
 }
@@ -28,57 +44,14 @@ pub enum Observation {
 }
 
 impl Bridge {
-    /// A bridge over an already-connected stream, for host tests that run a fake helper.
-    #[cfg(test)]
-    pub(crate) fn over(stream: TcpStream, _device: Device) -> Self {
-        Self { stream, seq: 0, chunk: MAX_CHUNK }
+    pub fn new(wire: Box<dyn Wire>) -> Self {
+        Self { wire, seq: 0, chunk: MAX_CHUNK }
     }
 
-    pub fn connect(adb: Adb, device: Device) -> Result<Self> {
-        // An already-running helper answers immediately; only start the
-        // service (an extra `adb shell am` process) when it does not.
-        if let Ok(bridge) = Self::handshake(&adb, &device) {
-            return Ok(bridge);
-        }
-        adb.start_helper(&device)?;
-        let deadline = Instant::now() + Duration::from_secs(8);
-        loop {
-            match Self::handshake(&adb, &device) {
-                Ok(bridge) => return Ok(bridge),
-                Err(error) if Instant::now() >= deadline => return Err(error),
-                Err(_) => thread::sleep(Duration::from_millis(150)),
-            }
-        }
-    }
-
-    fn handshake(adb: &Adb, device: &Device) -> Result<Self> {
-        // These abstract-socket names are a deployed wire-protocol identifier, not a public product version.
-        // Keep them stable so a v1 host can reconnect to an already-installed helper.
-        let (token, nonce) = {
-            let mut s = adb.open_stream(device, "localabstract:aubridge-bootstrap-v3")?;
-            s.set_read_timeout(Some(Duration::from_secs(3)))?;
-            send(&mut s, &json!([0, "bootstrap"]))?;
-            let r = recv(&mut s)?;
-            let a = r.as_array().ok_or_else(|| Error::new(Code::Protocol, "invalid bootstrap reply"))?;
-            if a.len() != 4 || a[0].as_u64() != Some(0) || a[1].as_u64() != Some(0) {
-                return Err(Error::new(Code::Auth, "helper bootstrap was rejected"));
-            }
-            (text(&a[2])?.to_string(), text(&a[3])?.to_string())
-        };
-        let mut stream = adb.open_stream(device, "localabstract:aubridge-v3")?;
-        send(&mut stream, &json!([0, "hello", token, nonce]))?;
-        let h = recv(&mut stream)?;
-        let a = h.as_array().ok_or_else(|| Error::new(Code::Protocol, "invalid hello reply"))?;
-        if a.len() < 2 || a[0].as_u64() != Some(0) || a[1].as_u64() != Some(0) {
-            return Err(Error::new(Code::Auth, "helper authentication failed"));
-        }
-        stream.set_read_timeout(Some(Duration::from_secs(35)))?;
-        Ok(Self { stream, seq: 0, chunk: MAX_CHUNK })
-    }
     fn call(&mut self, make: impl FnOnce(u64) -> Value) -> Result<Vec<Value>> {
         self.seq = self.seq.checked_add(1).ok_or_else(|| Error::new(Code::Sequence, "sequence exhausted"))?;
-        send(&mut self.stream, &make(self.seq))?;
-        let v = recv(&mut self.stream)?;
+        self.wire.send(&make(self.seq))?;
+        let v = self.wire.recv()?;
         let a = v.as_array().ok_or_else(|| Error::new(Code::Protocol, "helper reply must be an array"))?;
         if a.first().and_then(Value::as_u64) != Some(self.seq) {
             return Err(Error::new(Code::Sequence, "helper reply sequence mismatch"));
@@ -87,7 +60,7 @@ impl Bridge {
     }
     /// Bounds each later wait for a helper reply, e.g. by a plan deadline.
     pub fn set_read_timeout(&self, timeout: Duration) -> Result<()> {
-        Ok(self.stream.set_read_timeout(Some(timeout))?)
+        self.wire.set_read_timeout(timeout)
     }
     pub fn status(&mut self) -> Result<(u64, u32)> {
         let a = self.call(|s| json!([s, "status"]))?;
@@ -96,6 +69,12 @@ impl Bridge {
             return Err(Error::new(Code::Protocol, "invalid status reply"));
         }
         Ok((u64v(&a[2])?, u32::try_from(u64v(&a[3])?).map_err(|_| Error::new(Code::Protocol, "capability mask overflow"))?))
+    }
+    /// Every window and its nodes; `capabilities` is the mask from `status`.
+    pub fn tree(&mut self, capabilities: u32) -> Result<crate::tree::Tree> {
+        let a = self.call(|s| json!([s, "tree"]))?;
+        ok(&a)?;
+        crate::tree::parse(&a, capabilities)
     }
     pub fn observe(&mut self, base: Option<&str>, detail: u8) -> Result<Observation> {
         let a = self.call(|s| json!([s, "observe", base, detail]))?;
@@ -140,6 +119,9 @@ impl Bridge {
     }
     pub fn act(&mut self, p: &Plan) -> Result<Receipt> {
         let a = self.call(|s| p.wire(s))?;
+        if a.get(1).and_then(Value::as_u64) == Some(11) {
+            return Err(crate::link::stopped());
+        }
         if a.len() < 4 {
             return Err(Error::new(Code::Protocol, "invalid run reply"));
         }
@@ -216,7 +198,7 @@ impl Bridge {
     }
 }
 
-fn send(s: &mut TcpStream, v: &Value) -> Result<()> {
+pub(crate) fn send(s: &mut TcpStream, v: &Value) -> Result<()> {
     let b = serde_json::to_vec(v).map_err(|e| Error::new(Code::Protocol, e.to_string()))?;
     if b.len() > MAX_FRAME {
         return Err(Error::new(Code::Bounds, "helper request exceeds frame limit"));
@@ -226,7 +208,7 @@ fn send(s: &mut TcpStream, v: &Value) -> Result<()> {
     s.flush()?;
     Ok(())
 }
-fn recv(s: &mut TcpStream) -> Result<Value> {
+pub(crate) fn recv(s: &mut TcpStream) -> Result<Value> {
     let mut h = [0u8; 4];
     s.read_exact(&mut h)?;
     let n = u32::from_be_bytes(h) as usize;
@@ -249,11 +231,12 @@ fn helper_error(a: &[Value]) -> Error {
         Some(5) => Code::Unsupported,
         Some(6) => Code::Bounds,
         Some(10) => Code::Permission,
+        Some(11) => return crate::link::stopped(),
         _ => Code::Helper,
     };
     Error::new(code, a.get(2).and_then(Value::as_str).unwrap_or("helper rejected request"))
 }
-fn text(v: &Value) -> Result<&str> {
+pub(crate) fn text(v: &Value) -> Result<&str> {
     v.as_str().ok_or_else(|| Error::new(Code::Protocol, "expected string"))
 }
 fn u64v(v: &Value) -> Result<u64> {
@@ -263,6 +246,12 @@ fn u64v(v: &Value) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_stopped_helper_is_its_own_result() {
+        let error = helper_error(&[json!(3), json!(11)]);
+        assert_eq!((error.code, error.message.contains("au setup")), (Code::Stopped, true));
+    }
     #[test]
     fn rejects_oversize_header() {
         let l = (MAX_FRAME as u32 + 1).to_be_bytes();
@@ -302,7 +291,7 @@ mod tests {
             requests
         });
         let stream = TcpStream::connect(addr).unwrap();
-        (Bridge { stream, seq: 0, chunk: MAX_CHUNK }, server)
+        (Bridge::new(Box::new(stream)), server)
     }
 
     #[test]
