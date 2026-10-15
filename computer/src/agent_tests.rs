@@ -45,6 +45,8 @@ mod flows {
     fn labels(screen: &str) -> &'static [&'static str] {
         if screen == "settings" {
             &["Wi-Fi", "Bluetooth", "Flaky", "Save draft", "Save and delete all"]
+        } else if screen == "switches" {
+            &["Dark mode", "Sticky", "Alarm", "Alarm"]
         } else if screen == "loading" {
             &["Loading"]
         } else if screen == "late" {
@@ -55,7 +57,7 @@ mod flows {
     }
 
     fn fake_helper(capture: Vec<u8>) -> impl FnMut(&Value) -> Option<Value> {
-        let (mut screen, mut generation) = ("home", 1u64);
+        let (mut screen, mut generation, mut dark) = ("home", 1u64, true);
         // A screen that replaces the current one by itself at a given time.
         let mut later: Option<(std::time::Instant, &str)> = None;
         // The loading screen starts its 120 ms when it is first read, whatever the host did before.
@@ -74,6 +76,19 @@ mod flows {
                 "status" => json!([seq, 0, generation, 7]),
                 "observe" if q[2].as_str() == Some(generation.to_string().as_str()) => json!([seq, 0, generation]),
                 "observe" => json!([seq, 0, generation, "fixture", names.iter().enumerate().map(|(i, l)| json!([i, l, 98, 3])).collect::<Vec<_>>()]),
+                // "Dark mode" flips when tapped; "Sticky" is a switch whose tap changes nothing.
+                "semantic" if screen == "switches" => {
+                    json!([
+                        seq,
+                        0,
+                        [
+                            json!(["Dark mode", "", "switch", if dark { "checked" } else { "unchecked" }, true, false]),
+                            json!(["Sticky", "", "switch", "unchecked", true, false]),
+                            json!(["Alarm", "", "button", "", true, false]),
+                            json!(["Alarm", "", "switch", "checked", true, false])
+                        ]
+                    ])
+                }
                 // Loading text is plain text (empty kind), as the helper reports it.
                 "semantic" => json!([seq, 0, names.iter().map(|l| json!([l, "", if *l == "Loading" { "" } else { "button" }, "", true, false])).collect::<Vec<_>>()]),
                 "resolve" if q[2]["handle"].as_i64().is_some_and(|handle| handle >= 0) => {
@@ -115,10 +130,13 @@ mod flows {
                                     ("loading", generation + 1, changes + 1, Some((std::time::Instant::now() + std::time::Duration::from_secs(3600), "settings")), true)
                             }
                             "launch" if op[1] == "com.slow.late" => (screen, generation, changes) = ("late", generation + 1, changes + 1),
-                            "launch" => (screen, generation, changes) = ("settings", generation + 1, changes + 1),
+                            "launch" => (screen, generation, changes) = (if op[1] == "com.example.switches" { "switches" } else { "settings" }, generation + 1, changes + 1),
                             // The tap lands but the screen only reacts 400 ms later.
                             "tap" if screen == "late" => (changes, later) = (changes + 1, Some((std::time::Instant::now() + std::time::Duration::from_millis(400), "settings"))),
-                            "tap" | "tap_point" => (generation, changes) = (generation + 1, changes + 1),
+                            "tap" | "tap_point" => {
+                                dark ^= screen == "switches" && op[1] == 0;
+                                (generation, changes) = (generation + 1, changes + 1)
+                            }
                             "capture" => artifact = Some("a1"),
                             "settle" => {}
                             "wait" => generation += 1, // The screen changes by itself.
@@ -322,6 +340,53 @@ mod flows {
         act(&mut engine, "capture screen").unwrap();
         assert_eq!(act(&mut engine, r#"tap "Bluetooth""#).err().map(|e| e.code), Some(Code::Unknown));
         assert_eq!(engine.agent.space, None, "an unknown outcome");
+    }
+
+    #[test]
+    fn set_taps_nothing_when_the_switch_is_already_in_that_state() {
+        let (mut engine, _dir) = engine();
+        act(&mut engine, r#"open app "com.example.switches""#).unwrap();
+        let text = act(&mut engine, r#"set "Dark mode" on"#).unwrap().text;
+        assert_eq!(text, "Done. Dark mode was already on.");
+        // A tap would have flipped the fake's switch off.
+        let screen = engine.model_read(CommandRead::Screen { full: false, matching: None, delta: false }).unwrap().text;
+        assert!(screen.contains("Dark mode=on"), "{screen}");
+    }
+
+    #[test]
+    fn set_taps_once_and_verifies_the_new_state() {
+        let (mut engine, _dir) = engine();
+        act(&mut engine, r#"open app "com.example.switches""#).unwrap();
+        let text = act(&mut engine, r#"set "Dark mode" off"#).unwrap().text;
+        assert!(text.starts_with("Done. Dark mode is now off."), "{text}");
+        assert_eq!(act(&mut engine, r#"set "Dark mode" off"#).unwrap().text, "Done. Dark mode was already off.");
+        assert!(act(&mut engine, r#"set "Dark mode" on then set "Dark mode" off then set "Dark mode" off"#)
+            .unwrap()
+            .text
+            .starts_with("Done. Dark mode is now on. Dark mode is now off. Dark mode was already off."));
+    }
+
+    #[test]
+    fn toggle_reports_the_flip_and_fails_when_nothing_flipped() {
+        let (mut engine, _dir) = engine();
+        act(&mut engine, r#"open app "com.example.switches""#).unwrap();
+        let text = act(&mut engine, r#"toggle "Dark mode""#).unwrap().text;
+        assert!(text.starts_with("Done. Dark mode is now off."), "{text}");
+        let error = act(&mut engine, r#"toggle "Sticky""#).err().unwrap();
+        assert_eq!(error.code, Code::Partial);
+        assert!(error.message.starts_with("Tapped Sticky, but it is still off.") && error.message.contains("Dark mode=off"), "{}", error.message);
+        let not_a_switch = act(&mut engine, r#"set "Missing" on"#).unwrap();
+        assert!(not_a_switch.text.contains("No item labeled"), "{}", not_a_switch.text);
+    }
+
+    #[test]
+    fn a_numbered_or_duplicate_label_never_guesses_which_switch_it_means() {
+        let (mut engine, _dir) = engine();
+        act(&mut engine, r#"open app "com.example.switches""#).unwrap();
+        for command in [r#"set "Alarm" number 2 on"#, r#"set "Alarm" number 1 on"#] {
+            assert!(act(&mut engine, command).unwrap_err_or_text().contains("not a uniquely named switch"), "{command}");
+        }
+        assert!(act(&mut engine, r#"set "Alarm" on"#).unwrap_err_or_text().contains("matches 2 items"));
     }
 
     #[test]
