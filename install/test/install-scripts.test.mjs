@@ -28,5 +28,5 @@ test("install.sh refuses bad versions, http, bad checksums, and a missing requir
 test("install.ps1 keeps the same guards as install.sh", async () => {
   const text = await readFile(join(dirname(installSh), "install.ps1"), "utf8");
   for (const part of ["Tls12", "AU_REQUIRE_ATTESTATION", "attestation verify", "Move-Item", "releases/latest"]) assert.ok(text.includes(part), part);
-  assert.ok(!text.includes("api.github.com"), "install.ps1 must not use the GitHub API");
+  assert.doesNotMatch(text, /api\.github/, "install.ps1 must not use the GitHub API");
 });
