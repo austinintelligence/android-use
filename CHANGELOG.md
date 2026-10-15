@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- `cargo xtask bench-model` (contributor tooling): drives a real agent CLI through fifteen device goals, verifies success from device state, and compares two `au` builds with calls, input tokens, and wall time as means with 95% confidence intervals. It has a spend guard (`--max-runs`, `--max-cost`).
+
 ### Fixed
 
 - `cargo xtask` gates fail closed: a missing release artifact fails the size gate instead of measuring 0 bytes, and the stale-version check flags only standalone versions such as `v2` or `v3.1`, not words that contain one (`dev2`).

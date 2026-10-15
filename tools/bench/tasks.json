@@ -1,0 +1,202 @@
+{
+ "tasks": [
+  {
+   "name": "open_about",
+   "goal": "In Settings, open the About emulated device page.",
+   "reset": [
+    "act press home",
+    "act open app \"Settings\""
+   ],
+   "verify": [
+    {
+     "cmd": "read screen",
+     "expect": "Android version"
+    }
+   ]
+  },
+  {
+   "name": "wifi_off",
+   "goal": "Turn Wi-Fi off in Settings.",
+   "reset": [
+    "act open setting \"wifi\""
+   ],
+   "verify": [
+    {
+     "cmd": "read screen",
+     "expect": "Use Wi-Fi=off"
+    }
+   ]
+  },
+  {
+   "name": "bluetooth_page",
+   "goal": "Open the Bluetooth settings page.",
+   "reset": [
+    "act press home"
+   ],
+   "verify": [
+    {
+     "cmd": "read screen",
+     "expect": "Pair new device"
+    }
+   ]
+  },
+  {
+   "name": "display_page",
+   "goal": "Open the Display settings page and show the Dark theme option.",
+   "reset": [
+    "act press home"
+   ],
+   "verify": [
+    {
+     "cmd": "read screen",
+     "expect": "Dark theme"
+    }
+   ]
+  },
+  {
+   "name": "sound_page",
+   "goal": "Open the Sound settings page.",
+   "reset": [
+    "act press home"
+   ],
+   "verify": [
+    {
+     "cmd": "read screen",
+     "expect": "Media volume"
+    }
+   ]
+  },
+  {
+   "name": "battery_page",
+   "goal": "Open the Battery settings page.",
+   "reset": [
+    "act press home"
+   ],
+   "verify": [
+    {
+     "cmd": "read screen",
+     "expect": "Battery Saver"
+    }
+   ]
+  },
+  {
+   "name": "apps_page",
+   "goal": "Open the Apps settings page.",
+   "reset": [
+    "act press home"
+   ],
+   "verify": [
+    {
+     "cmd": "read screen",
+     "expect": "See all"
+    }
+   ]
+  },
+  {
+   "name": "date_time",
+   "goal": "Open Date & time settings.",
+   "reset": [
+    "act press home"
+   ],
+   "verify": [
+    {
+     "cmd": "read screen",
+     "expect": "Set time automatically"
+    }
+   ]
+  },
+  {
+   "name": "developer_options",
+   "goal": "Open Developer options.",
+   "reset": [
+    "act press home"
+   ],
+   "verify": [
+    {
+     "cmd": "read screen",
+     "expect": "Developer options"
+    }
+   ]
+  },
+  {
+   "name": "settings_search",
+   "goal": "In Settings, search for 'battery' and leave the search results showing.",
+   "reset": [
+    "act press home",
+    "act open app \"Settings\""
+   ],
+   "verify": [
+    {
+     "cmd": "read screen",
+     "expect": "Battery usage"
+    }
+   ]
+  },
+  {
+   "name": "accessibility_page",
+   "goal": "Open the Accessibility settings page.",
+   "reset": [
+    "act press home"
+   ],
+   "verify": [
+    {
+     "cmd": "read screen",
+     "expect": "Android-Use"
+    }
+   ]
+  },
+  {
+   "name": "go_home",
+   "goal": "Go to the home screen.",
+   "reset": [
+    "act open setting \"display\""
+   ],
+   "verify": [
+    {
+     "cmd": "read screen",
+     "expect": "Search",
+     "not": "Dark theme"
+    }
+   ]
+  },
+  {
+   "name": "open_clock",
+   "goal": "Open the Clock app.",
+   "reset": [
+    "act press home"
+   ],
+   "verify": [
+    {
+     "cmd": "read screen",
+     "expect": "Alarm"
+    }
+   ]
+  },
+  {
+   "name": "open_calendar",
+   "goal": "Open the Calendar app.",
+   "reset": [
+    "act press home"
+   ],
+   "verify": [
+    {
+     "cmd": "read screen",
+     "expect": "Calendar"
+    }
+   ]
+  },
+  {
+   "name": "open_chrome",
+   "goal": "Open the Chrome app.",
+   "reset": [
+    "act press home"
+   ],
+   "verify": [
+    {
+     "cmd": "read screen",
+     "expect": "Chrome"
+    }
+   ]
+  }
+ ]
+}
