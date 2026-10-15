@@ -22,4 +22,5 @@ mod marks;
 mod present;
 mod resolve;
 pub mod spec;
+pub mod tree;
 mod visual;

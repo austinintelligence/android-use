@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Helper `tree` op (status capability bit 3) that dumps every accessibility window and its nodes, capped at 2,048 nodes and 900 KB with a truncation flag, password text omitted, with a typed Rust reader and a shared golden fixture. For tools and 2.0; no agent command uses it.
+
 ### Changed
 
 - `run notification action` needs a label when a notification has several actions: `run notification action "Reply" on "Messages"`. With several actions and no label nothing runs and the reply lists the action labels; a notification with one action still runs without a label. Notifications already showing when the listener connects are now listed, not only later ones.
