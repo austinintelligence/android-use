@@ -1,7 +1,6 @@
 use crate::{
     api::{normalized, BrowserOp, BrowserPlan, BrowserPredicate, BrowserRead, Capture, Code, Error, Op, Plan, Result, Target},
-    bridge::Bridge,
-    device::{Adb, Device},
+    link::{AdbLink, DeviceLink as _},
     resolve::choose,
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -21,6 +20,7 @@ const MAX_TABS: usize = 50;
 const MAX_SCREENSHOT: usize = 8 * 1024 * 1024;
 const DOM_SELECTOR: &str = "a,button,input,textarea,select,[role=button],[onclick]";
 const HTTP_READ: Duration = Duration::from_secs(5);
+const CDP_COMMAND: Duration = Duration::from_secs(10);
 const KEY_UP: &str = "key-up";
 
 #[derive(Debug, Clone)]
@@ -36,8 +36,7 @@ struct Tab {
 type Opener = Box<dyn Fn() -> Result<TcpStream>>;
 
 pub struct Browser {
-    adb: Adb,
-    device: Device,
+    link: AdbLink,
     open: Opener,
     cdp: Option<Cdp>,
     tabs: Vec<Tab>,
@@ -59,12 +58,11 @@ pub struct Outcome {
 }
 
 impl Browser {
-    pub fn connect(adb: Adb, device: Device) -> Result<Self> {
-        let (opener_adb, opener_device) = (adb.clone(), device.clone());
+    pub fn connect(mut link: AdbLink) -> Result<Self> {
+        let (opener_adb, opener_device) = link.resolved()?;
         let open: Opener = Box::new(move || opener_adb.open_stream(&opener_device, "localabstract:chrome_devtools_remote"));
         let mut browser = Self {
-            adb,
-            device,
+            link,
             open,
             cdp: None,
             tabs: Vec::new(),
@@ -256,7 +254,7 @@ impl Browser {
     fn helper_screenshot(&self, deadline: Instant) -> std::result::Result<Vec<u8>, &'static str> {
         let left = || deadline.checked_duration_since(Instant::now()).filter(|left| !left.is_zero()).ok_or("timeout");
         left()?;
-        let mut bridge = Bridge::connect(self.adb.clone(), self.device.clone()).map_err(|_| "helper")?;
+        let mut bridge = self.link.clone().helper().map_err(|_| "helper")?;
         bridge.set_read_timeout(left()?).map_err(|_| "helper")?;
         let (generation, _) = bridge.status().map_err(|_| "helper")?;
         let id = format!("browser-shot-{:x}", nonce()).into_boxed_str();
@@ -496,6 +494,7 @@ fn dom_action_expression(stable_id: u64, command: &str) -> String {
 struct Cdp {
     stream: TcpStream,
     id: u64,
+    deadline: Duration,
 }
 
 impl Cdp {
@@ -530,7 +529,7 @@ impl Cdp {
         if actual_accept != Some(expected_accept.as_str()) {
             return Err(Error::new(Code::Protocol, "Chrome WebSocket upgrade was not authenticated"));
         }
-        Ok(Self { stream, id: 0 })
+        Ok(Self { stream, id: 0, deadline: CDP_COMMAND })
     }
     /// Errors before the request is written are `Helper`: nothing ran. Once it
     /// is written, a lost or unreadable reply is `Unknown`, because Chrome may
@@ -541,7 +540,12 @@ impl Cdp {
         let id = self.id;
         write_ws(&mut self.stream, &serde_json::to_string(&json!({"id":id,"method":method,"params":params})).map_err(|_| Error::new(Code::Protocol, "CDP JSON failed"))?)
             .map_err(|error| Error::new(Code::Helper, error.message))?;
+        let end = Instant::now() + self.deadline;
         loop {
+            // Unrelated events keep arriving, so a per-read timeout alone never ends the wait.
+            let left = end.checked_duration_since(Instant::now()).filter(|left| !left.is_zero());
+            let left = left.ok_or_else(|| Error::new(Code::Unknown, format!("no reply to {method} within {}s", self.deadline.as_secs())))?;
+            self.stream.set_read_timeout(Some(left)).map_err(|error| Error::new(Code::Unknown, error.to_string()))?;
             let payload = read_ws(&mut self.stream).map_err(|error| Error::new(Code::Unknown, format!("lost the reply to {method}: {}", error.message)))?;
             let value: Value = serde_json::from_slice(&payload).map_err(|_| Error::new(Code::Unknown, format!("the reply to {method} was not valid JSON")))?;
             if value.get("id").and_then(Value::as_u64) != Some(id) {
@@ -750,6 +754,17 @@ mod tests {
     }
 
     #[test]
+    fn a_cdp_command_to_a_silent_socket_times_out_as_unknown() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (_held, _) = listener.accept().unwrap();
+        let mut cdp = Cdp { stream, id: 0, deadline: Duration::from_millis(200) };
+        let start = Instant::now();
+        let error = cdp.command("Page.enable", json!({})).unwrap_err();
+        assert!(error.code == Code::Unknown && start.elapsed() < Duration::from_secs(5), "{error:?}");
+    }
+
+    #[test]
     fn websocket_reader_rejects_oversized_frame_before_allocation() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -803,11 +818,10 @@ mod tests {
                 write_ws(&mut stream, &body.to_string()).unwrap();
             }
         });
-        let (stream, device) = (TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap(), Device { endpoint: "t".into(), hardware: "t".into() });
-        let (cdp, selected, nodes, dom_fingerprint) = (Some(Cdp { stream, id: 0 }), "t".to_owned(), vec![9], Some(String::new()));
+        let stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+        let (cdp, selected, nodes, dom_fingerprint) = (Some(Cdp { stream, id: 0, deadline: CDP_COMMAND }), "t".to_owned(), vec![9], Some(String::new()));
         let mut b = Browser {
-            adb: Adb::for_tests(),
-            device,
+            link: AdbLink::new(crate::device::Paths::at(tempfile::tempdir().unwrap().path().to_path_buf()).unwrap()),
             open: Box::new(|| Err(Error::new(Code::Helper, "no device"))),
             cdp,
             tabs: vec![],
