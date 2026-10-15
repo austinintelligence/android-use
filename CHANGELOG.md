@@ -11,6 +11,7 @@
 
 - Budgets (formatted lines), raised once for 1.3.0: Rust production 8,650, Java 4,100, automation 2,350, authored code 19,100. They were full (Rust 7,489 of 7,520, authored 15,512 of 15,550), and 1.3.0 adds the device link, preflight, and the helper's status screen.
 - Screen presentation (the text view, `Changed:` diffs, and screen images for the model) moved out of `agent.rs` into `present.rs`; no behavior change.
+- `DeviceLink` is now the one seam between the engine and a device: `AdbLink` is the real adb and bridge path, and a scripted in-process `FakeLink` replaces the socket-based test helper. No behavior or wire change.
 
 ## 1.2.0 — 2026-10-10
 

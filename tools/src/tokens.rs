@@ -62,9 +62,7 @@ pub fn capture(root: &Path, name: &str, reviewed: bool) -> Result<(), String> {
         return Err("golden fixtures are committed: check the screen on the device shows no names, accounts, messages, or numbers of yours, then pass --reviewed".into());
     }
     let paths = au::device::Paths::discover().map_err(|e| e.message)?;
-    let adb = au::device::Adb::discover().map_err(|e| e.message)?;
-    let device = adb.resolve(&paths).map_err(|e| e.message)?;
-    let mut bridge = au::bridge::Bridge::connect(adb, device).map_err(|e| e.message)?;
+    let mut bridge = au::link::DeviceLink::helper(&mut au::link::AdbLink::new(paths)).map_err(|e| e.message)?;
     let rows = bridge.query("semantic", Value::String(String::new())).map_err(|e| e.message)?;
     if let Some(found) = personal_data(&rows) {
         return Err(format!("the screen shows what looks like personal data ({found}); nothing was saved"));
