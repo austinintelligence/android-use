@@ -3,9 +3,10 @@ on:
   push: { branches: [main] }
   pull_request:
   schedule: [{ cron: '41 3 * * 1' }]
-permissions: { contents: read, security-events: write }
+permissions: { contents: read }
 jobs:
   analyze:
+    permissions: { contents: read, security-events: write }
     strategy:
       matrix:
         include:

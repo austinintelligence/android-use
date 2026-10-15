@@ -7,6 +7,11 @@
 - `cargo xtask` gates fail closed: a missing release artifact fails the size gate instead of measuring 0 bytes, and the stale-version check flags only standalone versions such as `v2` or `v3.1`, not words that contain one (`dev2`).
 - `cargo xtask golden-capture NAME` needs `--reviewed`, confirming the screen shows nothing personal, and refuses a screen with what looks like an email address, phone number, or card number.
 
+### Security
+
+- Every cargo call in the workflows, `cargo xtask`, and the contributor docs uses `--locked`. `cargo-audit` and `cargo-deny` are installed at pinned versions, `deny.toml` rejects yanked crates, runners are `ubuntu-24.04`/`windows-2022` rather than `-latest`, and CI runs on pushes to `main` and on pull requests only.
+- New `cargo xtask workflow-policy`, run by `check` and `verify`: workflows must pin every action to a commit SHA, keep top-level permissions read-only, avoid `pull_request_target`, limit push triggers to `main` and `v*` tags, and never pipe a download into a shell.
+
 ### Maintenance
 
 - Budgets (formatted lines), raised once for 1.3.0: Rust production 8,650, Java 4,100, automation 2,350, authored code 19,100. They were full (Rust 7,489 of 7,520, authored 15,512 of 15,550), and 1.3.0 adds the device link, preflight, and the helper's status screen.

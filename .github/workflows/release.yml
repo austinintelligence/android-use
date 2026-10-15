@@ -133,7 +133,7 @@ jobs:
       - name: Build the host binary with the helper embedded
         shell: bash
         run: |
-          AU_EMBED_APK="$(ls "$PWD"/helper/*android.apk)" cargo +1.94.0 build --profile dist -p au --target "${{ matrix.target }}"
+          AU_EMBED_APK="$(ls "$PWD"/helper/*android.apk)" cargo +1.94.0 build --locked --profile dist -p au --target "${{ matrix.target }}"
       - name: Package the archive
         shell: bash
         run: |

@@ -1,2 +1,2 @@
 [alias]
-xtask = "run -p tools --"
+xtask = "run --locked -p tools --"
