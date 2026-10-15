@@ -25,6 +25,10 @@ List and select tabs; read a page's title, text, and interactive elements; open 
 - Screen recording: a bounded MP4 of up to 30 seconds, after you grant Android's screen-capture prompt for that process.
 - Images: crop PNG captures and compare two screens through bounded hashes and sampled differences.
 
+## Tools and 2.0 only
+
+The helper reports status capability bit 3 (value 8) when it can dump every window with the `tree` op: each window's type, layer, display, bounds, title, and package, and its node tree (class, text, description, view id, bounds, flags). Password text is never sent, and a reply is capped at 2,048 nodes and 900 KB, with a `truncated` flag and counts when cut short. No agent command uses it.
+
 ## Targets
 
 One session drives one device. Besides your phone, `au emulator` creates local emulators that each act as a separate target, with snapshots for quick resets ([emulators](../guides/emulators.md)).

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Helper `tree` op (status capability bit 3) that dumps every accessibility window and its nodes, capped at 2,048 nodes and 900 KB with a truncation flag, password text omitted, with a typed Rust reader and a shared golden fixture. For tools and 2.0; no agent command uses it.
+
 ### Fixed
 
 - `cargo xtask` gates fail closed: a missing release artifact fails the size gate instead of measuring 0 bytes, and the stale-version check flags only standalone versions such as `v2` or `v3.1`, not words that contain one (`dev2`).
