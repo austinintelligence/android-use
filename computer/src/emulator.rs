@@ -539,6 +539,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn a_failed_start_leaves_no_child_and_no_record() {
         let dir = std::env::temp_dir().join(format!("au-abandon-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
