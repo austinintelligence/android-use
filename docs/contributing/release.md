@@ -32,9 +32,14 @@ These are repository settings; the workflow cannot create them.
 2. **Required reviewer** on `release-signing` (and preferably `release`), with "Prevent self-review" on, so a person approves each signing.
 3. **Signing secrets**: move `AUBRIDGE_KEYSTORE_B64`, `AUBRIDGE_STORE_PASSWORD`, and `AUBRIDGE_KEY_PASSWORD` out of the repository secrets into the `release-signing` environment, then delete the repository-level copies.
 4. **Tag ruleset** (Settings → Rules → Rulesets): target tags `v*`, restrict creation to maintainers, and block updates and deletions.
-5. `npm` is reserved for npm publishing. Step 4 below is still run by hand, with 2FA; put any future npm token in this environment, not in repository secrets.
+5. **Ready switch**: only after steps 1 to 4, add the *environment variable* `RELEASE_SIGNING_READY` = `true` to `release-signing` (not a repository variable). The `sign` job refuses to run without it. This matters because GitHub creates a missing environment on first use with no protection, and repository-level secrets stay visible to environment jobs: skipping the setup would otherwise let a `v*` tag sign with no reviewer.
+6. `npm` is reserved for npm publishing. Step 4 below is still run by hand, with 2FA; put any future npm token in this environment, not in repository secrets.
 
-Until step 3 is done the `sign` job fails for lack of secrets, which stops the release before publishing.
+The `gate` job and the policy check live in the workflow at the tagged commit, so someone who can push a `v*` tag can tag a commit whose workflow has neither. They catch mistakes, not deliberate misuse; the required reviewer and the tag ruleset (steps 2 and 4) are what stop that.
+
+The policy check reads the YAML as text and finds jobs by indentation: it is a tripwire for ordinary mistakes, and changes under `.github/` still need a careful human review (and a CODEOWNERS entry).
+
+If you push the tag while CI is still running on its commit, `gate` fails; re-run the failed jobs once CI is green. Runs are serialised per tag. A dry run's archives embed the unsigned helper and are named like the real ones: never distribute them.
 
 ## 4. Publish
 
