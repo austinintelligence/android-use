@@ -58,6 +58,10 @@ mod flows {
     fn labels(screen: &str) -> &'static [&'static str] {
         if screen == "settings" {
             &["Wi-Fi", "Bluetooth", "Flaky", "Save draft", "Save and delete all"]
+        } else if screen == "loading" {
+            &["Loading"]
+        } else if screen == "late" {
+            &["Late"]
         } else {
             &["Settings"]
         }
@@ -65,7 +69,12 @@ mod flows {
 
     fn fake_helper(stream: &mut TcpStream, capture: &[u8]) {
         let (mut screen, mut generation) = ("home", 1u64);
+        // A screen that replaces the current one by itself at a given time.
+        let mut later: Option<(std::time::Instant, &str)> = None;
         while let Some(q) = frame_in(stream) {
+            if let Some((_, next)) = later.filter(|(at, _)| *at <= std::time::Instant::now()) {
+                (screen, generation, later) = (next, generation + 1, None);
+            }
             let seq = q[0].clone();
             let names = labels(screen);
             let reply = match q[1].as_str().unwrap() {
@@ -107,7 +116,14 @@ mod flows {
                     let (mut failed, mut artifact) = (None, None);
                     for (at, op) in q[6].as_array().unwrap().iter().enumerate() {
                         match op[0].as_str().unwrap() {
+                            "launch" if op[1] == "com.slow.loading" => {
+                                (screen, generation, changes, later) =
+                                    ("loading", generation + 1, changes + 1, Some((std::time::Instant::now() + std::time::Duration::from_millis(120), "settings")))
+                            }
+                            "launch" if op[1] == "com.slow.late" => (screen, generation, changes) = ("late", generation + 1, changes + 1),
                             "launch" => (screen, generation, changes) = ("settings", generation + 1, changes + 1),
+                            // The tap lands but the screen only reacts 400 ms later.
+                            "tap" if screen == "late" => (changes, later) = (changes + 1, Some((std::time::Instant::now() + std::time::Duration::from_millis(400), "settings"))),
                             "tap" | "tap_point" => (generation, changes) = (generation + 1, changes + 1),
                             "capture" => artifact = Some("a1"),
                             "settle" => {}
@@ -208,6 +224,24 @@ mod flows {
         // Two containing labels are ambiguous, never guessed.
         let two = act(&mut engine, r#"tap "Save""#).unwrap_err_or_text();
         assert!(two.contains("matches 2 items"), "{two}");
+    }
+
+    #[test]
+    fn a_loading_screen_is_reported_when_it_finishes_not_after_a_fixed_sleep() {
+        let (mut engine, _dir) = engine();
+        let begun = std::time::Instant::now();
+        let response = act(&mut engine, r#"open app "com.slow.loading""#).unwrap();
+        let took = begun.elapsed();
+        assert!(response.text.contains("Now on screen:\nWi-Fi"), "{}", response.text);
+        assert!(took >= std::time::Duration::from_millis(120) && took < std::time::Duration::from_millis(400), "{took:?}");
+    }
+
+    #[test]
+    fn a_tap_whose_change_lands_late_is_reported_as_changed() {
+        let (mut engine, _dir) = engine();
+        act(&mut engine, r#"open app "com.slow.late""#).unwrap();
+        let response = act(&mut engine, r#"tap "Late""#).unwrap();
+        assert!(response.text.contains("Now on screen:\nWi-Fi"), "{}", response.text);
     }
 
     #[test]

@@ -11,8 +11,15 @@ use crate::{
     visual,
 };
 use serde_json::{json, Value};
-use std::{sync::Arc, thread, time::Duration};
+use std::{
+    sync::Arc,
+    thread,
+    time::{Duration, Instant},
+};
 
+const POLL_MS: u64 = 40;
+const LOADING_MS: u64 = 1500;
+const LATE_MS: u64 = 600;
 pub(crate) const SPACE_FILE: &str = "screen-space.json";
 
 impl Engine {
@@ -60,16 +67,31 @@ impl Engine {
     pub(crate) fn after_action(&mut self, surface: Surface) -> Option<String> {
         match surface {
             Surface::Android => {
+                let mut seen = self.bridge_read(|bridge| bridge.status()).ok()?.0;
                 let mut rows = self.semantic_rows("").ok()?;
                 // A tree that is still empty, or a short screen that says it is loading, is a
-                // window being drawn, not the screen the action led to.
-                for _ in 0..3 {
+                // window being drawn, not the screen the action led to; an action that left the
+                // generation alone may still be followed by a late change. Poll the cheap
+                // generation and read rows only when it moves.
+                let begun = Instant::now();
+                loop {
                     let loading = rows.len() <= 6 && rows.iter().any(|row| row.kind.is_empty() && normalized(&row.label).starts_with("loading"));
-                    if !rows.is_empty() && !loading {
+                    let cap = if rows.is_empty() || loading {
+                        LOADING_MS
+                    } else if seen == self.agent.acted_from {
+                        LATE_MS
+                    } else {
+                        break;
+                    };
+                    if begun.elapsed() >= Duration::from_millis(cap) {
                         break;
                     }
-                    thread::sleep(Duration::from_millis(500));
-                    rows = self.semantic_rows("").ok()?;
+                    thread::sleep(Duration::from_millis(POLL_MS));
+                    if let Ok((generation, _)) = self.bridge_read(|bridge| bridge.status()) {
+                        if generation != seen {
+                            (seen, rows) = (generation, self.semantic_rows("").ok()?);
+                        }
+                    }
                 }
                 // The agent has seen the last screen, so on the same screen only the changes are
                 // sent; a different screen is sent whole.

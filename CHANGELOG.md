@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- After an action, the screen is reported as soon as it is ready: the host polls the helper's screen generation every 40 ms instead of sleeping 500 ms up to three times while a screen is empty or "Loading", and a tap that left the generation unchanged waits up to 600 ms for a late change before reporting.
+
 ### Fixed
 
 - `cargo xtask` gates fail closed: a missing release artifact fails the size gate instead of measuring 0 bytes, and the stale-version check flags only standalone versions such as `v2` or `v3.1`, not words that contain one (`dev2`).
