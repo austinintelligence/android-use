@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- `set "X" on|off` is new: it does nothing when the switch is already in that state, and otherwise taps and checks the state changed. `toggle` checks that it flipped and says so ("Wi-Fi is now on"), failing when it did not.
+
 ### Fixed
 
 - `cargo xtask` gates fail closed: a missing release artifact fails the size gate instead of measuring 0 bytes, and the stale-version check flags only standalone versions such as `v2` or `v3.1`, not words that contain one (`dev2`).

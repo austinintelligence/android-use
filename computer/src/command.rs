@@ -40,6 +40,11 @@ pub enum Action {
 pub enum AndroidAction {
     Tap(Target),
     Toggle(Target),
+    /// Leaves a switch or checkbox on or off; nothing is tapped when it already is.
+    Set {
+        target: Target,
+        on: bool,
+    },
     Hold(Target),
     Type {
         text: Box<str>,
@@ -441,6 +446,13 @@ fn parse_android_action(t: &[Lexeme]) -> Result<AndroidAction> {
         } else {
             AndroidAction::Toggle(target)
         });
+    }
+    if t.len() >= 3 && is_word(t, 0, "set") {
+        let (target, next) = target_at(t, 1)?;
+        if next + 1 != t.len() || !(is_word(t, next, "on") || is_word(t, next, "off")) {
+            return Err(Error::new(Code::Args, "set needs a target and on or off"));
+        }
+        return Ok(AndroidAction::Set { target, on: is_word(t, next, "on") });
     }
     if t.len() >= 4 && is_word(t, 0, "type") && (is_word(t, 2, "in") || is_word(t, 2, "into")) {
         let text = quoted_at(t, 1, "text")?;
