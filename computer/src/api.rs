@@ -33,6 +33,8 @@ pub enum Code {
     Locked,
     ScreenOff,
     HelperKilled,
+    /// Stop was pressed on the helper's notification.
+    Stopped,
 }
 impl Code {
     pub fn wire(self) -> &'static str {
@@ -58,6 +60,7 @@ impl Code {
             Self::Locked => "locked",
             Self::ScreenOff => "screen_off",
             Self::HelperKilled => "helper_killed",
+            Self::Stopped => "stopped",
         }
     }
 }

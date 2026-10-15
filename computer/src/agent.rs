@@ -156,7 +156,9 @@ impl Engine {
         }
         let result = self.run_command(actions, request_identity);
         self.agent.verified = matches!(&result, Ok(response) if response.status == "done" && !response.failed);
-        if let Some(key) = key {
+        // A refusal because the helper is stopped did not run; the resend after Resume must.
+        let refused = matches!(&result, Err(error) if error.code == Code::Stopped);
+        if let Some(key) = key.filter(|_| !refused) {
             self.agent.replies.truncate(15);
             self.agent.replies.insert(0, (key, copy(&result)));
         }

@@ -197,7 +197,7 @@ impl DeviceLink for AdbLink {
         if let Err(e) = crate::install::upgrade_helper(&adb, &device) {
             eprintln!("au: could not upgrade the helper ({}); run au setup, or au uninstall first", e.message);
         }
-        adb.start_helper(&device)?;
+        adb.start_helper(&device, false)?;
         let deadline = Instant::now() + Duration::from_secs(8);
         loop {
             match Self::handshake(&adb, &device, &mut self.key) {
@@ -222,6 +222,10 @@ impl DeviceLink for AdbLink {
         self.device = None;
         self.key = None;
     }
+}
+
+pub(crate) fn stopped() -> Error {
+    Error::plain(Code::Stopped, "Android-Use was stopped from its notification on the phone. Run `au setup` to turn it on again, then resend.")
 }
 
 pub(crate) fn helper_killed() -> Error {

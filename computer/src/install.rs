@@ -147,7 +147,7 @@ pub fn setup(apk: Option<&Path>, wait_for_approval: bool) -> Result<Value> {
     let (apk, embedded) = apk_to_install(apk, &paths)?;
     adb.wait_boot_completed(&device.endpoint, std::time::Duration::from_secs(120))?;
     adb.install(&device, &apk, embedded)?;
-    adb.start_helper(&device)?;
+    adb.start_helper(&device, true)?;
     let installed = adb.package_installed(&device, "dev.codex.aubridge")?;
     let mut accessibility = adb.accessibility_enabled(&device).unwrap_or(false);
     let mut settings_opened = false;
@@ -253,8 +253,12 @@ pub fn doctor() -> Result<Value> {
         (true, Some(d)) => {
             use crate::link::DeviceLink as _;
             let mut bridge = crate::link::AdbLink::to(paths.clone(), adb.clone(), d.clone()).helper();
-            let answered = bridge.as_mut().is_ok_and(|bridge| bridge.status().is_ok());
+            let mut answered = bridge.as_mut().is_ok_and(|bridge| bridge.status().is_ok());
             if let Some(env) = bridge.as_mut().ok().filter(|_| answered).and_then(|bridge| bridge.query("env", Value::Null).ok()) {
+                if env.get("stopped").and_then(Value::as_bool) == Some(true) {
+                    answered = false;
+                    checks.insert("bridge".into(), json!({"state":"attention","message":"Android-Use was stopped from its notification; run au setup to turn it on"}));
+                }
                 for (name, flag, ready, bad) in [
                     ("battery", "battery_exempt", true, "Battery optimization is on; exempt Android-Use under Settings → Battery so Android keeps the helper alive"),
                     ("talkback", "talkback", false, "TalkBack is on and can change what the screen reports"),
@@ -268,7 +272,7 @@ pub fn doctor() -> Result<Value> {
         }
         _ => true,
     };
-    if !answering {
+    if !answering && !checks.contains_key("bridge") {
         checks.insert("bridge".into(), json!({"state":"attention","message":"The helper is installed but not answering; run au repair"}));
     }
     let (phase, step) = if ready.is_empty() {

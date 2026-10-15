@@ -35,6 +35,9 @@ pub struct Engine {
     /// durable; without the salt a new session could collide with old records.
     session: String,
     request_counter: u64,
+    /// The last `stopped` the helper reported; Chrome stays refused while it says stopped even
+    /// if the helper stops answering.
+    stopped: bool,
 }
 
 /// Transport failures worth one reconnect-and-retry for read-only calls.
@@ -68,6 +71,7 @@ impl Engine {
             agent: AgentState::default(),
             session: session_id(),
             request_counter: 0,
+            stopped: false,
         })
     }
 
@@ -81,6 +85,20 @@ impl Engine {
             None => self.link.helper()?,
         };
         Ok(self.bridge.insert(bridge))
+    }
+
+    /// Stop must also end Chrome control, which never touches the helper: ask it before every
+    /// Chrome read and plan. A helper that does not answer is not known to be stopped, so Chrome
+    /// stays allowed unless the last answer said stopped (Chrome without the helper is allowed).
+    fn not_stopped(&mut self) -> Result<()> {
+        match self.bridge().and_then(|bridge| bridge.query("env", Value::Null)) {
+            Ok(env) => self.stopped = env.get("stopped").and_then(Value::as_bool) == Some(true),
+            Err(_) => self.bridge = None,
+        }
+        if self.stopped {
+            return Err(crate::link::stopped());
+        }
+        Ok(())
     }
 
     pub(crate) fn browser(&mut self) -> Result<&mut Browser> {
@@ -112,6 +130,7 @@ impl Engine {
 
     /// Runs a read-only Chrome call, reconnecting once on transport failure.
     pub(crate) fn browser_read<T>(&mut self, mut f: impl FnMut(&mut Browser) -> Result<T>) -> Result<T> {
+        self.not_stopped()?;
         match self.browser().and_then(&mut f) {
             Err(error) if reconnectable(error.code) => {
                 self.reset_connections();
@@ -135,6 +154,9 @@ impl Engine {
                 }
                 let mut status = json!({"ok":1,"g":g,"cap":cap});
                 if let Ok(env) = self.bridge_read(|bridge| bridge.query("env", Value::Null)) {
+                    if env.get("stopped").and_then(Value::as_bool) == Some(true) {
+                        return Err(crate::link::stopped());
+                    }
                     for key in ["battery_exempt", "talkback"] {
                         if let Some(flag) = env.get(key) {
                             status[key] = flag.clone();
@@ -203,6 +225,10 @@ impl Engine {
     pub(crate) fn preflight(&mut self) -> Result<()> {
         let env = self.helper_env()?;
         let on = |key: &str, default: bool| env.get(key).and_then(Value::as_bool).unwrap_or(default);
+        self.stopped = on("stopped", false);
+        if self.stopped {
+            return Err(crate::link::stopped());
+        }
         let (code, message) = if !on("screen_on", true) {
             (Code::ScreenOff, "The screen is off. Press the phone's power button, then resend.")
         } else if on("locked", false) {
@@ -236,6 +262,15 @@ impl Engine {
         }
         let receipt = match self.bridge().and_then(|bridge| bridge.act(p)) {
             Ok(receipt) => receipt,
+            Err(error) if error.code == Code::Stopped => {
+                // The helper refused before running anything: not uncertain, and not repeatable.
+                self.stopped = true;
+                // A resend after Resume must run, not meet this record: new ids from here on.
+                self.session = session_id();
+                let refused = Receipt { e: Some("stopped".into()), next: None, ..unknown(&p.id, p.generation) };
+                let _ = self.journal.finish(&digest, &refused);
+                return Err(error);
+            }
             Err(_) => {
                 // The plan may have reached the device. Record that as uncertain,
                 // so a retry is answered from the journal instead of dispatched again.
@@ -258,6 +293,7 @@ impl Engine {
     /// against an observation taken moments ago, so the tab list is not
     /// re-synchronized before running them.
     pub(crate) fn run_browser_plan(&mut self, p: &BrowserPlan, prepared: bool) -> Result<Receipt> {
+        self.not_stopped()?;
         let digest = self.digest(&p.wire(0), true)?;
         self.browser()?;
         if let Some(prior) = self.journal.begin(&p.id, p.generation, &digest, BROWSER)? {
@@ -391,6 +427,16 @@ mod tests {
             assert_eq!((receipt.ok, receipt.e.as_deref()), (0, Some("unknown")));
         }
         assert_eq!(runs.get(), 1, "the retry was answered from the journal");
+    }
+
+    #[test]
+    fn a_run_refused_because_the_helper_was_stopped_is_stopped_not_unknown() {
+        let link = FakeLink::new(|q| Some(if q[1] == "run" { json!([q[0], 11]) } else { json!([q[0], 0, 1, 7]) }));
+        let (mut engine, _dir) = engine_over(link);
+        let before = engine.operation_id(Some("7"), "android");
+        let plan = Plan { id: "p2".into(), generation: 1, deadline_ms: 1000, max_mutations: 1, ops: Box::new([crate::api::Op::Tap(0)]) };
+        assert_eq!(engine.run_plan(&plan).err().map(|e| e.code), Some(Code::Stopped));
+        assert_ne!(engine.operation_id(Some("7"), "android"), before, "a resend after Resume gets a fresh id, not the refused record");
     }
 
     #[test]

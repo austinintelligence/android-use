@@ -207,7 +207,7 @@ fn env_reply_carries_the_flags_preflight_and_status_read() {
     let v: Value = serde_json::from_str(include_str!("../../protocol-golden.json")).unwrap();
     let (request, reply) = (&v["env"]["request"], &v["env"]["reply"]);
     assert_eq!((request[1].as_str(), reply[1].as_u64()), (Some("env"), Some(0)));
-    for flag in ["screen_on", "locked", "accessibility", "battery_exempt", "talkback"] {
+    for flag in ["screen_on", "locked", "accessibility", "battery_exempt", "talkback", "stopped"] {
         assert!(reply[2][flag].is_boolean(), "{flag}");
     }
     assert_eq!(au::env_notes(&reply[2]).len(), 1, "battery optimization is on in the sample; TalkBack is off");
