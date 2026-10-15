@@ -231,6 +231,19 @@ mod flows {
     }
 
     #[test]
+    fn only_rows_that_were_shown_count_as_seen_and_a_new_screen_forgets_the_old_one() {
+        let (mut engine, _dir) = engine();
+        let rows: Vec<SemanticRow> = (0..70)
+            .map(|i| SemanticRow { label: format!("Row {i}"), value: String::new(), kind: String::new(), state: String::new(), enabled: true, selected: false, handle: None })
+            .collect();
+        let shown = format_semantic_rows(&rows, false, "");
+        engine.note_seen(&rows, &shown, true);
+        assert!(engine.agent.seen.contains("row 3") && !engine.agent.seen.contains("row 69"), "rows cut from the output were never shown");
+        engine.note_seen(&rows[..1], "Row 0", true);
+        assert_eq!(engine.agent.seen.len(), 1, "a new screen replaces what was seen");
+    }
+
+    #[test]
     fn the_same_screen_after_an_action_is_reported_as_changes_not_listed_again() {
         let (mut engine, _dir) = engine();
         let first = act(&mut engine, r#"open app "Settings" then tap "Wi-Fi""#).unwrap().text;
