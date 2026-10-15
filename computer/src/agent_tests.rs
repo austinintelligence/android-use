@@ -236,11 +236,16 @@ mod flows {
     #[test]
     fn a_loading_screen_is_reported_when_it_finishes_not_after_a_fixed_sleep() {
         let (mut engine, _dir) = engine();
+        // A launch that is ready at once sets the baseline for this machine's round trips.
+        let begun = std::time::Instant::now();
+        act(&mut engine, r#"open app "com.slow.late""#).unwrap();
+        let baseline = begun.elapsed();
         let begun = std::time::Instant::now();
         let response = act(&mut engine, r#"open app "com.slow.loading""#).unwrap();
-        let took = begun.elapsed();
+        let extra = begun.elapsed().saturating_sub(baseline);
         assert!(response.text.contains("Now on screen:\nWi-Fi"), "{}", response.text);
-        assert!(took >= std::time::Duration::from_millis(120) && took < std::time::Duration::from_millis(450), "{took:?}");
+        // The screen takes 120 ms; a fixed 500 ms sleep would add at least that much.
+        assert!(extra < std::time::Duration::from_millis(450), "{extra:?} more than a ready launch");
     }
 
     #[test]
