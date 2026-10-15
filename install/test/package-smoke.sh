@@ -35,10 +35,11 @@ PLATFORM_DIR="$W/prefix/node_modules/@androiduse/$KEY"
 BIN=$(ls "$PLATFORM_DIR"/bin/au*)
 
 echo "== android-use read help"
-node "$LAUNCHER" read help | grep -q 'android_read'
+HELP=$(node "$LAUNCHER" read help)
+case "$HELP" in *android_read*) ;; *) echo "read help did not list android_read" >&2; exit 1 ;; esac
 echo "== MCP initialize through serve --mcp"
-printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"package-smoke","version":"0"}}}' \
-  | node "$LAUNCHER" serve --mcp | head -n 1 | grep -q '"result"'
+REPLY=$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"package-smoke","version":"0"}}}' | node "$LAUNCHER" serve --mcp)
+case "$REPLY" in *'"result"'*) ;; *) echo "initialize got no result: $REPLY" >&2; exit 1 ;; esac
 
 # Fail closed: each of these must make the launcher exit 1, not run the binary.
 expect_exit_1() {
