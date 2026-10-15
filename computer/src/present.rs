@@ -3,12 +3,12 @@
 //! `tap point X Y` maps back to the device.
 use crate::{
     agent::{completed, ModelImage, ModelResponse, Surface},
-    api::{normalized, Capture, Code, Error, Op, Plan, Receipt, Result},
+    api::{normalized, AndroidAction, Capture, Code, Error, Op, Plan, Receipt, Result},
     compress::{self, ImageSpace, Policy},
     engine::Engine,
     format::*,
     marks::{self, Mark},
-    visual,
+    resolve, visual,
 };
 use serde_json::{json, Value};
 use std::{sync::Arc, thread, time::Duration};
@@ -38,7 +38,7 @@ impl Engine {
 
     /// A label was not on screen: nothing from that step on ran. Show what
     /// is there instead, plus the image for UIs that expose little text.
-    pub(crate) fn screen_miss(&mut self, error: &Error, done: &[String]) -> ModelResponse {
+    pub(crate) fn screen_miss(&mut self, error: &Error, done: &[String], failing: Option<&AndroidAction>) -> ModelResponse {
         let mut text = if done.is_empty() { String::new() } else { format!("Partly done: {} ", completed(done)) };
         text.push_str(&display(&error.message));
         text.push_str(if done.is_empty() { ". Nothing was run." } else { ". The remaining steps were not run." });
@@ -47,6 +47,7 @@ impl Engine {
         if let Ok(rows) = self.semantic_rows("") {
             readable = rows.iter().filter(|row| row.kind != "heading").count();
             self.note_seen(&rows);
+            text.push_str(&suggestions(error, &rows, failing));
             text.push_str("\nOn screen now:\n");
             text.push_str(&format_semantic_rows(&rows, false, ""));
             self.agent.snapshot = Some(rows);
@@ -86,6 +87,34 @@ impl Engine {
             }
             Surface::Browser => self.read_page().ok().map(|page| format!("Now: {}", format_browser_page(&page))),
         }
+    }
+
+    /// An ambiguity that says what each `number N` is: its row and what precedes it, in the
+    /// helper's reading order (`labels`).
+    pub(crate) fn say_which(&mut self, error: Error, labels: &[String]) -> Error {
+        let rows = self.semantic_rows("").unwrap_or_default();
+        let numbers = duplicate_numbers(&rows);
+        let mut lines = Vec::new();
+        for (index, label) in labels.iter().enumerate().take(6) {
+            let same = |other: &str| normalized(other) == normalized(label);
+            // Exact duplicates are numbered on the screen as `Label#N`, counted in this order.
+            let nth = labels[..=index].iter().filter(|other| same(other)).count();
+            let dup = labels.iter().filter(|other| same(other)).count() > 1;
+            let at = rows.iter().zip(&numbers).position(|(row, number)| same(&row.label) && (!dup || *number == Some(nth)));
+            let Some(at) = at else { continue };
+            let before = rows[..at]
+                .iter()
+                .rev()
+                .find(|row| row.kind == "heading")
+                .or(at.checked_sub(1).map(|i| &rows[i]))
+                .map(|row| display_n(&row.label, 32))
+                .filter(|name| !name.is_empty());
+            lines.push(format!("{} = {}{}", index + 1, semantic_line(&rows[at], None, false), before.map(|name| format!(" after \"{name}\"")).unwrap_or_default()));
+        }
+        if lines.is_empty() {
+            return error;
+        }
+        Error::plain(error.code, format!("{} {}.", error.message, lines.join("; ")))
     }
 
     /// Remembers which labels the agent has been shown, for `unseen_label_runs`.
@@ -211,4 +240,35 @@ impl Engine {
         self.agent.images.insert(alias.into(), Arc::clone(&bytes));
         bytes
     }
+}
+
+/// `Near: "A", "B"` and one `fix:` line: the failed step again with the closest label that is
+/// safe and unambiguous. Risky labels are listed as near but never put in the fix.
+fn suggestions(error: &Error, rows: &[SemanticRow], failing: Option<&AndroidAction>) -> String {
+    let Some(wanted) = resolve::missed_label(error) else { return String::new() };
+    let labels = rows.iter().filter(|row| row.kind != "heading").map(|row| row.label.as_str());
+    let near = resolve::near_labels(wanted, labels.clone());
+    if near.is_empty() {
+        return String::new();
+    }
+    let mut text = format!("\nNear: {}", near.iter().map(|label| format!("\"{}\"", display_n(label, 48))).collect::<Vec<_>>().join(", "));
+    let quote = |value: &str| format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""));
+    let fix = near
+        .first()
+        .filter(|label| label.len() <= 96 && !resolve::risky(label) && labels.clone().filter(|other| normalized(other) == normalized(label)).count() == 1)
+        .and_then(|label| {
+            use AndroidAction as A;
+            match failing? {
+                A::Tap(_) => Some(format!("tap {}", quote(label))),
+                A::Hold(_) => Some(format!("hold {}", quote(label))),
+                A::Toggle(_) => Some(format!("toggle {}", quote(label))),
+                A::Turn { on, .. } => Some(format!("turn {} {}", if *on { "on" } else { "off" }, quote(label))),
+                A::Type { text, .. } => Some(format!("type {} in {}", quote(text), quote(label))),
+                _ => None,
+            }
+        });
+    if let Some(fix) = fix {
+        text.push_str(&format!("\nfix: {fix}"));
+    }
+    text
 }

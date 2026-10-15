@@ -204,6 +204,37 @@ pub(crate) fn near_miss(wanted: &str, actual: &str) -> bool {
     aligned && extra.len() <= 2 && !extra.iter().any(|word| RISKY.contains(word))
 }
 
+/// The label a screen miss was about.
+pub(crate) fn missed_label(error: &Error) -> Option<&str> {
+    error.message.strip_prefix("No item labeled \"")?.split_once("\" is on the current screen").map(|(label, _)| label)
+}
+
+/// Up to three labels on screen close to a missing one (a shared word, a typo, a different
+/// spelling), best first.
+pub(crate) fn near_labels<'a>(wanted: &str, labels: impl IntoIterator<Item = &'a str>) -> Vec<&'a str> {
+    let squash = |text: &str| normalized(text).chars().filter(|c| c.is_alphanumeric()).collect::<String>();
+    let (spoken, wanted) = (normalized(wanted), squash(wanted));
+    let pairs = |text: &str| -> Vec<(char, char)> { text.chars().zip(text.chars().skip(1)).collect() };
+    let closeness = |label: &str| {
+        let (a, b) = (pairs(&wanted), pairs(label));
+        let common = a.iter().filter(|pair| b.contains(pair)).count();
+        if label.contains(&wanted) || wanted.contains(label) {
+            0.9
+        } else {
+            (2 * common) as f32 / (a.len() + b.len()).max(1) as f32
+        }
+    };
+    let mut scored: Vec<(f32, &str)> = Vec::new();
+    for label in labels {
+        let (key, folded) = (normalized(label), squash(label));
+        if !folded.is_empty() && key != spoken && !scored.iter().any(|(_, seen)| normalized(seen) == key) && closeness(&folded) >= 0.4 {
+            scored.push((closeness(&folded), label));
+        }
+    }
+    scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+    scored.into_iter().take(3).map(|(_, label)| label).collect()
+}
+
 /// A label missing from the Android screen (not a page, app, or
 /// notification): the case where showing the screen helps the agent most.
 pub(crate) fn is_screen_miss(error: &Error) -> bool {
@@ -247,6 +278,16 @@ mod tests {
         assert!(!near_miss("Save", "Autosave"), "word boundaries");
         assert!(!near_miss("Save", "Save changes to this document and close"), "too many extra words");
         assert!(!near_miss("Open", "Open and send"), "send is risky");
+    }
+
+    #[test]
+    fn near_labels_are_the_few_closest_and_never_the_label_itself() {
+        let screen = ["Wi-Fi", "Wi-Fi settings", "Bluetooth", "Save draft", "Network & internet", "wifi calling"];
+        assert_eq!(near_labels("WiFi", screen), vec!["Wi-Fi", "Wi-Fi settings", "wifi calling"]);
+        assert_eq!(near_labels("Save", screen), vec!["Save draft"]);
+        assert!(near_labels("Zebra", screen).is_empty());
+        let miss = missing("Say \"hi\"", "screen");
+        assert_eq!(missed_label(&miss), Some("Say \"hi\""));
     }
 
     #[test]

@@ -192,7 +192,12 @@ impl Engine {
                     start += consumed;
                 }
                 Err(error) if resolve::is_screen_miss(&error) => {
-                    let mut response = self.screen_miss(&error, &done);
+                    let missed = resolve::missed_label(&error).map(normalized);
+                    let failing = actions.iter().find_map(|action| match action {
+                        Action::Android(android) if Some(normalized(&display(&target_label(android)))) == missed => Some(android),
+                        _ => None,
+                    });
+                    let mut response = self.screen_miss(&error, &done, failing);
                     response.failed = !done.is_empty() && changed.is_some();
                     return Ok(response);
                 }
@@ -465,6 +470,7 @@ impl Engine {
                 }
                 self.agent.loose = tier >= 2 && !refs.is_empty();
                 resolve::choose(target, refs, "screen")
+                    .map_err(|error| if error.code == Code::Ambiguous && target.ordinal.is_none() { self.say_which(error, &labels) } else { error })
             }
             Err(error) if error.code == Code::Unsupported => resolve::scene_target(scene, target),
             Err(error) => Err(error),
