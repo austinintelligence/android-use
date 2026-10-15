@@ -56,7 +56,7 @@ Do not retry the whole command. Read the screen and work out what already happen
 
 ## Optional capture is unavailable
 
-Run `au read capabilities`. Camera, microphone, and location need Android permission; screen recording needs approval in the Android-Use app for the current helper process.
+Run `au read capabilities`. Camera, microphone, and location need Android permission; screen recording needs approval in the Android-Use app for the current helper process (on Android 14 and later, once per recording).
 
 ## Emulators
 

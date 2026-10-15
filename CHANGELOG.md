@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Screen recording works on Android 14+ (#7): the helper promotes its foreground service to the `mediaProjection` type first, then gets the projection, registers its callback, and only then creates the virtual display. Android 14 allows a screen-capture grant once, so the helper clears it after use and a second recording asks again instead of crashing.
 - `cargo xtask` gates fail closed: a missing release artifact fails the size gate instead of measuring 0 bytes, and the stale-version check flags only standalone versions such as `v2` or `v3.1`, not words that contain one (`dev2`).
 - `cargo xtask golden-capture NAME` needs `--reviewed`, confirming the screen shows nothing personal, and refuses a screen with what looks like an email address, phone number, or card number.
 

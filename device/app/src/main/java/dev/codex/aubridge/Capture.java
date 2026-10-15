@@ -22,6 +22,7 @@ import android.media.projection.MediaProjection;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Base64;
 import android.util.DisplayMetrics;
@@ -383,6 +384,9 @@ final class Capture {
     String screenRecord(int seconds) throws Exception {
         if (Build.VERSION.SDK_INT < 21) throw new Vm.Unsupported();
         if (!Projection.available()) throw new Vm.Permission();
+        Recording order = new Recording();
+        BridgeService.projectionStarted();
+        order.reach(Recording.Step.SERVICE_PROMOTED);
         MediaProjection projection;
         try {
             projection = Projection.acquire(context);
@@ -390,6 +394,7 @@ final class Capture {
             throw new Vm.Permission();
         }
         if (projection == null) throw new Vm.Permission();
+        order.reach(Recording.Step.PROJECTION_OBTAINED);
         DisplayMetrics metrics = context.getResources().getDisplayMetrics();
         int width = Math.max(320, metrics.widthPixels),
                 height = Math.max(320, metrics.heightPixels),
@@ -407,7 +412,9 @@ final class Capture {
         VirtualDisplay display = null;
         boolean started = false, ok = false;
         try {
-            BridgeService.projectionStarted();
+            projection.registerCallback(
+                    new MediaProjection.Callback() {}, new Handler(Looper.getMainLooper()));
+            order.reach(Recording.Step.CALLBACK_REGISTERED);
             recorder.setVideoSource(MediaRecorder.VideoSource.SURFACE);
             recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
             recorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264);
@@ -417,6 +424,7 @@ final class Capture {
                     Math.min(4_000_000, Math.max(800_000, width * height * 2)));
             recorder.setOutputFile(output.getAbsolutePath());
             recorder.prepare();
+            order.reach(Recording.Step.DISPLAY_CREATED);
             display =
                     projection.createVirtualDisplay(
                             "AU screen",
