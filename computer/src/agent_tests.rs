@@ -253,6 +253,27 @@ mod flows {
     }
 
     #[test]
+    fn rows_curly_quotes_and_verb_aliases_name_the_same_control() {
+        let (mut engine, _dir) = engine();
+        act(&mut engine, r#"open app "Settings""#).unwrap();
+        for command in [r#"tap "sw Wi-Fi=on""#, r#"click “Wi-Fi”"#, r#"tap "Wi-Fi#1""#] {
+            assert!(act(&mut engine, command).unwrap().text.starts_with("Done."), "{command}");
+        }
+        for turn in [r#"turn on "Wi-Fi""#, r#"turn off "sw Wi-Fi=on""#, r#"turn on "Wi-Fi#1""#, r#"turn on "Wi-Fi" number 2"#] {
+            assert!(act(&mut engine, turn).is_err(), "{turn}: turn never taps what it cannot read as one switch");
+        }
+        // `turn on|off` is `set`, and a row copied from the screen names its switch.
+        act(&mut engine, r#"open app "com.example.switches""#).unwrap();
+        assert!(act(&mut engine, r#"turn on "sw Dark mode=on""#).unwrap().text.ends_with("was already on."));
+        assert!(act(&mut engine, r#"turn off "Dark mode""#).unwrap().text.starts_with("Done. Dark mode is now off."));
+        act(&mut engine, r#"open app "Settings""#).unwrap();
+        let numbered = act(&mut engine, r#"tap "Save" number 2"#).unwrap_err_or_text();
+        assert!(numbered.contains("which was not tapped"), "a number does not skip the risky check: {numbered}");
+        assert!(act(&mut engine, r#"tap "Save #2""#).unwrap().text.starts_with("No item labeled"), "text with a space before # is a label");
+        assert!(act(&mut engine, r#"tap "sw Missing=on""#).unwrap().text.starts_with("No item labeled \"sw Missing=on\""), "a miss reports what was asked");
+    }
+
+    #[test]
     fn only_rows_that_were_shown_count_as_seen_and_a_new_screen_forgets_the_old_one() {
         let (mut engine, _dir) = engine();
         let rows: Vec<SemanticRow> = (0..70)

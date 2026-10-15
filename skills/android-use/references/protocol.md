@@ -29,6 +29,7 @@ Join up to 16 steps with `then`. Quote names as `screen` shows them; `Name#2` is
 - then find "TEXT"|screen (a look ends the chain)
 - verify text "TEXT" exists
 - page open "URL" | page click "LABEL" | page type "TEXT" in "FIELD"
+- click "LABEL" | turn on|off "LABEL" | go back (also: curly quotes, a screen row such as "sw Wi-Fi=on" as LABEL)
 - hold "LABEL"
 - open setting "wifi|bluetooth|display|sound|notifications|apps|battery|accessibility|date and time|developer options"
 - wait for "LABEL" up to N seconds | wait for screen change up to N seconds
