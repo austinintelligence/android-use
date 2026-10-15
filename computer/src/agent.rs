@@ -432,20 +432,24 @@ impl Engine {
     /// and whether it is on. Anything unclear is an error, never a tap.
     fn switch_state(&mut self, target: &Target) -> Result<(Target, bool)> {
         let rows = self.semantic_rows("")?;
-        let find = |label: &str, ordinal: Option<u16>| {
+        let find = |label: &str| {
             let wanted = normalized(label);
-            rows.iter().filter(|row| row.kind != "heading" && normalized(&row.label) == wanted).nth(usize::from(ordinal.unwrap_or(1)) - 1)
+            rows.iter().filter(|row| row.kind != "heading" && normalized(&row.label) == wanted).collect::<Vec<_>>()
         };
-        let (label, ordinal) = match (find(&target.label, target.ordinal), resolve::from_row(&target.label)) {
-            (None, Some((label, ordinal))) => (label, target.ordinal.or(ordinal)),
-            _ => (target.label.to_string(), target.ordinal),
+        let label = match (find(&target.label).is_empty(), resolve::from_row(&target.label)) {
+            (true, Some((label, ordinal))) if ordinal.is_none() => label,
+            (true, Some(_)) => return Err(Error::plain(Code::Args, "Numbered switches cannot be turned on or off by number; use tap. Nothing was run.")),
+            _ => target.label.to_string(),
         };
-        match find(&label, ordinal) {
-            Some(row) if matches!(row.kind.as_str(), "switch" | "checkbox") => {
-                Ok((Target { label: label.into(), ordinal, handle: None }, matches!(row.state.as_str(), "checked" | "on")))
+        // The host's rows and the helper's controls are numbered differently, so a number cannot say
+        // which switch's state was read: only a label that names exactly one row is turned.
+        match (find(&label).as_slice(), target.ordinal) {
+            ([row], None) if matches!(row.kind.as_str(), "switch" | "checkbox") => {
+                Ok((Target { label: label.into(), ordinal: None, handle: None }, matches!(row.state.as_str(), "checked" | "on")))
             }
-            Some(_) => Err(Error::plain(Code::Args, format!("\"{}\" is not a switch or checkbox. Nothing was run.", display(&label)))),
-            None => Err(resolve::missing(&target.label, "screen")),
+            ([row], None) => Err(Error::plain(Code::Args, format!("\"{}\" is not a switch or checkbox. Nothing was run.", display(&row.label)))),
+            ([], _) => Err(resolve::missing(&target.label, "screen")),
+            _ => Err(Error::plain(Code::Args, format!("\"{}\" cannot be turned on or off here because it is not one unique switch; use tap. Nothing was run.", display(&label)))),
         }
     }
 
