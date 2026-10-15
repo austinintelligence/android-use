@@ -22,6 +22,13 @@ use std::{collections::HashMap, sync::Arc};
 /// Quiet time the helper waits for after a change before the reply is built, and the longest it
 /// waits: a tap redraws quickly, typed text feeds debounced search lists, a launched app cold-starts.
 const QUIET_MS: u16 = 200;
+/// The quiet window: `QUIET_ENV` when it is a whole number of milliseconds up to `TYPED_QUIET_MS`, else `QUIET_MS`.
+fn quiet_window(value: Option<&str>) -> u16 {
+    value.and_then(|ms| ms.parse().ok()).filter(|ms| (1..=TYPED_QUIET_MS).contains(ms)).unwrap_or(QUIET_MS)
+}
+
+/// Overrides `QUIET_MS` (the quiet window after an action) for sweeps such as `benchmark-live`.
+const QUIET_ENV: &str = "AU_QUIET_MS";
 const TYPED_QUIET_MS: u16 = 900;
 const SETTLE_CAP_MS: u16 = 1500;
 const LAUNCH_CAP_MS: u16 = 5000;
@@ -68,6 +75,8 @@ pub(crate) struct AgentState {
     pub(crate) mapping: Vec<String>,
     /// Whether the last target resolved by a containing label rather than an exact one.
     pub(crate) loose: bool,
+    /// The screen generation the last Android plan ran against, to tell whether it moved.
+    pub(crate) acted_from: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -352,7 +361,7 @@ impl Engine {
             let package = ops.iter().rev().find_map(|op| if let Op::Launch(package) = op { Some(package.clone()) } else { None });
             let typed = ops.iter().any(|op| matches!(op, Op::Text(..)));
             ops.push(Op::Settle {
-                quiet_ms: if typed { TYPED_QUIET_MS } else { QUIET_MS },
+                quiet_ms: if typed { TYPED_QUIET_MS } else { quiet_window(std::env::var(QUIET_ENV).ok().as_deref()) },
                 cap_ms: if package.is_some() { LAUNCH_CAP_MS } else { SETTLE_CAP_MS },
                 package: package.unwrap_or_default(),
             });
@@ -364,6 +373,7 @@ impl Engine {
             max_mutations: MAX_MUTATIONS,
             ops: ops.into_boxed_slice(),
         };
+        self.agent.acted_from = scene.generation;
         let run = self.run_plan(&plan);
         self.end_image_unless_unchanged(&run, scene.generation);
         let receipt = run.map_err(crate::journal::explain_reuse)?;
@@ -445,7 +455,10 @@ impl Engine {
             A::ScreenRecord(seconds) => Op::Capture(Capture::ScreenRecord(*seconds)),
             A::NotificationOpen(target) => Op::NotificationOpen(self.notification_key(target)?),
             A::NotificationDismiss(target) => Op::NotificationDismiss(self.notification_key(target)?),
-            A::NotificationAction(target) => Op::NotificationAction(self.notification_key(target)?),
+            A::NotificationAction(target, label) => {
+                let (key, label) = resolve::notification_action(&self.read(Read::Notifications)?, target, label.as_deref())?;
+                Op::NotificationAction(key, label)
+            }
             A::PointTap { x, y } => {
                 let (x, y) = self.map_point(*x, *y)?;
                 Op::PointTap { x, y }
@@ -696,7 +709,7 @@ fn target_label(action: &AndroidAction) -> String {
 /// Whether an action can bring up a different screen than the one it was compiled against.
 fn navigates(action: &AndroidAction) -> bool {
     use AndroidAction as A;
-    matches!(action, A::OpenApp(_) | A::OpenSetting(_) | A::OpenLink(_) | A::Key(_) | A::NotificationOpen(_) | A::NotificationAction(_))
+    matches!(action, A::OpenApp(_) | A::OpenSetting(_) | A::OpenLink(_) | A::Key(_) | A::NotificationOpen(_) | A::NotificationAction(..))
 }
 
 fn is_media(action: &Action) -> bool {
