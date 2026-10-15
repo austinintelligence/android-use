@@ -250,7 +250,10 @@ pub fn doctor() -> Result<Value> {
     // Installed and enabled is not the same as answering: a helper that crashes on start still
     // shows both, so ask it something.
     let answering = match (helper && accessibility, device.as_ref()) {
-        (true, Some(d)) => crate::bridge::Bridge::connect(adb.clone(), d.clone()).and_then(|mut bridge| bridge.status()).is_ok(),
+        (true, Some(d)) => {
+            use crate::link::DeviceLink as _;
+            crate::link::AdbLink::to(paths.clone(), adb.clone(), d.clone()).helper().and_then(|mut bridge| bridge.status()).is_ok()
+        }
         _ => true,
     };
     if !answering {
