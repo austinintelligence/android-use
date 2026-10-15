@@ -7,9 +7,9 @@ MCP advertises two tools. Each takes one string, `command`; the tool description
 
 ## Reading a screen
 
-Act first: send a label you expect without reading. Read `screen` only when the state is unknown. In a served session a label you were never shown runs only on an exact, unique, non-risky match inside the app you just opened; otherwise the reply is a miss that shows the screen.
+Act first; read only if the state is unknown.
 
-One row per line: a plain name is a button or text; `sw Wi-Fi=on`, `edit Email="x"`, `chk`, `radio`, `tab`, `link`, `list` mark other controls; `Name: value` shows a short state. Quote the name exactly. `Save#2` is the second duplicate: send `tap "Save" number 2`. `e7` is a control with no label: send `tap e7` (a screen image shows the same numbers on boxes). `screen full` adds the descriptive subtitles.
+One row per line: a plain name is a button or text; `sw Wi-Fi=on`, `edit Email="x"`, `chk`, `radio`, `tab`, `link`, `list` mark other controls; `Name: value` shows a short state. Quote the name exactly. `Save#2` is the second duplicate: send `tap "Save" number 2`. `e7` is a control with no label: send `tap e7`. `screen full` adds the descriptive subtitles.
 
 ## Results
 
