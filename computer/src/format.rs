@@ -473,7 +473,7 @@ pub(crate) fn describe_action(action: &Action) -> String {
             A::ScreenRecord(_) => "record the screen".into(),
             A::NotificationOpen(t) => format!("open notification {}", quoted(&t.label)),
             A::NotificationDismiss(t) => format!("dismiss notification {}", quoted(&t.label)),
-            A::NotificationAction(t) => format!("run notification action {}", quoted(&t.label)),
+            A::NotificationAction(t, _) => format!("run notification action {}", quoted(&t.label)),
             A::PointTap { x, y } => format!("tap point {x} {y}"),
             A::Swipe { .. } => "swipe".into(),
         },
@@ -524,7 +524,7 @@ fn done_phrase(action: &Action) -> String {
         Action::Android(A::ScreenRecord(_)) => "recorded the screen".into(),
         Action::Android(A::NotificationOpen(t)) => format!("opened the {} notification", short(&t.label)),
         Action::Android(A::NotificationDismiss(t)) => format!("dismissed the {} notification", short(&t.label)),
-        Action::Android(A::NotificationAction(t)) => format!("ran the {} notification action", short(&t.label)),
+        Action::Android(A::NotificationAction(t, _)) => format!("ran the {} notification action", short(&t.label)),
         Action::Android(A::PointTap { x, y }) => format!("tapped point {x} {y}"),
         Action::Android(A::Swipe { .. }) => "swiped".into(),
         Action::Android(A::WaitTarget { .. } | A::WaitText { .. } | A::WaitScreenChange { .. }) | Action::Browser(B::WaitText { .. } | B::WaitCss { .. }) => {

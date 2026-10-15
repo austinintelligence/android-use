@@ -677,7 +677,8 @@ public final class Ui extends AccessibilityService {
                     desc = nonEmpty(d),
                     hint = nonEmpty(h),
                     r = n.getViewIdResourceName();
-            boolean password = n.isPassword(), hasText = !text.isEmpty();
+            boolean password = n.isPassword() || Secret.password(n.getInputType()),
+                    hasText = !text.isEmpty();
             String semantic = shorten(password ? "" : (!text.isEmpty() ? text : desc), 1024);
             String label = shorten(!semantic.isEmpty() ? semantic : r != null ? r : "", 1024);
             Rect bounds = new Rect();
