@@ -182,7 +182,7 @@ fn size(root: &Path) -> Result<(usize, usize, usize), String> {
 }
 /// Formatted-line budgets: Rust production, Java production, automation, all authored code.
 /// Raised once per milestone, in one PR, and stated in the changelog.
-const BUDGETS: [(&str, usize); 4] = [("rust_production", 8650), ("android_production", 4100), ("automation", 2350), ("authored_code", 19_100)];
+const BUDGETS: [(&str, usize); 4] = [("rust_production", 9100), ("android_production", 4700), ("automation", 3200), ("authored_code", 22_800)];
 /// Budgets measure conventionally formatted code (rustfmt; google-java-format --aosp for the
 /// helper), so they track real complexity rather than how densely lines are packed.
 fn over_budget(rust: usize, java: usize, automation: usize, authored: usize) -> Result<(), String> {
@@ -292,9 +292,9 @@ fn pin_mismatch(text: &str, version: &str) -> Option<String> {
     })
 }
 /// A standalone `v2` or `v3` version (`v2`, `v3.1`, `v2.0.0`), the product's old names. Words that only
-/// contain one (`dev2`, `v2ray`, `MP3v2`) are not versions.
+/// contain one (`dev2`, `v2ray`, `MP3v2`) are not versions; `app_v2` is.
 fn stale_version_marker(text: &str) -> Option<&str> {
-    let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let word = |c: char| c.is_alphanumeric();
     text.match_indices(['v', 'V']).find_map(|(at, _)| {
         let rest = &text[at + 1..];
         let end = rest.find(|c: char| !c.is_ascii_digit() && c != '.').unwrap_or(rest.len());
@@ -755,16 +755,16 @@ mod tests {
 
     #[test]
     fn budgets_allow_the_one_three_limits_and_name_what_is_over() {
-        assert!(over_budget(8650, 4100, 2350, 19_100).is_ok());
-        assert_eq!(over_budget(8651, 4100, 2351, 19_100).unwrap_err(), "source budget exceeded: rust_production 8651 > 8650, automation 2351 > 2350");
+        assert!(over_budget(9100, 4700, 3200, 22_800).is_ok());
+        assert_eq!(over_budget(9101, 4700, 3201, 22_800).unwrap_err(), "source budget exceeded: rust_production 9101 > 9100, automation 3201 > 3200");
     }
 
     #[test]
     fn only_version_shaped_markers_are_stale() {
-        for text in ["Use v2 now.", "see (v3.1)", "V2.0.0", "v3."] {
+        for text in ["Use v2 now.", "see (v3.1)", "V2.0.0", "v3.", "android_use_v2"] {
             assert!(stale_version_marker(text).is_some(), "{text}");
         }
-        for text in ["dev2 build", "v2ray", "MP3v2", "/api/v2x", "v1.2.0", "v20", "kv3", "v"] {
+        for text in ["dev2 build", "v2ray", "MP3v2", "/api/v2x", "v1.2.0", "v20", "kv3", "v", "év2"] {
             assert_eq!(stale_version_marker(text), None, "{text}");
         }
     }

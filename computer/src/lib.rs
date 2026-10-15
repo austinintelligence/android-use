@@ -13,6 +13,7 @@ pub mod device;
 pub mod emulator;
 pub mod engine;
 mod format;
+pub mod link;
 pub use format::render_screen;
 pub mod install;
 mod journal;

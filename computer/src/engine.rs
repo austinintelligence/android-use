@@ -7,9 +7,10 @@ use crate::{
     artifact::{valid, Artifacts, MAX_ARTIFACT},
     bridge::{Bridge, Observation},
     browser::{Browser, Outcome},
-    device::{Adb, Device, Paths},
+    device::Paths,
     format,
     journal::{unknown, Journal, ANDROID, BROWSER},
+    link::{AdbLink, DeviceLink},
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -22,8 +23,7 @@ pub use crate::agent::{ModelImage, ModelResponse};
 
 pub struct Engine {
     paths: Paths,
-    adb: Option<Adb>,
-    device: Option<Device>,
+    link: Box<dyn DeviceLink>,
     bridge: Option<Bridge>,
     browser: Option<Browser>,
     pub(crate) scene: Option<Scene>,
@@ -51,12 +51,17 @@ impl Engine {
     }
 
     pub(crate) fn at(paths: Paths) -> Result<Self> {
+        let link = AdbLink::new(paths.clone());
+        Self::with_link(paths, Box::new(link))
+    }
+
+    /// An engine over any device link; tests pass a `FakeLink`.
+    pub(crate) fn with_link(paths: Paths, link: Box<dyn DeviceLink>) -> Result<Self> {
         Ok(Self {
             artifacts: Artifacts::new(paths.clone()),
             journal: Journal::open(&paths)?,
             paths,
-            adb: None,
-            device: None,
+            link,
             bridge: None,
             browser: None,
             scene: None,
@@ -66,37 +71,14 @@ impl Engine {
         })
     }
 
-    /// Attaches a pre-connected helper bridge (a fake one in tests).
-    #[cfg(test)]
-    pub(crate) fn attach(&mut self, bridge: Bridge, device: Device) {
-        self.adb = Some(Adb::for_tests());
-        self.device = Some(device);
-        self.bridge = Some(bridge);
-    }
-
     pub fn root(&self) -> &Path {
         &self.paths.root
-    }
-
-    fn link(&mut self) -> Result<(Adb, Device)> {
-        let adb = match &self.adb {
-            Some(adb) => adb.clone(),
-            None => self.adb.insert(Adb::discover()?).clone(),
-        };
-        let device = match &self.device {
-            Some(device) => device.clone(),
-            None => self.device.insert(adb.resolve(&self.paths)?).clone(),
-        };
-        Ok((adb, device))
     }
 
     pub(crate) fn bridge(&mut self) -> Result<&mut Bridge> {
         let bridge = match self.bridge.take() {
             Some(bridge) => bridge,
-            None => {
-                let (adb, device) = self.link()?;
-                Bridge::connect(adb, device)?
-            }
+            None => self.link.helper()?,
         };
         Ok(self.bridge.insert(bridge))
     }
@@ -104,10 +86,7 @@ impl Engine {
     pub(crate) fn browser(&mut self) -> Result<&mut Browser> {
         let browser = match self.browser.take() {
             Some(browser) => browser,
-            None => {
-                let (adb, device) = self.link()?;
-                Browser::connect(adb, device)?
-            }
+            None => self.link.chrome()?,
         };
         Ok(self.browser.insert(browser))
     }
@@ -115,7 +94,7 @@ impl Engine {
     fn reset_connections(&mut self) {
         self.bridge = None;
         self.browser = None;
-        self.device = None;
+        self.link.reset();
     }
 
     /// Runs a read-only helper call, reconnecting once on transport failure.
@@ -247,7 +226,7 @@ impl Engine {
     fn digest(&mut self, wire: &Value, device_bound: bool) -> Result<String> {
         let mut hash = Sha256::new();
         if device_bound {
-            hash.update(self.link()?.1.hardware.as_bytes());
+            hash.update(self.link.device()?.hardware.as_bytes());
         }
         hash.update(serde_json::to_vec(wire).map_err(|e| Error::new(Code::Protocol, e.to_string()))?);
         Ok(hex(&hash.finalize()))
@@ -320,6 +299,40 @@ pub fn plain_error(error: &Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::link::FakeLink;
+    use std::{cell::Cell, rc::Rc};
+
+    fn engine_over(link: FakeLink) -> (Engine, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        (Engine::with_link(Paths::at(dir.path().to_path_buf()).unwrap(), Box::new(link)).unwrap(), dir)
+    }
+
+    #[test]
+    fn a_dropped_connection_reconnects_once_for_reads() {
+        let mut dropped = false;
+        let link = FakeLink::new(move |q| std::mem::replace(&mut dropped, true).then(|| json!([q[0], 0, 5, 7])));
+        let connects = link.helper_connects.clone();
+        let (mut engine, _dir) = engine_over(link);
+        assert_eq!(engine.read(Read::Status).unwrap(), json!({"ok":1,"g":5,"cap":7}));
+        assert_eq!(*connects.borrow(), 2, "the first connection dropped the request; the retry used a new one");
+    }
+
+    #[test]
+    fn a_plan_lost_with_its_connection_is_unknown_and_never_dispatched_twice() {
+        let runs = Rc::new(Cell::new(0));
+        let seen = runs.clone();
+        let link = FakeLink::new(move |q| {
+            seen.set(seen.get() + u32::from(q[1] == "run"));
+            (q[1] != "run").then(|| json!([q[0], 0, 1, 7]))
+        });
+        let (mut engine, _dir) = engine_over(link);
+        let plan = Plan { id: "p1".into(), generation: 1, deadline_ms: 1000, max_mutations: 1, ops: Box::new([crate::api::Op::Tap(0)]) };
+        for _ in 0..2 {
+            let receipt = engine.run_plan(&plan).unwrap();
+            assert_eq!((receipt.ok, receipt.e.as_deref()), (0, Some("unknown")));
+        }
+        assert_eq!(runs.get(), 1, "the retry was answered from the journal");
+    }
 
     #[test]
     fn operation_ids_are_valid_and_scoped_to_one_process() {
