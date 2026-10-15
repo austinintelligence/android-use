@@ -304,7 +304,7 @@ fn apk_to_install(given: Option<&Path>, paths: &Paths) -> Result<(PathBuf, bool)
     }
     let bytes = embedded_apk().ok_or_else(|| Error::new(Code::Args, "pass the Android-Use helper APK path or place aubridge.apk beside au"))?;
     let path = paths.root.join("aubridge.apk");
-    fs::write(&path, bytes)?;
+    crate::device::atomic(&path, bytes)?;
     Ok((path, true))
 }
 
@@ -320,7 +320,7 @@ pub(crate) fn upgrade_helper(adb: &Adb, d: &crate::device::Device) -> Result<()>
         return Ok(());
     }
     let path = Paths::discover()?.root.join("aubridge.apk");
-    fs::write(&path, bytes)?;
+    crate::device::atomic(&path, bytes)?;
     adb.install(d, &path, true)
 }
 

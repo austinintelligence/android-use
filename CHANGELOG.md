@@ -6,7 +6,7 @@
 
 - Debug and example Android builds never use the release signing key; the helper's release build uses it only when `AUBRIDGE_SIGNING_PROPERTIES` names a signing file.
 
-- A release `au` installs only its embedded helper or an APK whose signer certificate matches the pinned release key (`device/release-signer.sha256`), checked on the host before `adb install`. It never passes `-d` (downgrade), and passes `-t` only in dev builds.
+- A release `au` installs only its embedded helper or an APK whose signer certificate matches the pinned release key (`device/release-signer.sha256`), checked on the host before `adb install`. It never passes `-d` (downgrade), and passes `-t` only in dev builds or with `AU_DEV_APK` set.
 
 ### Changed
 

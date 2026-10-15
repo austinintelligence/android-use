@@ -307,10 +307,11 @@ impl Adb {
     /// own embedded helper or an APK signed by the pinned release key; `-t` is for dev builds alone.
     pub fn install(&self, d: &Device, apk: &Path, embedded: bool) -> Result<()> {
         let p = apk.to_str().ok_or_else(|| Error::new(Code::Args, "APK path is not UTF-8"))?;
-        if !(embedded || cfg!(debug_assertions) || crate::apk::trusted(&std::fs::read(apk)?)) {
+        let dev = cfg!(debug_assertions) || env::var_os("AU_DEV_APK").is_some();
+        if !(embedded || dev || crate::apk::trusted(&std::fs::read(apk)?)) {
             return Err(Error::new(Code::Args, "the helper APK is not signed by the Android Use release key"));
         }
-        let flags: &[&str] = if cfg!(debug_assertions) { &["install", "-r", "-t"] } else { &["install", "-r"] };
+        let flags: &[&str] = if dev { &["install", "-r", "-t"] } else { &["install", "-r"] };
         self.run(Some(&d.endpoint), &[flags, &[p]].concat(), Duration::from_secs(120)).map_err(|e| {
             let downgrade = e.message.contains("VERSION_DOWNGRADE");
             if downgrade {

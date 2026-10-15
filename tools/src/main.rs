@@ -263,9 +263,10 @@ fn gradle_signing(helper: &str, example: &str) -> Result<(), String> {
     if !helper.contains("versionCode = versionParts[0] * 1_000_000 + versionParts[1] * 1_000 + versionParts[2]") {
         return Err("helper versionCode must be major*1,000,000 + minor*1,000 + patch from VERSION".into());
     }
-    let debug = helper.split("debug {").nth(1).is_some_and(|rest| rest.split('}').next().is_some_and(|b| b.contains("signingConfig")));
-    if debug || example.contains("signingConfig") {
-        return Err("debug and example builds must not use a release signing key".into());
+    // The one signing assignment must sit in the release build type; nothing may clone it into debug.
+    let assigns = helper.matches("signingConfig").count() - helper.matches("signingConfigs").count();
+    if assigns != 1 || helper.find("signingConfig =") < helper.find("release {") || helper.contains("initWith") || example.contains("signingConfig") {
+        return Err("only the helper's release build type may use a signing key".into());
     }
     Ok(())
 }
@@ -711,6 +712,9 @@ mod tests {
         assert!(gradle_signing(ok, "release { }").is_ok());
         assert!(gradle_signing("versionCode = 1_000_000", "").is_err());
         assert!(gradle_signing(&format!("{ok}\ndebug {{ signingConfig = x }}"), "").is_err());
+        assert!(gradle_signing(&format!("{ok}\ndebug{{signingConfig=x}}"), "").is_err());
+        assert!(gradle_signing(&format!("{ok}\ndebug {{ initWith release }}"), "").is_err());
+        assert!(gradle_signing(&format!("defaultConfig {{ signingConfig = x }}\n{ok}"), "").is_err());
         assert!(gradle_signing(ok, "debug { signingConfig = x }").is_err());
     }
 
