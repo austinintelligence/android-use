@@ -55,7 +55,7 @@ public final class BridgeService extends Service {
     public IBinder onBind(Intent intent) {
         return null;
     }
-    static void projectionStarted() {
+
     static void begin(int type) {
         update(type, true);
     }
