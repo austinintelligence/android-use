@@ -263,8 +263,23 @@ mod flows {
         let shown = format_semantic_rows(&rows, false, "");
         engine.note_seen(&rows, &shown, true);
         assert!(engine.agent.seen.contains("row 3") && !engine.agent.seen.contains("row 69"), "rows cut from the output were never shown");
+        let row = |label: &str| SemanticRow { label: label.into(), ..rows[0].clone() };
+        let pair = [row("Delete account settings"), row("Delete account")];
+        engine.note_seen(&pair, "Delete account settings", true);
+        assert!(engine.agent.seen.contains("delete account settings") && !engine.agent.seen.contains("delete account"), "a label inside another row's text was not shown");
         engine.note_seen(&rows[..1], "Row 0", true);
         assert_eq!(engine.agent.seen.len(), 1, "a new screen replaces what was seen");
+    }
+
+    #[test]
+    fn a_risky_label_seen_in_one_app_does_not_license_it_in_another() {
+        let (mut engine, _dir) = engine();
+        (engine.agent.strict, engine.agent.opened) = (true, true);
+        engine.agent.seen.insert("remove account".into());
+        let target = Target { label: "Remove".into(), ordinal: None, handle: None };
+        assert!(!engine.unseen_label_runs(&target, 0, 1, &["Remove".into()]), "open app then tap Remove must be refused");
+        let seen = Target { label: "Remove account".into(), ..target };
+        assert!(engine.unseen_label_runs(&seen, 0, 1, &["Remove account".into()]), "a label that was shown keeps working");
     }
 
     #[test]
