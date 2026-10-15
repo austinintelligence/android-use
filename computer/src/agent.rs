@@ -308,7 +308,15 @@ impl Engine {
         }
         let mut step = self.run_android(&[Action::Android(action.clone())], vec![op], scene, identity)?;
         let Some(before) = before else { return Ok(step) };
-        let after = self.switch_state(target)?;
+        // Some switches commit a moment after the screen settles.
+        let mut after = self.switch_state(target)?;
+        for _ in 0..3 {
+            if after != Some(before) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            after = self.switch_state(target)?;
+        }
         if after == Some(before) {
             let screen = self.model_read(CommandRead::Screen { full: false, matching: None, delta: false }).map(|read| read.text).unwrap_or_default();
             return Err(Error::plain(Code::Partial, format!("Tapped {name}, but it is still {}. Screen now:\n{screen}", state(before))));
@@ -323,10 +331,10 @@ impl Engine {
     fn switch_state(&mut self, target: &Target) -> Result<Option<bool>> {
         let rows = self.semantic_rows("")?;
         let label = normalized(&target.label);
-        let mut hits = rows.iter().filter(|row| {
-            matches!(row.kind.as_str(), "switch" | "checkbox") && if target.handle.is_some() { row.handle == target.handle } else { normalized(&row.label) == label }
-        });
-        Ok(hits.nth(usize::from(target.ordinal.unwrap_or(1)).saturating_sub(1)).map(|row| matches!(row.state.as_str(), "checked" | "on")))
+        // The ordinal counts every row with the label, as target resolution does, not only switches.
+        let mut hits = rows.iter().filter(|row| if target.handle.is_some() { row.handle == target.handle } else { normalized(&row.label) == label });
+        let row = hits.nth(usize::from(target.ordinal.unwrap_or(1)).saturating_sub(1));
+        Ok(row.filter(|row| matches!(row.kind.as_str(), "switch" | "checkbox")).map(|row| matches!(row.state.as_str(), "checked" | "on")))
     }
 
     fn run_android(&mut self, actions: &[Action], ops: Vec<Op>, scene: &Scene, identity: Option<&str>) -> Result<Step> {

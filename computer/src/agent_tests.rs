@@ -59,7 +59,7 @@ mod flows {
         if screen == "settings" {
             &["Wi-Fi", "Bluetooth", "Flaky", "Save draft", "Save and delete all"]
         } else if screen == "switches" {
-            &["Dark mode", "Sticky"]
+            &["Dark mode", "Sticky", "Alarm", "Alarm"]
         } else {
             &["Settings"]
         }
@@ -79,7 +79,12 @@ mod flows {
                     json!([
                         seq,
                         0,
-                        [json!(["Dark mode", "", "switch", if dark { "checked" } else { "unchecked" }, true, false]), json!(["Sticky", "", "switch", "unchecked", true, false])]
+                        [
+                            json!(["Dark mode", "", "switch", if dark { "checked" } else { "unchecked" }, true, false]),
+                            json!(["Sticky", "", "switch", "unchecked", true, false]),
+                            json!(["Alarm", "", "button", "", true, false]),
+                            json!(["Alarm", "", "switch", "checked", true, false])
+                        ]
                     ])
                 }
                 "semantic" => json!([seq, 0, names.iter().map(|l| json!([l, "", "button", "", true, false])).collect::<Vec<_>>()]),
@@ -345,6 +350,15 @@ mod flows {
         assert!(error.message.starts_with("Tapped Sticky, but it is still off.") && error.message.contains("Dark mode=off"), "{}", error.message);
         let not_a_switch = act(&mut engine, r#"set "Missing" on"#).unwrap();
         assert!(not_a_switch.text.contains("No item labeled"), "{}", not_a_switch.text);
+    }
+
+    #[test]
+    fn a_numbered_target_reads_the_state_of_the_switch_it_taps() {
+        let (mut engine, _dir) = engine();
+        act(&mut engine, r#"open app "com.example.switches""#).unwrap();
+        // "Alarm" number 1 is a button, number 2 the switch that is on.
+        assert_eq!(act(&mut engine, r#"set "Alarm" number 2 on"#).unwrap().text, "Done. Alarm was already on.");
+        assert!(act(&mut engine, r#"set "Alarm" number 1 on"#).unwrap_err_or_text().contains("not a switch or checkbox"));
     }
 
     #[test]
