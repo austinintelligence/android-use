@@ -22,6 +22,13 @@ use std::{collections::HashMap, sync::Arc};
 /// Quiet time the helper waits for after a change before the reply is built, and the longest it
 /// waits: a tap redraws quickly, typed text feeds debounced search lists, a launched app cold-starts.
 const QUIET_MS: u16 = 200;
+/// The quiet window: `QUIET_ENV` when it is a whole number of milliseconds up to `TYPED_QUIET_MS`, else `QUIET_MS`.
+fn quiet_window(value: Option<&str>) -> u16 {
+    value.and_then(|ms| ms.parse().ok()).filter(|ms| (1..=TYPED_QUIET_MS).contains(ms)).unwrap_or(QUIET_MS)
+}
+
+/// Overrides `QUIET_MS` (the quiet window after an action) for sweeps such as `benchmark-live`.
+const QUIET_ENV: &str = "AU_QUIET_MS";
 const TYPED_QUIET_MS: u16 = 900;
 const SETTLE_CAP_MS: u16 = 1500;
 const LAUNCH_CAP_MS: u16 = 5000;
@@ -291,7 +298,7 @@ impl Engine {
             let package = ops.iter().rev().find_map(|op| if let Op::Launch(package) = op { Some(package.clone()) } else { None });
             let typed = ops.iter().any(|op| matches!(op, Op::Text(..)));
             ops.push(Op::Settle {
-                quiet_ms: if typed { TYPED_QUIET_MS } else { QUIET_MS },
+                quiet_ms: if typed { TYPED_QUIET_MS } else { quiet_window(std::env::var(QUIET_ENV).ok().as_deref()) },
                 cap_ms: if package.is_some() { LAUNCH_CAP_MS } else { SETTLE_CAP_MS },
                 package: package.unwrap_or_default(),
             });

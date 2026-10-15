@@ -15,6 +15,11 @@ fn step_results_read_as_one_summary() {
 }
 
 #[test]
+fn the_quiet_window_defaults_to_200_and_takes_a_sane_override() {
+    assert_eq!([None, Some("150"), Some("120"), Some("0"), Some("5000"), Some("x")].map(quiet_window), [200, 150, 120, 200, 200, 200]);
+}
+
+#[test]
 fn deadlines_cover_the_longest_wait() {
     assert_eq!(deadline(&parse_act_command(r#"tap "A""#).unwrap()), 8000);
     assert_eq!(deadline(&parse_act_command(r#"tap "A" then wait for text "B" up to 12 seconds"#).unwrap()), 13_000);
