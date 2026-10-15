@@ -22,7 +22,7 @@ use serde_json::{json, Value};
 use std::{
     collections::{HashMap, VecDeque},
     fs::{self, OpenOptions},
-    io::{ErrorKind, Write},
+    io::{ErrorKind, Read, Seek, Write},
     path::PathBuf,
 };
 
@@ -48,6 +48,11 @@ pub(crate) struct Journal {
     order: VecDeque<Box<str>>,
     owner: Box<str>,
     held: Option<fs::File>,
+    /// (lock-file write counter, journal length) as of this process's last load or write.
+    seen: Option<(u64, u64)>,
+    wrote: bool,
+    #[cfg(test)]
+    loads: u32,
 }
 
 impl Drop for Journal {
@@ -130,13 +135,29 @@ impl Journal {
         })
     }
 
-    /// Runs `f` under the journal lock with the file reloaded, so every decision
-    /// is made on what other processes have already written.
+    /// Runs `f` under the journal lock with the file current, so every decision
+    /// is made on what other processes have already written. The lock file holds
+    /// a counter every writer bumps; the journal is re-parsed only when that
+    /// counter or the file length differs from what this process last saw.
     fn locked<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
-        let lock = OpenOptions::new().create(true).truncate(false).write(true).open(&self.lock_path)?;
+        let mut lock = OpenOptions::new().create(true).truncate(false).read(true).write(true).open(&self.lock_path)?;
         lock.lock()?;
-        let result = self.reload().and_then(|()| f(self));
-        drop(lock);
+        let mut raw = [0; 8];
+        let count = lock.read_exact(&mut raw).map_or(0, |()| u64::from_le_bytes(raw));
+        let path = self.path.clone();
+        let length = || fs::metadata(&path).map_or(0, |m| m.len());
+        let before = length();
+        let result = if self.seen == Some((count, before)) { Ok(()) } else { self.reload() }.and_then(|()| f(self));
+        let after = length();
+        self.seen = result.is_ok().then_some((count, after));
+        if after != before || std::mem::take(&mut self.wrote) {
+            let next = count.wrapping_add(1);
+            if lock.rewind().and_then(|()| lock.write_all(&next.to_le_bytes())).is_ok() {
+                self.seen = self.seen.map(|(_, length)| (next, length));
+            } else {
+                self.seen = None;
+            }
+        }
         result
     }
 
@@ -152,6 +173,10 @@ impl Journal {
     }
 
     fn reload(&mut self) -> Result<()> {
+        #[cfg(test)]
+        {
+            self.loads += 1;
+        }
         self.states.clear();
         self.order.clear();
         recover(&self.path)?;
@@ -186,8 +211,10 @@ impl Journal {
         if !valid(id) || digest.len() != 64 {
             return;
         }
-        if let Some(pos) = self.order.iter().position(|v| v.as_ref() == id) {
-            self.order.remove(pos);
+        if self.states.contains_key(id) {
+            if let Some(pos) = self.order.iter().position(|v| v.as_ref() == id) {
+                self.order.remove(pos);
+            }
         }
         self.order.push_back(id.into());
         match kind {
@@ -214,6 +241,7 @@ impl Journal {
             return Err(Error::new(Code::Bounds, "journal record exceeds limit"));
         }
         line.push(b'\n');
+        self.wrote = true;
         let mut file = OpenOptions::new().create(true).append(true).open(&self.path)?;
         let before = file.metadata()?.len();
         let written = file.write_all(&line).and_then(|()| if durable { file.sync_all() } else { Ok(()) });
@@ -246,7 +274,8 @@ impl Journal {
         Ok(changed)
     }
 
-    fn compact(&self) -> Result<()> {
+    fn compact(&mut self) -> Result<()> {
+        self.wrote = true;
         let mut bytes = Vec::new();
         for id in &self.order {
             let Some(state) = self.states.get(id.as_ref()) else { continue };
@@ -379,6 +408,48 @@ mod tests {
         assert_eq!(j.states.len(), MAX_ENTRIES);
         assert!(j.states.contains_key("keep"), "pending survives eviction");
         assert!(!j.states.contains_key("done0"));
+    }
+
+    #[test]
+    fn many_acts_in_one_process_parse_the_journal_once() {
+        let d = tempfile::tempdir().unwrap();
+        let mut j = open(&d);
+        let start = j.loads;
+        for i in 0..50 {
+            let id = format!("op{i}");
+            assert!(j.begin(&id, 1, A, ANDROID).unwrap().is_none());
+            j.finish(A, &receipt(&id)).unwrap();
+        }
+        assert_eq!(j.loads, start, "own writes never trigger a reload");
+    }
+
+    #[test]
+    fn another_handle_writing_bumps_the_counter_and_is_seen() {
+        let d = tempfile::tempdir().unwrap();
+        let mut first = open(&d);
+        let mut second = open(&d);
+        assert!(first.begin("warm", 1, A, ANDROID).unwrap().is_none());
+        first.finish(A, &receipt("warm")).unwrap();
+        let counter = || fs::read(first.lock_path.clone()).unwrap();
+        let before = counter();
+        let loads = first.loads;
+        assert!(second.begin("theirs", 1, B, ANDROID).unwrap().is_none());
+        assert_ne!(counter(), before, "a writer bumps the lock-file counter");
+        assert_eq!(first.begin("theirs", 1, B, ANDROID).unwrap().unwrap().e.as_deref(), Some("unknown"), "the other write is seen");
+        assert_eq!(first.loads, loads + 1);
+    }
+
+    #[test]
+    fn a_rewrite_that_keeps_the_length_is_still_seen_through_the_counter() {
+        let d = tempfile::tempdir().unwrap();
+        let mut first = open(&d);
+        let mut second = open(&d);
+        assert!(first.begin("same", 1, A, ANDROID).unwrap().is_none());
+        second.begin("same", 1, A, ANDROID).unwrap();
+        second.finish(A, &receipt("same")).unwrap();
+        second.reconcile(ANDROID).unwrap();
+        assert!(first.begin("same", 1, A, ANDROID).unwrap().is_some());
+        assert!(first.states.contains_key("same") && first.order.len() == first.states.len());
     }
 
     #[test]
