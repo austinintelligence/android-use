@@ -86,10 +86,13 @@ impl Engine {
     }
 
     pub(crate) fn semantic_rows(&mut self, focus: &str) -> Result<Vec<SemanticRow>> {
+        let before = self.ensure_scene().ok().map(|scene| (scene.package, scene.generation));
         let value = self.bridge_read(|bridge| bridge.query("semantic", Value::String(focus.to_owned())))?;
         let rows = parse_semantic_rows(&value)?;
-        // Each listing renumbers the helper's handles, so `eN` is good only for this screen.
-        self.agent.marked_in = self.ensure_scene().ok().map(|scene| (scene.package, scene.generation));
+        // Each listing renumbers the helper's handles, so `eN` is good only for this screen;
+        // a screen that moved during the read leaves no handle valid.
+        let after = self.ensure_scene().ok().map(|scene| (scene.package, scene.generation));
+        self.agent.marked_in = before.filter(|before| Some(before) == after.as_ref());
         Ok(rows)
     }
 
