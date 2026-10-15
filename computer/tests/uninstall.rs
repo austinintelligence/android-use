@@ -63,9 +63,39 @@ fn an_unknown_flag_is_an_error_that_names_the_flag_and_changes_nothing() {
 #[test]
 fn an_unknown_flag_on_a_named_agent_is_an_error_too() {
     let (_dir, state, home) = sandbox();
-    let output = au(&state, &home, &["uninstall", "cursor", "--force"]);
+    let output = au(&state, &home, &["uninstall", "cursor", "--bogus"]);
     assert!(!output.status.success());
-    assert!(json(&output)["m"].as_str().unwrap_or_default().contains("--force"));
+    let message = json(&output)["m"].as_str().unwrap_or_default().to_owned();
+    assert!(message.contains("--bogus") && message.contains("--force"), "message should name the flag and the valid ones: {message}");
+}
+
+#[test]
+fn a_foreign_client_entry_is_kept_until_uninstall_is_given_force() {
+    let (_dir, state, home) = sandbox();
+    let cursor = home.join(".cursor/mcp.json");
+    fs::create_dir_all(cursor.parent().unwrap()).unwrap();
+    fs::write(&cursor, r#"{"mcpServers":{"android-use":{"command":"node","args":["/x/server.js"]}}}"#).unwrap();
+
+    // Agent commands report per-agent results with exit 0, so the refusal is in the JSON, not the status.
+    let refused = au(&state, &home, &["uninstall", "cursor"]);
+    assert_eq!(json(&refused)["ok"], 0, "a foreign entry is refused without --force");
+    assert!(String::from_utf8_lossy(&refused.stdout).contains("--force"), "the refusal says to pass --force");
+    assert!(fs::read_to_string(&cursor).unwrap().contains("/x/server.js"));
+
+    let forced = au(&state, &home, &["uninstall", "cursor", "--force"]);
+    assert_eq!(json(&forced)["ok"], 1, "--force removes the foreign entry: {}", String::from_utf8_lossy(&forced.stdout));
+    assert!(!fs::read_to_string(&cursor).unwrap().contains("/x/server.js"));
+}
+
+#[test]
+fn dry_run_needs_no_device_and_creates_nothing() {
+    let dir = TempDir::new().unwrap();
+    let (state, home) = (dir.path().join("state"), dir.path().join("home"));
+    fs::create_dir_all(&home).unwrap();
+    let output = au(&state, &home, &["uninstall", "--dry-run"]);
+    assert!(output.status.success(), "dry run without a device should still report: {}", String::from_utf8_lossy(&output.stdout));
+    assert_eq!(json(&output)["dry_run"], 1);
+    assert!(!state.exists(), "dry run must not create the state folder or its artifacts folder");
 }
 
 #[test]

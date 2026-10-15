@@ -13,7 +13,7 @@ Run `au setup` once with one authorized, unlocked Android device. Use `au doctor
 | `au devices` | List connected device endpoints and their states. |
 | `au enroll ENDPOINT` | Bind one connected hardware identity when several devices are attached. |
 | `au repair [APK]` / `au update [APK]` | Reinstall or update the helper. |
-| `au uninstall [--dry-run]` | Remove the helper and Android Use's local state. `--dry-run` only lists what would go. Stop `au serve` first; uninstall refuses while it runs. Unknown flags are errors. |
+| `au uninstall [--dry-run]` | Remove the helper and Android Use's local state. `--dry-run` only lists what would go. Stop `au serve` first; uninstall refuses while it runs. Unknown flags are errors. `au uninstall AGENT [--dry-run] [--force]` removes one agent's entry; `--force` also removes an entry au did not write. |
 | `au emulator doctor\|install\|images\|create\|start\|stop\|status\|list\|snapshot\|destroy` | Create and run emulators as separate targets. See [emulators](../guides/emulators.md). |
 | `au targets` | List the default target and each emulator target. |
 | `--target NAME` | With any command, act on that target instead of the default. `AU_TARGET` is the same. |

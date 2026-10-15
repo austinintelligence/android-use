@@ -39,12 +39,27 @@ impl Paths {
     /// State for the selected target: `<base>/targets/NAME` with `--target NAME` (or `AU_TARGET`),
     /// else the base folder itself, so nothing moves for anyone not using targets.
     pub fn discover() -> Result<Self> {
+        Self::at(Self::locate()?.root)
+    }
+    pub(crate) fn at(root: PathBuf) -> Result<Self> {
+        let paths = Self::layout(root);
+        fs::create_dir_all(&paths.root)?;
+        fs::create_dir_all(&paths.artifacts)?;
+        Ok(paths)
+    }
+    /// The same folders as `discover`, without creating any of them, for a read-only report.
+    pub fn locate() -> Result<Self> {
         let base = Self::base()?;
-        match env::var("AU_TARGET").ok().filter(|name| !name.is_empty()) {
-            Some(name) if crate::emulator::valid_name(&name) => Self::at(base.join("targets").join(name)),
-            Some(_) => Err(Error::new(Code::Args, "target names use lowercase letters, digits, and dashes (at most 32)")),
-            None => Self::at(base),
-        }
+        let root = match env::var("AU_TARGET").ok().filter(|name| !name.is_empty()) {
+            Some(name) if crate::emulator::valid_name(&name) => base.join("targets").join(name),
+            Some(_) => return Err(Error::new(Code::Args, "target names use lowercase letters, digits, and dashes (at most 32)")),
+            None => base,
+        };
+        Ok(Self::layout(root))
+    }
+    fn layout(root: PathBuf) -> Self {
+        let artifacts = root.join("artifacts");
+        Self { device: root.join("device.json"), journal: root.join("operations.jsonl"), artifacts, root }
     }
     /// Takes the exclusive lock that keeps two `au serve` processes off one target; the lock is
     /// released when the returned file is dropped or the process ends, even by a crash.
@@ -52,12 +67,6 @@ impl Paths {
         let file = fs::OpenOptions::new().create(true).truncate(false).write(true).open(self.root.join("lock"))?;
         file.try_lock().map_err(|_| Error::new(Code::Device, "another au serve is already driving this target; stop it, or use a different --target"))?;
         Ok(file)
-    }
-    pub(crate) fn at(root: PathBuf) -> Result<Self> {
-        fs::create_dir_all(&root)?;
-        let artifacts = root.join("artifacts");
-        fs::create_dir_all(&artifacts)?;
-        Ok(Self { device: root.join("device.json"), journal: root.join("operations.jsonl"), artifacts, root })
     }
 }
 
