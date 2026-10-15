@@ -57,6 +57,7 @@ fi
 mkdir -p "$INSTALL_DIR"
 TMP=$(mktemp -d "$INSTALL_DIR/.au-install.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT
+trap 'exit 1' INT TERM HUP
 fetch -o "$TMP/$ASSET" "$BASE/$ASSET"
 fetch -o "$TMP/SHA256SUMS" "$BASE/SHA256SUMS"
 
@@ -72,17 +73,18 @@ if [ "$ACTUAL" != "$EXPECTED" ]; then
   exit 1
 fi
 
-# The attestation proves the archive was built by this repository's release workflow. Only gh can check it.
-if command -v gh >/dev/null 2>&1; then
+# The attestation proves the archive was built by this repository's release workflow. Only a logged-in gh can
+# check it; gh without a login counts as no gh.
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
   if ! gh attestation verify "$TMP/$ASSET" --repo "$SLUG" >/dev/null; then
     echo "Attestation check failed for $ASSET. Aborting." >&2
     exit 1
   fi
 elif [ "${AU_REQUIRE_ATTESTATION:-}" = 1 ]; then
-  echo "AU_REQUIRE_ATTESTATION=1 needs the GitHub CLI (gh) to verify the attestation (cosign alone cannot). Aborting." >&2
+  echo "AU_REQUIRE_ATTESTATION=1 needs the GitHub CLI (gh), logged in with gh auth login, to verify the attestation (cosign alone cannot). Aborting." >&2
   exit 1
 else
-  echo "Skipping the attestation check: install gh to enable it (SHA256SUMS was verified)." >&2
+  echo "Skipping the attestation check: install gh and run gh auth login to enable it (SHA256SUMS was verified)." >&2
 fi
 
 tar -xzf "$TMP/$ASSET" -C "$TMP" au
