@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // Stage a publishable @androiduse/<key> platform package.
 // Usage: node install/stage-platform.mjs <key> <path-to-au-binary> <out-dir>
-import { createHash } from "node:crypto";
 import { chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { writeManifest } from "./manifest.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const OS = ["darwin", "linux", "win32"];
@@ -25,7 +25,6 @@ const target = join(outDir, file);
 await mkdir(join(outDir, "bin"), { recursive: true });
 await copyFile(source, target);
 await chmod(target, 0o755);
-const sha256 = createHash("sha256").update(await readFile(target)).digest("hex");
 
 const pkg = {
   name: `@androiduse/${key}`,
@@ -33,11 +32,11 @@ const pkg = {
   description: `Android Use ${os} ${cpu} binary`,
   os: [os],
   cpu: [cpu],
-  files: ["bin", "README.md"],
+  files: ["bin", "manifest.json", "README.md"],
   license: "MIT",
   repository: install.repository,
   publishConfig: { access: "public" },
 };
 await writeFile(join(outDir, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
 await writeFile(join(outDir, "README.md"), `# @androiduse/${key}\n\nThe ${os} ${cpu} binary for [android-use](https://www.npmjs.com/package/android-use). Install \`android-use\`, not this package: npm picks the matching platform for you.\n`);
-await writeFile(join(outDir, "manifest.json"), `${JSON.stringify({ files: { [file]: sha256 } }, null, 2)}\n`);
+writeManifest(outDir, [file]);

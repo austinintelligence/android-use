@@ -133,8 +133,15 @@ struct Call {
 }
 
 impl Mcp {
-    fn start(exe: &Path) -> Result<Self, String> {
-        let mut child = Command::new(exe).args(["serve", "--mcp"]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(ioe)?;
+    fn start(exe: &Path, quiet: Option<u16>) -> Result<Self, String> {
+        let mut child = Command::new(exe)
+            .args(["serve", "--mcp"])
+            .envs(quiet.map(|ms| ("AU_QUIET_MS", ms.to_string())))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(ioe)?;
         let input = child.stdin.take().ok_or("MCP stdin was unavailable")?;
         let output = BufReader::new(child.stdout.take().ok_or("MCP stdout was unavailable")?);
         let mut mcp = Self { child, input: Some(input), output, id: 0, fixed_tokens: 0 };
@@ -211,8 +218,8 @@ fn adb(args: &[&str]) {
 }
 
 /// Each run gets a fresh server: a new agent has seen no screen, so none is summarized as a diff.
-fn run_task(exe: &Path, task: &Task, latency: &mut BTreeMap<String, Vec<u128>>) -> Result<Run, String> {
-    let mut mcp = Mcp::start(exe)?;
+fn run_task(exe: &Path, quiet: Option<u16>, task: &Task, latency: &mut BTreeMap<String, Vec<u128>>) -> Result<Run, String> {
+    let mut mcp = Mcp::start(exe, quiet)?;
     let mcp = &mut mcp;
     if let Some(activity) = task.reset {
         adb(&["shell", "am", "start", "-W", "-S", "--activity-clear-task", "-n", activity]);
@@ -255,17 +262,37 @@ fn run_task(exe: &Path, task: &Task, latency: &mut BTreeMap<String, Vec<u128>>) 
 pub fn run(root: &Path) -> Result<(), String> {
     let exe = env::var_os("AU_BIN").map(PathBuf::from).unwrap_or_else(|| root.join("target/dist").join(if cfg!(windows) { "au.exe" } else { "au" }));
     if !exe.is_file() {
-        return Err("build target/dist/au (cargo build --profile dist -p au) before running the live benchmark".into());
+        return Err("build target/dist/au (cargo build --locked --profile dist -p au) before running the live benchmark".into());
     }
     let runs: usize = env::var("BENCH_RUNS").ok().and_then(|value| value.parse().ok()).unwrap_or(3);
-    let mcp = Mcp::start(&exe)?;
+    // BENCH_QUIET_MS="200,150,120" runs the whole benchmark once per quiet window and compares taps.
+    let Some(sweep) = env::var("BENCH_QUIET_MS")
+        .ok()
+        .map(|list| list.split(',').map(|ms| ms.trim().parse::<u16>().map_err(|_| format!("BENCH_QUIET_MS: {ms:?} is not milliseconds"))).collect::<Result<Vec<_>, _>>())
+        .transpose()?
+    else {
+        return bench(root, &exe, runs, None, None).map(drop);
+    };
+    for ms in sweep {
+        let out = bench(root, &exe, runs, Some(ms), Some(&format!("{ms}ms")))?;
+        println!(
+            "quiet_ms={ms} tap_p50={}ms tap_p95={}ms success={}/{}",
+            out["latency"]["android_act tap"]["p50"], out["latency"]["android_act tap"]["p95"], out["success"], out["attempts"]
+        );
+    }
+    Ok(())
+}
+
+/// One benchmark pass with the given quiet window (`None`: the default); `tag` names its report.
+fn bench(root: &Path, exe: &Path, runs: usize, quiet: Option<u16>, tag: Option<&str>) -> Result<Value, String> {
+    let mcp = Mcp::start(exe, quiet)?;
     let mut latency: BTreeMap<String, Vec<u128>> = BTreeMap::new();
     let mut report = Vec::new();
     let mut traces = Vec::new();
     println!("fixed_tokens_per_turn={}", mcp.fixed_tokens);
     let page = serve_page();
     for task in TASKS.iter().filter(|task| page || task.name != "chrome_page") {
-        let results: Vec<Run> = (0..runs).map(|_| run_task(&exe, task, &mut latency)).collect::<Result<_, _>>()?;
+        let results: Vec<Run> = (0..runs).map(|_| run_task(exe, quiet, task, &mut latency)).collect::<Result<_, _>>()?;
         let mean = |f: &dyn Fn(&Run) -> f64| results.iter().map(f).sum::<f64>() / results.len() as f64;
         let entry = json!({
             "task": task.name,
@@ -300,6 +327,7 @@ pub fn run(root: &Path) -> Result<(), String> {
     println!("mean_calls={:.2} mean_input_tokens={:.0} success={success}/{attempts}", total("calls") / report.len() as f64, total("input_tokens") / report.len() as f64);
     let out = json!({"fixed_tokens": mcp.fixed_tokens, "tasks": report, "latency": actions, "success": success, "attempts": attempts});
     let path = env::var_os("BENCH_OUT").map(PathBuf::from).unwrap_or_else(|| root.join("target/benchmark-live.json"));
+    let path = tag.map_or(path.clone(), |tag| path.with_extension(format!("{tag}.json")));
     fs::write(&path, serde_json::to_vec_pretty(&out).map_err(ioe)?).map_err(ioe)?;
     if let Some(trace) = env::var_os("BENCH_TRACE") {
         fs::write(trace, serde_json::to_vec(&traces).map_err(ioe)?).map_err(ioe)?;
@@ -307,7 +335,7 @@ pub fn run(root: &Path) -> Result<(), String> {
     if env::var("BENCH_GATE").is_ok_and(|value| value == "1") {
         gate(&out, env::var_os("BENCH_BASELINE").map(PathBuf::from).ok_or("BENCH_GATE=1 needs BENCH_BASELINE")?)?;
     }
-    Ok(())
+    Ok(out)
 }
 
 /// Fails when the success rate drops or an action's p95 is more than 20% slower than the baseline.

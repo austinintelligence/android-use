@@ -3,9 +3,10 @@ on:
   push: { branches: [main] }
   pull_request:
   schedule: [{ cron: '41 3 * * 1' }]
-permissions: { contents: read, security-events: write }
+permissions: { contents: read }
 jobs:
   analyze:
+    permissions: { contents: read, security-events: write }
     strategy:
       matrix:
         include:
@@ -15,6 +16,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with: { persist-credentials: false }
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
         with: { distribution: temurin, java-version: '17' }
       - uses: gradle/actions/setup-gradle@ac638b010cf58a27ee6c972d7336334ccaf61c96

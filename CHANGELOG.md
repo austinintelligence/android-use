@@ -5,16 +5,93 @@
 ### Added
 
 - `cargo xtask bench-model` (contributor tooling): drives a real agent CLI through fifteen device goals, verifies success from device state, and compares two `au` builds with calls, input tokens, and wall time as means with 95% confidence intervals. It has a spend guard (`--max-runs`, `--max-cost`).
+- Device preflight: before the first action of a session and after any failure, Android Use checks the phone and returns a typed `locked`, `screen_off`, or `helper_killed` result with one next step, instead of a timeout or a permission error. The helper has a new `env` operation. `au status` and `au doctor` report when battery optimization is on for Android-Use or TalkBack is enabled. `cargo xtask emulator-e2e` covers the three results.
+
+- The Android-Use app shows each grant (Accessibility, notification access, notification permission, battery exemption), the helper version, and the last contact from the computer. The foreground notification has a **Stop** action; afterwards `act` returns a typed `stopped` result until `au setup` runs. The launcher and notification icons are vector drawables.
+
+### Security
+
+- The helper now proves itself before `au` sends anything. The helper keeps a random per-process key that only the ADB shell user can read; `au` sends a random challenge on both helper sockets and continues only if each answer is the right HMAC-SHA256, so an app that binds the helper socket first can no longer impersonate the helper. A wrong or missing answer fails with "the process on the helper socket is not the Android-Use helper".
+- The helper retries a socket bind that fails, tells you in a notification if it still cannot listen, and keeps accepting connections when one connection fails.
+
+### Changed
+
+- Agents act first: the instructions, `AGENTS.md`, and the skill no longer ask for a first read of the screen. In a served session, a label the agent was never shown runs only on an exact, unique, non-risky match inside the app it just opened; anything else is a miss that shows the screen. A label the agent never saw no longer runs if it is risky. (`au act` from a shell has no session and is unchanged.)
+- A missing label now suggests up to three near labels from the screen and one `fix:` command to send as is (never with a risky label), and an ambiguous label says what each `number N` is.
+- Lenient targets: a row copied from `screen` (`sw Wi-Fi=on`, `Save#2`) names its control when its text is not itself a label, curly quotes work as straight ones, and `click`, `turn on|off "LABEL"` (the same as `set "LABEL" on|off`) and `go back` are accepted. Every 1.x command parses as before; `computer/tests/command_corpus.rs` checks that against the commands in the docs, recorded from 1.2.0.
+- `set "X" on|off` is new: it does nothing when the switch is already in that state, and otherwise taps and checks the state changed. `toggle` checks that it flipped and says so ("Wi-Fi is now on"), failing when it did not.
+- Accessibility events no longer take the helper's UI lock (they bump an atomic generation and the last-event time, and a stale scene is rebuilt on demand), and `notificationTimeout` is 0 instead of 50. The quiet window after an action stays 200 ms but can be set with `AU_QUIET_MS`; `BENCH_QUIET_MS=200,150,120 cargo xtask benchmark-live` compares values.
+- After an action, the screen is reported as soon as it is ready: the host polls the helper's screen generation every 40 ms instead of sleeping 500 ms up to three times while a screen is empty or "Loading", and a tap that left the generation unchanged waits up to 600 ms for a late change before reporting.
+
+### Security
+
+- Loose matches are safe near misses. A notification, tab, or app whose name only contains or starts with your words is used only when it is the single such item, lines up with your words at a word boundary, adds at most two other words, and none is risky (`pay`, `delete`, `transfer`, and forms like `payments`, `sending`, or `delete-all`); otherwise the command reports a miss that lists the candidates. `open app "Bank"` no longer opens "Bank Transfer".
+
+### Changed
+
+- Newlines in screen text show as spaces, and zero-width and other invisible format characters are dropped. Tabs and bidi override/isolate characters (U+202A–U+202E, U+2066–U+2069, U+200E, U+200F) do too, so screen text cannot fake extra rows or reorder text.
+- `transfer` joins the risky words.
+
+### Added
+
+- Helper `tree` op (status capability bit 3) that dumps every accessibility window and its nodes, capped at 2,048 nodes and 900 KB with a truncation flag, password text omitted, with a typed Rust reader and a shared golden fixture. For tools and 2.0; no agent command uses it.
+
+### Changed
+
+- `run notification action` needs a label when a notification has several actions: `run notification action "Reply" on "Messages"`. With several actions and no label nothing runs and the reply lists the action labels; a notification with one action still runs without a label. Notifications already showing when the listener connects are now listed, not only later ones.
+
+### Security
+
+- Device-side captures expire after 24 hours. Password fields are also recognized by their input type (text, visible, web, and number passwords), so their text is redacted wherever `isPassword()` was not set. Setup asks for notification permission (Android 13+) for the helper's own foreground notification.
+
+### Security
+
+- Debug and example Android builds never use the release signing key; the helper's release build uses it only when `AUBRIDGE_SIGNING_PROPERTIES` names a signing file.
+
+- A release `au` installs only its embedded helper or an APK whose signer certificate matches the pinned release key (`device/release-signer.sha256`), checked on the host before `adb install`. It never passes `-d` (downgrade), and passes `-t` only in dev builds or with `AU_DEV_APK` set.
+
+### Changed
+
+- au 1.3 upgrades the helper to 1.3 by itself on connect (it reads the installed helper's `versionCode`); going back to 1.2 needs `au uninstall` first.
+- The helper's `versionCode` is computed from `VERSION` (1.3.0 is 1,003,000), and `cargo xtask version` checks it.
+- Host state is private and artifacts expire after 7 days; a shared AU_HOME on CI must become per user. On macOS and Linux the state folder, `device.json`, journal, locks, logs, artifacts, and `screen-space.json` are created 0700/0600, existing ones owned by you are tightened at startup, and artifacts older than 7 days are deleted.
+- The npm launcher fails closed: `android-use` and each `@androiduse/<platform>` package ship a `manifest.json` with SHA-256 digests, and a missing manifest, a missing entry for your platform, or a checksum mismatch exits 1 instead of running an unchecked binary. `AU_BIN` still overrides the binary but warns on stderr every time. The launcher forwards SIGINT, SIGTERM, and SIGHUP to `au` and exits with its code. A binary swapped between the check and the launch is not defended against: anyone who can write `node_modules` can rewrite the launcher itself.
+- `au setup` run through `npx` registers `npx -y android-use@X.Y.Z serve --mcp` (pinned to its own version) with agent clients instead of a path inside the npx cache, which disappears when the cache is pruned.
+- The MCP config and install docs pin the release an agent runs (`npx -y android-use@1.2.0`, and the `v1.2.0` install URLs) instead of `android-use@1` or `main`; `cargo xtask version` fails when a pin disagrees with `VERSION`, so a broken or compromised `latest` cannot change what an agent executes.
+
+### Changed
+
+- Acting is 10 to 40 ms faster: the journal is reloaded only when another process wrote it.
+
+- npm publishing moves into CI with npm trusted publishing (OIDC) and `--provenance`: a new `npm` job in the release workflow, in the `npm` environment and the only job with `id-token: write` besides attestation, publishes `android-use` and the six `@androiduse/<platform>` packages with no npm token. `install/publish-npm.mjs` refuses to run outside GitHub Actions unless `--dry-run`, and runs `gh attestation verify` on every release asset before staging; any failure stops it. `install/render-formula.mjs` renders the Homebrew formula only from an attestation-verified `SHA256SUMS` (it verifies one it downloads, and refuses a file without `--verified`). `workflow-policy` pins where `id-token: write` and npm publishing may appear. The owner-side registration is in [releasing](docs/contributing/release.md). This branch contains #63 until it merges.
 
 ### Fixed
 
+- Camera, microphone, and location capture on Android 14+ (#5, #21, #22, #24): the helper declares and claims the matching foreground-service types, a microphone that returns only zeros is an error instead of a silent recording, a camera that opens after the capture timed out is closed at once, a location read always completes (including when a provider is disabled), and captures no longer hold the UI lock, so taps and reads keep working during them. Overlapping captures keep each other's service types, so a location read cannot stop a screen recording.
+- Screen recording works on Android 14+ (#7): the helper promotes its foreground service to the `mediaProjection` type first, then gets the projection, registers its callback, and only then creates the virtual display. Android 14 allows a screen-capture grant once, so the helper clears it after use and a second recording asks again instead of crashing.
+- `au setup`, `au install`, and `au uninstall AGENT` write agent config safely: only a missing file counts as empty (any other read error aborts without writing), a failed backup aborts the write, the file's existing mode is kept, `claude mcp` and `codex mcp` are killed after 30 seconds, and a failed re-add restores the old entry.
+
+- `au uninstall` flags now work as named: `--dry-run` only reports, unknown flags are errors, and uninstall refuses while `au serve` is running.
 - `cargo xtask` gates fail closed: a missing release artifact fails the size gate instead of measuring 0 bytes, and the stale-version check flags only standalone versions such as `v2` or `v3.1`, not words that contain one (`dev2`).
+- `au serve --mcp` answers a bad frame with a JSON-RPC error and keeps serving: an oversized line (`-32600`, its rest discarded), invalid JSON (`-32700`), and a batch array (`-32600`, batches are not supported) used to end the server or get a non-JSON-RPC reply. An oversized operation journal is saved aside once, with a warning, and a fresh one keeps its pending records and newest receipts; owner sidecar files left by exited processes are removed.
 - `cargo xtask golden-capture NAME` needs `--reviewed`, confirming the screen shows nothing personal, and refuses a screen with what looks like an email address, phone number, or card number.
+- `verify eN` checks that handle instead of searching for the label "eN"; `wait for eN`, `verify eN is gone`, and `verify "X" number N is gone` are rejected instead of silently dropping the handle or number; a reconnect to the helper clears the cached screen; an `eN` from an earlier screen is refused with "read the screen again".
+- Every wait now has a deadline: a hung `adb`, `emulator`, or `sdkmanager` child or a stalled output pipe is stopped with a clear error, each Chrome DevTools command times out instead of waiting forever, `au emulator snapshot` and `destroy` touch only emulators `au emulator create` made (a foreign AVD or emulator is refused), and a failed `au emulator start` kills the emulator it spawned.
+
+### Security
+
+- Every cargo call in the workflows, `cargo xtask`, and the contributor docs uses `--locked`. `cargo-audit` and `cargo-deny` are installed at pinned versions, `deny.toml` rejects yanked crates, runners are `ubuntu-24.04`/`windows-2022` rather than `-latest`, and CI runs on pushes to `main` and on pull requests only.
+- `install.sh` and `install.ps1` verify what they install: `ANDROID_USE_VERSION` must be a plain `X.Y.Z`, downloads are https with TLS 1.2+ only, the archive's build attestation is checked with `gh` when present (required with `AU_REQUIRE_ATTESTATION=1`) on top of `SHA256SUMS`, installs are one atomic move, and PowerShell finds the latest release through the `releases/latest` redirect instead of the unauthenticated API. Fixes #4, #40.
+- New `cargo xtask workflow-policy`, run by `check` and `verify`: workflows must pin every action to a commit SHA, keep top-level permissions read-only, avoid `pull_request_target`, limit push triggers to `main` and `v*` tags, never pipe a download into a shell, and keep `persist-credentials: false` on every checkout. It is a text-level tripwire, not a YAML parser. Gradle dependencies are not yet locked.
+- The release workflow is tag-gated: a first job checks the tag's commit is on `main` with CI green; the helper is built unsigned; signing runs in an isolated `release-signing` job with no checkout or repository code, and verification requires exactly one signer whose certificate matches `device/release-signer.sha256`; publishing runs in the `release` environment. A manual run builds everything and stops before signing. `workflow-policy` pins these properties. The `sign` job also refuses to run until `RELEASE_SIGNING_READY` is set on its environment. The owner-side settings are in [releasing](docs/contributing/release.md).
 
 ### Maintenance
 
+- New `package-smoke` CI job on Linux, macOS and Windows: it packs the real npm packages, installs them into a fresh prefix, runs `read help` and an MCP `initialize` through the launcher, and proves a tampered binary and a missing manifest both exit 1. It found that `@androiduse/<platform>` was published without its `manifest.json`, so the fail-closed launcher would have refused every npm install; the package now ships it.
 - Budgets (formatted lines), raised once for 1.3.0: Rust production 8,650, Java 4,100, automation 2,350, authored code 19,100. They were full (Rust 7,489 of 7,520, authored 15,512 of 15,550), and 1.3.0 adds the device link, preflight, and the helper's status screen.
+- Budgets (formatted lines), raised once for 1.3.0: Rust production 9,100, Java 4,700, automation 3,200, authored code 22,800. They were full (Rust 7,489 of 7,520, authored 15,512 of 15,550). The new caps are what the 33 other 1.3.0 PRs measure together (Rust 8,689, Java 4,382, automation 2,923, authored 21,358) plus about 5% for review fixes. The largest additions are the all-windows tree op (Java +361), the helper handshake (Java +225), the real-model benchmark (automation +355) and the workflow policy check (automation +187).
 - Screen presentation (the text view, `Changed:` diffs, and screen images for the model) moved out of `agent.rs` into `present.rs`; no behavior change.
+- `DeviceLink` is now the one seam between the engine and a device: `AdbLink` is the real adb and bridge path, and a scripted in-process `FakeLink` replaces the socket-based test helper. No behavior or wire change.
 
 ## 1.2.0 — 2026-10-10
 

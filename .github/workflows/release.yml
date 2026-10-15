@@ -3,22 +3,52 @@ name: Release
 on:
   push:
     tags: ['v*']
-  # A dry run builds and checks everything and publishes nothing. Run it on the commit you mean to tag.
+  # A dry run builds and checks everything, stops before signing, and publishes nothing. Run it on the
+  # commit you mean to tag; it works from any branch because no job that needs an environment runs.
   workflow_dispatch:
 
 permissions:
   contents: read
+
+# One run per ref: two runs for the same tag would race to create the same release.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   # Release builds must not fail on a passing DNS or registry hiccup.
   CARGO_NET_RETRY: 10
 
 jobs:
+  gate:
+    name: Check the tag is a green commit on main
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        if: github.event_name == 'push'
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require a green CI run on a commit that is on main
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::$GITHUB_REF_NAME is not on main"; exit 1; }
+          passed="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=success&per_page=1" --jq .total_count)"
+          test "$passed" -gt 0 || { echo "::error::CI has not passed on $GITHUB_SHA"; exit 1; }
+
   validate:
-    name: Validate release source and helper
+    name: Build and validate the unsigned helper
+    needs: gate
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with: { persist-credentials: false }
       - name: Validate immutable release version
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
@@ -39,44 +69,14 @@ jobs:
           gradle-version: '9.1.0'
       - name: Install Rust release toolchain
         run: rustup toolchain install 1.94.0 --profile minimal --component rustfmt --component clippy; rustup default 1.94.0
-      - name: Configure the pinned Android helper signer
-        shell: bash
-        env:
-          AUBRIDGE_KEYSTORE_B64: ${{ secrets.AUBRIDGE_KEYSTORE_B64 }}
-          AUBRIDGE_STORE_PASSWORD: ${{ secrets.AUBRIDGE_STORE_PASSWORD }}
-          AUBRIDGE_KEY_PASSWORD: ${{ secrets.AUBRIDGE_KEY_PASSWORD }}
-        run: |
-          test -n "$AUBRIDGE_KEYSTORE_B64"
-          test -n "$AUBRIDGE_STORE_PASSWORD"
-          test -n "$AUBRIDGE_KEY_PASSWORD"
-          key_dir="$RUNNER_TEMP/android-use-signing"
-          mkdir -p "$key_dir"
-          printf '%s' "$AUBRIDGE_KEYSTORE_B64" | base64 --decode > "$key_dir/aubridge.keystore"
-          {
-            printf 'storeFile=%s\n' "$key_dir/aubridge.keystore"
-            printf 'storePassword=%s\n' "$AUBRIDGE_STORE_PASSWORD"
-            printf 'keyAlias=aubridge\n'
-            printf 'keyPassword=%s\n' "$AUBRIDGE_KEY_PASSWORD"
-          } > "$key_dir/signing.properties"
-          chmod 600 "$key_dir"/*
-          printf 'AUBRIDGE_SIGNING_PROPERTIES=%s\n' "$key_dir/signing.properties" >> "$GITHUB_ENV"
       - name: Run the complete release validation gate
         run: cargo +1.94.0 xtask verify
-      - name: Verify the helper signing identity
-        shell: bash
-        run: |
-          apk=device/app/build/outputs/apk/release/app-release.apk
-          signer="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n1)"
-          test -n "$signer"
-          actual="$($signer verify --print-certs "$apk" | sed -n 's/.*SHA-256 digest: *//p' | head -n1 | tr '[:upper:]' '[:lower:]')"
-          expected="$(tr -d '\r\n' < device/release-signer.sha256 | tr '[:upper:]' '[:lower:]')"
-          test "$actual" = "$expected"
-      - name: Stage the signed Android helper
+      - name: Stage the unsigned Android helper
         shell: bash
         run: |
           version="$(tr -d '\r\n' < VERSION)"
-          mkdir release-helper
-          cp device/app/build/outputs/apk/release/app-release.apk "release-helper/android-use-v$version-android.apk"
+          mkdir unsigned-helper
+          cp device/app/build/outputs/apk/release/app-release-unsigned.apk "unsigned-helper/android-use-v$version-android.apk"
       - name: Generate the SPDX software bill of materials
         uses: anchore/sbom-action@43a17d6e7add2b5535efe4dcae9952337c479a93
         with:
@@ -91,8 +91,8 @@ jobs:
           mv android-use.spdx.json release-sbom/
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: release-helper
-          path: release-helper/android-use-*-android.apk
+          name: unsigned-helper
+          path: unsigned-helper/android-use-*-android.apk
           if-no-files-found: error
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -100,9 +100,59 @@ jobs:
           path: release-sbom/android-use.spdx.json
           if-no-files-found: error
 
+  # Signing runs no repository code: no checkout, no npm, no cargo. It downloads the unsigned APK, signs
+  # it with the SDK's apksigner, and checks the certificate against the pin stored at the tagged commit.
+  sign:
+    name: Sign and verify the helper
+    needs: [gate, validate]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    environment: release-signing
+    permissions:
+      contents: read
+    steps:
+      - name: Refuse to sign until the owner has set the environment up
+        env:
+          READY: ${{ vars.RELEASE_SIGNING_READY }}
+        run: test "$READY" = true || { echo "::error::set RELEASE_SIGNING_READY=true on the release-signing environment once it has its reviewers and secrets"; exit 1; }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: unsigned-helper
+          path: unsigned
+      - name: Sign, then require exactly one signer with the pinned certificate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUBRIDGE_KEYSTORE_B64: ${{ secrets.AUBRIDGE_KEYSTORE_B64 }}
+          AUBRIDGE_STORE_PASSWORD: ${{ secrets.AUBRIDGE_STORE_PASSWORD }}
+          AUBRIDGE_KEY_PASSWORD: ${{ secrets.AUBRIDGE_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="android-use-v${GITHUB_REF_NAME#v}-android.apk"
+          signer="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n1)"
+          test -n "$signer"
+          expected="$(gh api "repos/$GITHUB_REPOSITORY/contents/device/release-signer.sha256?ref=$GITHUB_SHA" -H 'Accept: application/vnd.github.raw' | tr -d '\r\n' | tr 'A-F' 'a-f')"
+          printf '%s' "$expected" | grep -Eq '^[0-9a-f]{64}$'
+          keystore="$RUNNER_TEMP/aubridge.keystore"
+          printf '%s' "$AUBRIDGE_KEYSTORE_B64" | base64 --decode > "$keystore"
+          mkdir signed
+          "$signer" sign --ks "$keystore" --ks-key-alias aubridge --ks-pass env:AUBRIDGE_STORE_PASSWORD --key-pass env:AUBRIDGE_KEY_PASSWORD --out "signed/$apk" "unsigned/$apk"
+          rm -f "$keystore"
+          certs="$("$signer" verify --print-certs "signed/$apk")"
+          actual="$(printf '%s\n' "$certs" | sed -n 's/^Signer #[0-9]* certificate SHA-256 digest: *//p' | tr 'A-F' 'a-f')"
+          test "$(printf '%s\n' "$actual" | grep -c .)" = 1 || { echo "::error::expected exactly one signer"; exit 1; }
+          test "$actual" = "$expected" || { echo "::error::signer $actual is not the pinned $expected"; exit 1; }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-helper
+          path: signed/android-use-*-android.apk
+          if-no-files-found: error
+
   host-archives:
     name: Build ${{ matrix.label }} archive
-    needs: validate
+    needs: [validate, sign]
+    # A dry run skips signing, so it embeds the unsigned helper and never publishes.
+    if: ${{ !cancelled() && needs.validate.result == 'success' && (needs.sign.result == 'success' || needs.sign.result == 'skipped') }}
     strategy:
       fail-fast: false
       # Keep in step with install/platforms.json (`cargo xtask version` checks it).
@@ -119,6 +169,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with: { persist-credentials: false }
       - name: Install Rust release toolchain
         shell: bash
         run: |
@@ -128,12 +179,12 @@ jobs:
         run: cargo +1.94.0 xtask version
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: release-helper
+          name: ${{ needs.sign.result == 'success' && 'release-helper' || 'unsigned-helper' }}
           path: helper
       - name: Build the host binary with the helper embedded
         shell: bash
         run: |
-          AU_EMBED_APK="$(ls "$PWD"/helper/*android.apk)" cargo +1.94.0 build --profile dist -p au --target "${{ matrix.target }}"
+          AU_EMBED_APK="$(ls "$PWD"/helper/*android.apk)" cargo +1.94.0 build --locked --profile dist -p au --target "${{ matrix.target }}"
       - name: Package the archive
         shell: bash
         run: |
@@ -173,15 +224,17 @@ jobs:
 
   publish:
     name: Attest and publish GitHub Release
-    needs: [validate, host-archives]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    needs: [gate, validate, sign, host-archives]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
+    environment: release
     permissions:
       contents: write
       attestations: write
       id-token: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with: { persist-credentials: false }
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: release-*
@@ -215,3 +268,39 @@ jobs:
           version="$(tr -d '\r\n' < VERSION)"
           cargo +1.94.0 xtask release-notes > release-notes.md
           gh release create "$GITHUB_REF_NAME" release/* --verify-tag --title "android-use v$version" --notes-file release-notes.md
+
+  # npm trusted publishing: the registry trusts this workflow and job through OIDC, so there is no npm token.
+  # publish-npm.mjs verifies the attestation of every release asset before it stages anything.
+  npm:
+    name: Publish the npm packages with provenance
+    needs: publish
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      # NPM_ENV_READY exists only once the owner has configured the environment; GitHub creates a missing one unprotected.
+      - name: Require the npm environment to be configured
+        if: vars.NPM_ENV_READY != 'true'
+        run: echo "::error::Configure the npm environment first (docs/contributing/release.md, owner steps 1 and 6)"; exit 1
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.18.0'
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5.1 or newer.
+      - run: npm install --global npm@11.5.1
+      - run: node install/publish-npm.mjs "$GITHUB_REF_NAME"
+      - name: Render the Homebrew formula from attestation-verified checksums
+        run: node install/render-formula.mjs "$GITHUB_REF_NAME" > android-use.rb
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: homebrew-formula
+          path: android-use.rb
+          if-no-files-found: error
