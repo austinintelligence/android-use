@@ -56,6 +56,7 @@ fn rpc(engine: &mut Engine, v: Value) -> Option<Value> {
         "ping" => json!({}),
         "tools/list" => json!({"tools":tool_schemas()}),
         "tools/call" => call_tool(engine, &id, &params),
+        "" => return Some(rpc_error(id, -32600, "request has no method")),
         _ => return Some(rpc_error(id, -32601, "method not found")),
     };
     Some(json!({"jsonrpc":"2.0","id":id,"result":result}))

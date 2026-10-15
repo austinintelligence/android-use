@@ -200,8 +200,9 @@ impl Journal {
         Ok(())
     }
 
-    /// Moves an oversized journal aside and starts a fresh one holding only its pending records:
-    /// they still fence new mutations, so moving the file never makes one replayable.
+    /// Saves an oversized journal aside and starts a fresh one. The fresh journal keeps the
+    /// pending records, which still fence new mutations, and the newest completed receipts.
+    /// The old file is copied before it is replaced, so a crash leaves a journal either way.
     fn set_aside(&mut self, bytes: &[u8]) -> Result<()> {
         let mut kept = Self::default();
         kept.path = self.path.clone();
@@ -210,12 +211,11 @@ impl Journal {
                 kept.apply(&value);
             }
         }
-        kept.states.retain(|_, state| matches!(state, State::Pending { .. }));
-        kept.order.retain(|id| kept.states.contains_key(id));
+        kept.trim(MAX_ENTRIES)?;
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
         let aside = self.path.with_extension(format!("oversized-{nanos}"));
-        fs::rename(&self.path, &aside)?;
-        eprintln!("warning: operation journal exceeded 2 MiB and was moved to {}; a new journal was started", aside.display());
+        fs::write(&aside, bytes)?;
+        eprintln!("warning: operation journal exceeded 2 MiB; saved it to {} and started a new one", aside.display());
         kept.compact()?;
         self.states = std::mem::take(&mut kept.states);
         self.order = std::mem::take(&mut kept.order);
@@ -428,7 +428,7 @@ mod tests {
     }
 
     #[test]
-    fn an_oversized_journal_is_moved_aside_once_and_keeps_its_pending_records() {
+    fn an_oversized_journal_is_saved_aside_once_and_keeps_its_pending_records() {
         let d = tempfile::tempdir().unwrap();
         let path = Paths::at(d.path().to_path_buf()).unwrap().journal;
         let mut bytes = format!("{}\n", json!(["crashed", "p", A, 1, "gone", ""])).into_bytes();
@@ -436,12 +436,12 @@ mod tests {
         bytes.push(b'\n');
         fs::write(&path, &bytes).unwrap();
         let mut j = open(&d);
-        assert_eq!(aside_files(&d).len(), 1, "the oversized file was moved aside");
+        assert_eq!(aside_files(&d).len(), 1, "the oversized file was saved aside");
         assert_eq!(fs::read(&path).unwrap().len(), format!("{}\n", json!(["crashed", "p", A, 1, "gone", ""])).len());
         assert_eq!(j.begin("fresh", 2, B, ANDROID).unwrap().unwrap().e.as_deref(), Some("unknown"), "the pending record still fences");
         drop(j);
         let _ = open(&d);
-        assert_eq!(aside_files(&d).len(), 1, "a fresh journal is not moved aside again");
+        assert_eq!(aside_files(&d).len(), 1, "a fresh journal is not saved aside again");
     }
 
     #[test]
