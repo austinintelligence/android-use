@@ -243,17 +243,18 @@ mod flows {
     }
 
     #[test]
-    fn a_handle_from_an_earlier_screen_is_refused_every_time() {
+    fn a_handle_from_an_earlier_listing_is_refused_every_time_and_a_fresh_one_works() {
         let (mut engine, _dir) = engine();
-        act(&mut engine, r#"open app "com.dupes""#).unwrap();
-        let scene = engine.ensure_scene().unwrap();
-        engine.agent.marked_in = Some((scene.package.clone(), scene.generation));
-        assert_eq!(act(&mut engine, "tap e0").unwrap().status, "done");
-        // Same app, but the screen moved on: the old numbering no longer applies, and stays refused.
+        assert!(act(&mut engine, "tap e0").unwrap_err_or_text().contains("none was read"));
+        engine.model_read(CommandRead::Screen { full: false, matching: None, delta: false }).unwrap();
+        // The screen moved on after the listing the handle came from.
+        engine.agent.marked_in.as_mut().unwrap().1 -= 1;
         for _ in 0..2 {
-            let old = act(&mut engine, "tap e2").unwrap_err_or_text();
-            assert!(old.contains("e2 is from an earlier screen; read the screen again"), "{old}");
+            let old = act(&mut engine, "tap e0").unwrap_err_or_text();
+            assert!(old.contains("e0 is from an earlier screen"), "{old}");
         }
+        engine.model_read(CommandRead::Screen { full: false, matching: None, delta: false }).unwrap();
+        assert_eq!(act(&mut engine, "tap e0").unwrap().status, "done");
     }
 
     #[test]

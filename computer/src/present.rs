@@ -87,7 +87,10 @@ impl Engine {
 
     pub(crate) fn semantic_rows(&mut self, focus: &str) -> Result<Vec<SemanticRow>> {
         let value = self.bridge_read(|bridge| bridge.query("semantic", Value::String(focus.to_owned())))?;
-        parse_semantic_rows(&value)
+        let rows = parse_semantic_rows(&value)?;
+        // Each listing renumbers the helper's handles, so `eN` is good only for this screen.
+        self.agent.marked_in = self.ensure_scene().ok().map(|scene| (scene.package, scene.generation));
+        Ok(rows)
     }
 
     pub(crate) fn capture_screen_for_model(&mut self) -> Option<(ModelImage, String)> {
