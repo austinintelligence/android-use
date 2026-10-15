@@ -132,11 +132,12 @@ impl Client {
         }
     }
 
-    fn entry(self, command: &str) -> Value {
+    fn entry(self, launch: &[String]) -> Value {
+        let argv: Vec<&str> = launch.iter().map(String::as_str).chain(["serve", "--mcp"]).collect();
         match self {
-            Self::VsCode => json!({"type":"stdio","command":command,"args":["serve","--mcp"]}),
-            Self::OpenCode => json!({"type":"local","command":[command,"serve","--mcp"],"enabled":true}),
-            _ => json!({"command":command,"args":["serve","--mcp"]}),
+            Self::VsCode => json!({"type":"stdio","command":argv[0],"args":argv[1..]}),
+            Self::OpenCode => json!({"type":"local","command":argv,"enabled":true}),
+            _ => json!({"command":argv[0],"args":argv[1..]}),
         }
     }
 
@@ -180,14 +181,25 @@ fn which(program: &str) -> Option<PathBuf> {
 
 /// What a config entry should run: `au` for terminal agents when `au` on PATH is this binary, the
 /// PATH location for desktop apps (a stable shim, not a versioned path), else this binary.
-fn command_for(client: Client) -> String {
+fn command_for(client: Client) -> Vec<String> {
     let this = env::current_exe().ok().and_then(|path| fs::canonicalize(path).ok());
     let on_path = which("au").filter(|found| fs::canonicalize(found).ok() == this);
-    match (on_path, client.gui()) {
+    launch_for(this.as_deref(), on_path, client.gui(), which("npx"))
+}
+
+/// A binary inside npm's `_npx` cache is deleted when the cache is pruned, so register a pinned
+/// `npx -y android-use@<this version>` instead of that path. Desktop apps often lack the shell's
+/// PATH, so they get the absolute `npx` found now.
+fn launch_for(this: Option<&Path>, on_path: Option<PathBuf>, gui: bool, npx: Option<PathBuf>) -> Vec<String> {
+    if this.is_some_and(|path| path.components().any(|part| part.as_os_str() == "_npx")) {
+        let program = npx.filter(|_| gui).map_or_else(|| if cfg!(windows) { "npx.cmd" } else { "npx" }.to_owned(), |found| found.display().to_string());
+        return vec![program, "-y".into(), format!("android-use@{}", env!("CARGO_PKG_VERSION"))];
+    }
+    vec![match (on_path, gui) {
         (Some(found), true) => found.display().to_string(),
         (Some(_), false) => "au".into(),
         (None, _) => this.map_or_else(|| "au".into(), |path| path.display().to_string()),
-    }
+    }]
 }
 
 /// Whether an existing entry was written by au (it runs `serve --mcp`), so replacing it is safe.
@@ -302,8 +314,9 @@ fn edit_toml(path: &Path, block: Option<&str>, o: Options) -> Result<Edit> {
 }
 
 /// The table au writes for Codex.
-fn toml_block(command: &str) -> String {
-    format!("[mcp_servers.{NAME}]\ncommand = {}\nargs = [\"serve\", \"--mcp\"]\n", json!(command))
+fn toml_block(command: &[String]) -> String {
+    let args = command[1..].iter().map(String::as_str).chain(["serve", "--mcp"]).map(|arg| json!(arg).to_string()).collect::<Vec<_>>().join(", ");
+    format!("[mcp_servers.{NAME}]\ncommand = {}\nargs = [{args}]\n", json!(command[0]))
 }
 
 /// Where the `[mcp_servers.android-use]` table starts and ends in `lines`.
@@ -357,7 +370,7 @@ fn run_cli(program: &Path, args: &[String], timeout: Duration) -> bool {
 
 /// Replaces the entry through the agent's CLI (remove the old one, add the new). When the add
 /// fails the old entry is put back, so a failed update never leaves the agent without au.
-fn replace_entry(client: Client, d: &Dirs, cli: &Path, command: &str, timeout: Duration) -> bool {
+fn replace_entry(client: Client, d: &Dirs, cli: &Path, command: &[String], timeout: Duration) -> bool {
     let file = fs::canonicalize(client.config_file(d)).unwrap_or_else(|_| client.config_file(d));
     let before = read_entry(client, &file);
     let _ = run_cli(cli, &cli_args(client, None), timeout);
@@ -375,10 +388,10 @@ fn replace_entry(client: Client, d: &Dirs, cli: &Path, command: &str, timeout: D
     added
 }
 
-fn already_registered(client: Client, d: &Dirs, command: &str) -> Option<bool> {
+fn already_registered(client: Client, d: &Dirs, command: &[String]) -> Option<bool> {
     let text = fs::read_to_string(client.config_file(d)).ok()?;
     match client {
-        Client::Codex => Some(text.contains(&format!("[mcp_servers.{NAME}]")) && text.contains(command)),
+        Client::Codex => Some(text.contains(&format!("[mcp_servers.{NAME}]")) && command.iter().all(|part| text.contains(part.as_str()))),
         _ => {
             let value: Value = serde_json::from_str(&text).ok()?;
             let servers = value.get("mcpServers")?;
@@ -403,7 +416,7 @@ fn write_skill(dir: &Path, o: Options) -> Result<&'static str> {
     Ok("skill_installed")
 }
 
-fn file_edit(client: Client, d: &Dirs, command: Option<&str>, o: Options) -> Result<Edit> {
+fn file_edit(client: Client, d: &Dirs, command: Option<&[String]>, o: Options) -> Result<Edit> {
     let path = client.config_file(d);
     match (client, command) {
         (Client::Codex, _) => edit_toml(&path, command.map(toml_block).as_deref(), o),
@@ -413,12 +426,13 @@ fn file_edit(client: Client, d: &Dirs, command: Option<&str>, o: Options) -> Res
 }
 
 /// `claude mcp …` / `codex mcp …` arguments for removing or adding the server.
-fn cli_args(client: Client, command: Option<&str>) -> Vec<String> {
+fn cli_args(client: Client, command: Option<&[String]>) -> Vec<String> {
     let scope: &[&str] = if client == Client::Claude { &["--scope", "user"] } else { &[] };
     let mut args: Vec<&str> = vec!["mcp", if command.is_some() { "add" } else { "remove" }, NAME];
     args.extend(scope);
     if let Some(command) = command {
-        args.extend(["--", command, "serve", "--mcp"]);
+        args.push("--");
+        args.extend(command.iter().map(String::as_str).chain(["serve", "--mcp"]));
     }
     args.into_iter().map(str::to_owned).collect()
 }
@@ -471,7 +485,7 @@ pub fn install(client: Client, d: &Dirs, o: Options) -> Result<Report> {
             detail = format!("{detail} {}", write_skill(&dir, o)?).trim().to_owned();
         }
     }
-    Ok(Report { client, action, detail: format!("{command}; {detail}").trim_end_matches("; ").to_owned() })
+    Ok(Report { client, action, detail: format!("{}; {detail}", command.join(" ")).trim_end_matches("; ").to_owned() })
 }
 
 pub fn uninstall(client: Client, d: &Dirs, o: Options) -> Result<Report> {
@@ -497,6 +511,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let d = Dirs { home: dir.path().to_path_buf(), config: dir.path().join(".config"), app_data: dir.path().join("Library/Application Support") };
         (d, dir)
+    }
+
+    #[test]
+    fn setup_under_an_npx_cache_registers_the_pinned_npx_command() {
+        let cached = Path::new("/home/u/.npm/_npx/abc123/node_modules/@androiduse/linux-x64/bin/au");
+        let launch = launch_for(Some(cached), Some(PathBuf::from("/usr/bin/au")), false, None);
+        assert_eq!(launch[1..], ["-y".to_owned(), format!("android-use@{}", env!("CARGO_PKG_VERSION"))]);
+        assert_eq!(Client::Cursor.entry(&launch)["args"], json!(["-y", format!("android-use@{}", env!("CARGO_PKG_VERSION")), "serve", "--mcp"]));
+        assert_eq!(launch_for(Some(Path::new("/opt/au/bin/au")), None, false, None), ["/opt/au/bin/au"]);
+        // Desktop apps get the absolute npx, not a bare name they may fail to find.
+        assert_eq!(launch_for(Some(cached), None, true, Some(PathBuf::from("/opt/node/bin/npx")))[0], "/opt/node/bin/npx");
     }
 
     #[test]
@@ -558,11 +583,11 @@ mod tests {
         let theirs = "model = \"x\"\n\n[mcp_servers.other]\ncommand = \"o\"\n";
         fs::write(&path, theirs).unwrap();
         let o = Options::default();
-        assert_eq!(edit_toml(&path, Some(&toml_block("/bin/au")), o).unwrap_done(), "installed");
+        assert_eq!(edit_toml(&path, Some(&toml_block(&["/bin/au".to_owned()])), o).unwrap_done(), "installed");
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.starts_with(theirs) && text.contains("[mcp_servers.android-use]\ncommand = \"/bin/au\""), "{text}");
-        assert_eq!(edit_toml(&path, Some(&toml_block("/bin/au")), o).unwrap_done(), "unchanged");
-        assert_eq!(edit_toml(&path, Some(&toml_block("/new/au")), o).unwrap_done(), "updated");
+        assert_eq!(edit_toml(&path, Some(&toml_block(&["/bin/au".to_owned()])), o).unwrap_done(), "unchanged");
+        assert_eq!(edit_toml(&path, Some(&toml_block(&["/new/au".to_owned()])), o).unwrap_done(), "updated");
         assert_eq!(edit_toml(&path, None, o).unwrap_done(), "removed");
         assert_eq!(fs::read_to_string(&path).unwrap(), theirs);
     }
@@ -639,7 +664,7 @@ mod safe_write_tests {
         let (d, _) = cursor(&dir);
         for body in ["exec sleep 30", "sleep 6 &\nexit 0"] {
             let started = Instant::now();
-            replace_entry(Client::Claude, &d, &fake_cli(dir.path(), body), "au", Duration::from_millis(300));
+            replace_entry(Client::Claude, &d, &fake_cli(dir.path(), body), &["au".to_owned()], Duration::from_millis(300));
             assert!(started.elapsed() < Duration::from_secs(3), "{body}: {:?}", started.elapsed());
         }
     }
@@ -654,13 +679,13 @@ mod safe_write_tests {
         // The remove takes the entry and the running agent bumps a counter; the add fails.
         state(old);
         let removes = fake_cli(dir.path(), &format!("[ \"$2\" = remove ] && echo '{{\"startups\":2,\"mcpServers\":{{}}}}' > '{}'; exit 1", file.display()));
-        assert!(!replace_entry(Client::Claude, &d, &removes, "au", CLI_TIMEOUT));
+        assert!(!replace_entry(Client::Claude, &d, &removes, &["au".to_owned()], CLI_TIMEOUT));
         let restored: Value = serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap();
         assert_eq!(restored, json!({"startups":2,"mcpServers":{"android-use":{"command":"au"}}}));
         // The remove did nothing, but the agent changed the file meanwhile: leave it alone.
         state(old);
         let bumps = fake_cli(dir.path(), &format!("echo '{{\"startups\":9,\"mcpServers\":{{\"android-use\":{{\"command\":\"au\"}}}}}}' > '{}'; exit 1", file.display()));
-        assert!(!replace_entry(Client::Claude, &d, &bumps, "au", CLI_TIMEOUT));
+        assert!(!replace_entry(Client::Claude, &d, &bumps, &["au".to_owned()], CLI_TIMEOUT));
         assert!(fs::read_to_string(&file).unwrap().contains("\"startups\":9"));
     }
 }

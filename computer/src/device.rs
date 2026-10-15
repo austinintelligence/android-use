@@ -6,6 +6,7 @@ use std::{
     net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
@@ -40,15 +41,33 @@ impl Paths {
     /// else the base folder itself, so nothing moves for anyone not using targets.
     pub fn discover() -> Result<Self> {
         let base = Self::base()?;
-        match env::var("AU_TARGET").ok().filter(|name| !name.is_empty()) {
-            Some(name) if crate::emulator::valid_name(&name) => {
-                private_dir(&base)?;
-                private_dir(&base.join("targets"))?;
-                Self::at(base.join("targets").join(name))
-            }
-            Some(_) => Err(Error::new(Code::Args, "target names use lowercase letters, digits, and dashes (at most 32)")),
-            None => Self::at(base),
+        let located = Self::locate()?;
+        if located.root != base {
+            private_dir(&base)?;
+            private_dir(&base.join("targets"))?;
         }
+        Self::at(located.root)
+    }
+    pub(crate) fn at(root: PathBuf) -> Result<Self> {
+        let paths = Self::layout(root);
+        private_dir(&paths.root)?;
+        private_dir(&paths.artifacts)?;
+        expire(&paths.artifacts, ARTIFACT_TTL);
+        Ok(paths)
+    }
+    /// The same folders as `discover`, without creating any of them, for a read-only report.
+    pub fn locate() -> Result<Self> {
+        let base = Self::base()?;
+        let root = match env::var("AU_TARGET").ok().filter(|name| !name.is_empty()) {
+            Some(name) if crate::emulator::valid_name(&name) => base.join("targets").join(name),
+            Some(_) => return Err(Error::new(Code::Args, "target names use lowercase letters, digits, and dashes (at most 32)")),
+            None => base,
+        };
+        Ok(Self::layout(root))
+    }
+    fn layout(root: PathBuf) -> Self {
+        let artifacts = root.join("artifacts");
+        Self { device: root.join("device.json"), journal: root.join("operations.jsonl"), artifacts, root }
     }
     /// Takes the exclusive lock that keeps two `au serve` processes off one target; the lock is
     /// released when the returned file is dropped or the process ends, even by a crash.
@@ -56,13 +75,6 @@ impl Paths {
         let file = private_file().create(true).truncate(false).write(true).open(self.root.join("lock"))?;
         file.try_lock().map_err(|_| Error::new(Code::Device, "another au serve is already driving this target; stop it, or use a different --target"))?;
         Ok(file)
-    }
-    pub(crate) fn at(root: PathBuf) -> Result<Self> {
-        private_dir(&root)?;
-        let artifacts = root.join("artifacts");
-        private_dir(&artifacts)?;
-        expire(&artifacts, ARTIFACT_TTL);
-        Ok(Self { device: root.join("device.json"), journal: root.join("operations.jsonl"), artifacts, root })
     }
 }
 
@@ -106,10 +118,6 @@ fn choose_endpoint(binding: &Binding, connected: &[(Box<str>, Box<str>)]) -> Res
 }
 
 impl Adb {
-    #[cfg(test)]
-    pub(crate) fn for_tests() -> Self {
-        Self { path: PathBuf::from("adb-not-used-in-tests") }
-    }
     pub fn discover() -> Result<Self> {
         if let Some(v) = env::var_os("AU_ADB") {
             let p = PathBuf::from(v);
@@ -286,7 +294,12 @@ impl Adb {
             Ok(stream) => stream,
             Err(_) => {
                 // No adb server yet: starting one is what any `adb` command would do first.
-                self.run(None, &["start-server"], Duration::from_secs(10))?;
+                // The daemon can hold the output pipe open; the connect below is the real check.
+                if let Err(error) = self.run(None, &["start-server"], Duration::from_secs(10)) {
+                    if error.code != Code::Timeout {
+                        return Err(error);
+                    }
+                }
                 TcpStream::connect_timeout(&address, Duration::from_secs(2)).map_err(|e| Error::new(Code::Device, format!("cannot reach the adb server: {e}")))?
             }
         };
@@ -319,6 +332,34 @@ impl Adb {
     }
 }
 
+const READER_GRACE: Duration = Duration::from_secs(2);
+
+/// Reads a child pipe on its own thread; the reader is abandoned if the pipe never closes.
+fn read_pipe(pipe: impl Read + Send + 'static) -> mpsc::Receiver<std::io::Result<Vec<u8>>> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = tx.send(pipe.take(MAX_ADB_OUTPUT + 1).read_to_end(&mut b).map(|_| b));
+    });
+    rx
+}
+
+/// Waits for a child that inherits the terminal; past `timeout` it is killed.
+pub fn wait_deadline(child: &mut std::process::Child, timeout: Duration) -> Result<std::process::ExitStatus> {
+    let end = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        if Instant::now() >= end {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(Error::new(Code::Timeout, "the command did not finish in time and was stopped"));
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
 pub(crate) fn run_bounded(program: &Path, args: &[&str], timeout: Duration) -> Result<Vec<u8>> {
     let name = program.file_stem().map_or_else(|| "command".into(), |stem| stem.to_string_lossy().into_owned());
     let mut child = Command::new(program)
@@ -328,19 +369,8 @@ pub(crate) fn run_bounded(program: &Path, args: &[&str], timeout: Duration) -> R
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| Error::new(Code::Device, format!("failed to start {name}: {e}")))?;
-    // Readers report over channels, so a grandchild that keeps a pipe open after the child exits
-    // can delay the output only until the deadline, never past it.
-    let reader = |pipe: Box<dyn Read + Send>| {
-        let (sender, receiver) = std::sync::mpsc::channel();
-        thread::spawn(move || {
-            let mut b = Vec::new();
-            let _ = sender.send(pipe.take(MAX_ADB_OUTPUT + 1).read_to_end(&mut b).map(|_| b));
-        });
-        receiver
-    };
-    let (out, err) = (reader(Box::new(child.stdout.take().unwrap())), reader(Box::new(child.stderr.take().unwrap())));
+    let (out, err) = (read_pipe(child.stdout.take().unwrap()), read_pipe(child.stderr.take().unwrap()));
     let deadline = Instant::now() + timeout;
-    let timed_out = || Error::new(Code::Timeout, format!("{name} command timed out"));
     let status = loop {
         if let Some(s) = child.try_wait()? {
             break s;
@@ -348,14 +378,18 @@ pub(crate) fn run_bounded(program: &Path, args: &[&str], timeout: Duration) -> R
         if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(timed_out());
+            return Err(Error::new(Code::Timeout, format!("{name} command timed out")));
         }
         thread::sleep(Duration::from_millis(10));
     };
-    let collect = |receiver: std::sync::mpsc::Receiver<std::io::Result<Vec<u8>>>| {
-        receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())).map_err(|_| timed_out())?.map_err(Error::from)
+    // A grandchild (such as the adb server) can keep a pipe open after the command exits; wait for
+    // the output a short grace, never past the deadline, then abandon the reader.
+    let collect = |rx: mpsc::Receiver<std::io::Result<Vec<u8>>>, pipe: &str| match rx.recv_timeout(READER_GRACE.min(deadline.saturating_duration_since(Instant::now()))) {
+        Ok(read) => Ok(read?),
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(Error::new(Code::Timeout, format!("{name} {pipe} stayed open after the command ended; the command was abandoned"))),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(Error::new(Code::Io, format!("{name} {pipe} reader failed"))),
     };
-    let (stdout, stderr) = (collect(out)?, collect(err)?);
+    let (stdout, stderr) = (collect(out, "stdout")?, collect(err, "stderr")?);
     if stdout.len() as u64 > MAX_ADB_OUTPUT || stderr.len() as u64 > MAX_ADB_OUTPUT {
         return Err(Error::new(Code::Bounds, format!("{name} output exceeded 256 KiB")));
     }
@@ -512,6 +546,14 @@ mod tests {
 
     fn binding() -> Binding {
         Binding { hardware: "SER1".into(), endpoint: "emulator-5554".into() }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_pipe_held_open_after_the_child_exits_returns_within_the_deadline() {
+        let start = Instant::now();
+        let error = run_bounded(Path::new("sh"), &["-c", "sleep 5 & exit 0"], Duration::from_secs(10)).unwrap_err();
+        assert!(error.code == Code::Timeout && start.elapsed() < Duration::from_secs(8), "{error:?}");
     }
 
     #[test]
