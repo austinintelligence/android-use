@@ -47,10 +47,14 @@ fn run() -> Result<(), String> {
         "emulator-e2e" => emulator_e2e::run(&root),
         "size" => size(&root).map(|_| ()),
         "docs" => docs(&root, env::args().nth(2).as_deref() == Some("--write")),
-        "golden-capture" => tokens::capture(&root, &env::args().nth(2).ok_or("golden-capture needs a NAME")?),
+        "golden-capture" => {
+            let args: Vec<String> = env::args().skip(2).collect();
+            let name = args.iter().find(|a| !a.starts_with("--")).ok_or("golden-capture needs a NAME")?;
+            tokens::capture(&root, name, args.iter().any(|a| a == "--reviewed"))
+        }
         _ => {
             println!(
-                "cargo xtask check|test|android|package|release|version|release-manifest DIR|release-notes|manifest|verify|benchmark|benchmark-live|emulator-e2e|size|docs [--write]|golden-capture NAME"
+                "cargo xtask check|test|android|package|release|version|release-manifest DIR|release-notes|manifest|verify|benchmark|benchmark-live|emulator-e2e|size|docs [--write]|golden-capture NAME --reviewed"
             );
             Ok(())
         }
@@ -173,12 +177,21 @@ fn size(root: &Path) -> Result<(usize, usize, usize), String> {
     let source_files = file_count(root, &["rs", "java", "mjs", "js", "ps1", "sh", "cmd", "kt"])?;
     let production_modules = file_count(&root.join("computer/src"), &["rs"])? + file_count(&root.join("device/app/src/main"), &["java"])?;
     println!("rust_production={rust} android_production={java} tests={tests} automation={automation} authored_code={authored} source_files={source_files} production_modules={production_modules}");
-    // Budgets measure conventionally formatted code (rustfmt; google-java-format --aosp for the
-    // helper), so they track real complexity rather than how densely lines are packed.
-    if rust > 7520 || java > 3450 || automation > 1700 || authored > 15550 {
-        return Err("source budget exceeded".into());
-    }
+    over_budget(rust, java, automation, authored)?;
     Ok((rust, java, automation))
+}
+/// Formatted-line budgets: Rust production, Java production, automation, all authored code.
+/// Raised once per milestone, in one PR, and stated in the changelog.
+const BUDGETS: [(&str, usize); 4] = [("rust_production", 8650), ("android_production", 4100), ("automation", 2350), ("authored_code", 19_100)];
+/// Budgets measure conventionally formatted code (rustfmt; google-java-format --aosp for the
+/// helper), so they track real complexity rather than how densely lines are packed.
+fn over_budget(rust: usize, java: usize, automation: usize, authored: usize) -> Result<(), String> {
+    let over: Vec<String> = BUDGETS.iter().zip([rust, java, automation, authored]).filter(|((_, max), n)| n > max).map(|((name, max), n)| format!("{name} {n} > {max}")).collect();
+    if over.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("source budget exceeded: {}", over.join(", ")))
+    }
 }
 fn gate(root: &Path) -> Result<(), String> {
     version(root)?;
@@ -236,14 +249,26 @@ fn version(root: &Path) -> Result<(), String> {
         return Err("Android helper must read its version from VERSION".into());
     }
     for path in ["README.md", "docs/guides/install.md", "install/README.md", "skills/android-use/SKILL.md"] {
-        let text = fs::read_to_string(root.join(path)).map_err(ioe)?;
-        if text.contains("v3") || text.contains("v2") {
-            return Err(format!("stale product version marker in {path}"));
+        if let Some(marker) = stale_version_marker(&fs::read_to_string(root.join(path)).map_err(ioe)?) {
+            return Err(format!("stale product version marker {marker} in {path}"));
         }
     }
     platforms_agree(root)?;
     println!("version={version}");
     Ok(())
+}
+/// A standalone `v2` or `v3` version (`v2`, `v3.1`, `v2.0.0`), the product's old names. Words that only
+/// contain one (`dev2`, `v2ray`, `MP3v2`) are not versions.
+fn stale_version_marker(text: &str) -> Option<&str> {
+    let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    text.match_indices(['v', 'V']).find_map(|(at, _)| {
+        let rest = &text[at + 1..];
+        let end = rest.find(|c: char| !c.is_ascii_digit() && c != '.').unwrap_or(rest.len());
+        let number = rest[..end].trim_end_matches('.');
+        let major = number.split('.').next().unwrap_or_default();
+        let bounded = !text[..at].ends_with(word) && !rest[number.len()..].starts_with(word);
+        (bounded && matches!(major, "2" | "3") && number.split('.').all(|part| !part.is_empty())).then(|| &text[at..at + 1 + number.len()])
+    })
 }
 /// `install/platforms.json` is the one list of release platforms.
 fn platforms(root: &Path) -> Result<Vec<Value>, String> {
@@ -342,8 +367,8 @@ fn docs(root: &Path, write: bool) -> Result<(), String> {
         if !root.join(path).is_file() {
             return Err(format!("missing document {path}"));
         }
-        links(root)?;
     }
+    links(root)?;
     let budgets = [
         ("skills/android-use/SKILL.md", 2800usize, 700usize),
         ("skills/android-use/references/protocol.md", 2000, 520),
@@ -590,8 +615,9 @@ pub(crate) fn quantile(values: &[u128], percentile: f64) -> u128 {
     let index = ((values.len().saturating_sub(1)) as f64 * percentile).round() as usize;
     values[index.min(values.len().saturating_sub(1))]
 }
+/// The size of a file that must exist: a missing artifact fails its gate instead of measuring 0.
 fn file_bytes(path: &Path) -> Result<u64, String> {
-    Ok(fs::metadata(path).map(|m| m.len()).unwrap_or(0))
+    fs::metadata(path).map(|m| m.len()).map_err(|e| format!("{}: {e}", path.display()))
 }
 fn tree_bytes(root: &Path) -> Result<u64, String> {
     let mut total = 0u64;
@@ -665,7 +691,29 @@ fn release_notes(root: &Path) -> Result<(), String> {
 }
 #[cfg(test)]
 mod tests {
-    use super::changelog_section;
+    use super::{changelog_section, file_bytes, over_budget, stale_version_marker};
+
+    #[test]
+    fn a_missing_artifact_fails_instead_of_measuring_zero() {
+        assert!(file_bytes(std::path::Path::new("no/such/artifact.apk")).is_err());
+        assert!(file_bytes(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml")).is_ok_and(|n| n > 0));
+    }
+
+    #[test]
+    fn budgets_allow_the_one_three_limits_and_name_what_is_over() {
+        assert!(over_budget(8650, 4100, 2350, 19_100).is_ok());
+        assert_eq!(over_budget(8651, 4100, 2351, 19_100).unwrap_err(), "source budget exceeded: rust_production 8651 > 8650, automation 2351 > 2350");
+    }
+
+    #[test]
+    fn only_version_shaped_markers_are_stale() {
+        for text in ["Use v2 now.", "see (v3.1)", "V2.0.0", "v3."] {
+            assert!(stale_version_marker(text).is_some(), "{text}");
+        }
+        for text in ["dev2 build", "v2ray", "MP3v2", "/api/v2x", "v1.2.0", "v20", "kv3", "v"] {
+            assert_eq!(stale_version_marker(text), None, "{text}");
+        }
+    }
 
     #[test]
     fn a_changelog_section_stops_at_the_next_version() {

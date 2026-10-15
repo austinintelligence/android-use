@@ -4,7 +4,7 @@ Four layers, fastest first. `cargo xtask verify` runs the first two and builds t
 
 ## 1. Unit and flow tests
 
-`cargo test --workspace` runs the Rust unit tests and the agent flow tests, which drive the real agent layer against a scripted fake helper that speaks the wire protocol. Recorded screens live in `computer/tests/fixtures/screens/`; `cargo xtask golden-capture NAME` records another from the connected device. JVM tests for the helper are under `device/app/src/test/` (`cargo xtask test` runs both). `npm test` covers the installer, launcher, publisher, and formula renderer.
+`cargo test --workspace` runs the Rust unit tests and the agent flow tests, which drive the real agent layer against a scripted fake helper that speaks the wire protocol. Recorded screens live in `computer/tests/fixtures/screens/`; `cargo xtask golden-capture NAME --reviewed` records another from the connected device; check the screen shows nothing personal first, because fixtures are committed (screens with an email address, phone number, or card number are refused). JVM tests for the helper are under `device/app/src/test/` (`cargo xtask test` runs both). `npm test` covers the installer, launcher, publisher, and formula renderer.
 
 ## 2. Gates
 

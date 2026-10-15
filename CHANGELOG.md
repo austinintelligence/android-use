@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `cargo xtask` gates fail closed: a missing release artifact fails the size gate instead of measuring 0 bytes, and the stale-version check flags only standalone versions such as `v2` or `v3.1`, not words that contain one (`dev2`).
+- `cargo xtask golden-capture NAME` needs `--reviewed`, confirming the screen shows nothing personal, and refuses a screen with what looks like an email address, phone number, or card number.
+
+### Maintenance
+
+- Budgets (formatted lines), raised once for 1.3.0: Rust production 8,650, Java 4,100, automation 2,350, authored code 19,100. They were full (Rust 7,489 of 7,520, authored 15,512 of 15,550), and 1.3.0 adds the device link, preflight, and the helper's status screen.
+- Screen presentation (the text view, `Changed:` diffs, and screen images for the model) moved out of `agent.rs` into `present.rs`; no behavior change.
+
 ## 1.2.0 — 2026-10-10
 
 **Highlights.** The on-device app is now called **Android-Use**, so the setup steps name what you see. `au` ships for six platforms (macOS and Linux and Windows, each on x86_64 and arm64), emulators are a first-class way to use it (`au emulator install` fetches the SDK pieces, and `cargo xtask emulator-e2e` checks the whole workflow), and the documentation and release process were rebuilt.

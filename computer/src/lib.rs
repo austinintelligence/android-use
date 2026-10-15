@@ -17,6 +17,7 @@ pub use format::render_screen;
 pub mod install;
 mod journal;
 mod marks;
+mod present;
 mod resolve;
 pub mod spec;
 mod visual;
