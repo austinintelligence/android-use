@@ -30,7 +30,7 @@ public final class MainActivity extends Activity {
         open.setOnClickListener(
                 v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
         Button privacy = new Button(this);
-        privacy.setText("Grant camera, microphone, and location");
+        privacy.setText("Grant camera, microphone, location, and notifications");
         privacy.setOnClickListener(
                 v ->
                         requestPermissions(
@@ -38,7 +38,8 @@ public final class MainActivity extends Activity {
                                     Manifest.permission.CAMERA,
                                     Manifest.permission.RECORD_AUDIO,
                                     Manifest.permission.ACCESS_COARSE_LOCATION,
-                                    Manifest.permission.ACCESS_FINE_LOCATION
+                                    Manifest.permission.ACCESS_FINE_LOCATION,
+                                    Manifest.permission.POST_NOTIFICATIONS
                                 },
                                 40));
         Button notifications = new Button(this);

@@ -144,9 +144,9 @@ pub fn setup(apk: Option<&Path>, wait_for_approval: bool) -> Result<Value> {
     let paths = Paths::discover()?;
     let adb = Adb::discover()?;
     let (device, enrolled_now) = adb.resolve_or_enroll(&paths)?;
-    let apk = apk_to_install(apk, &paths)?;
+    let (apk, embedded) = apk_to_install(apk, &paths)?;
     adb.wait_boot_completed(&device.endpoint, std::time::Duration::from_secs(120))?;
-    adb.install(&device, &apk)?;
+    adb.install(&device, &apk, embedded)?;
     adb.start_helper(&device)?;
     let installed = adb.package_installed(&device, "dev.codex.aubridge")?;
     let mut accessibility = adb.accessibility_enabled(&device).unwrap_or(false);
@@ -288,8 +288,17 @@ pub fn update(apk: Option<&Path>, wait_for_approval: bool) -> Result<Value> {
     value["updated"] = json!(1);
     Ok(value)
 }
-pub fn uninstall() -> Result<Value> {
+/// `au uninstall [--dry-run]`. A dry run only lists what would go. A real uninstall refuses while
+/// `au serve` holds the state lock, and holds that lock itself so no server starts mid-removal.
+pub fn uninstall(dry_run: bool) -> Result<Value> {
+    if dry_run {
+        return uninstall_plan(&Paths::locate()?);
+    }
     let paths = Paths::discover()?;
+    let _lock = paths.lock_for_serving().map_err(|e| match e.code {
+        Code::Device => Error::new(Code::Device, "au serve is running for this target; stop it first, then run au uninstall again"),
+        _ => e,
+    })?;
     let adb = Adb::discover()?;
     let device = adb.resolve(&paths)?;
     adb.uninstall_helper(&device)?;
@@ -299,16 +308,48 @@ pub fn uninstall() -> Result<Value> {
     let _ = fs::remove_dir_all(&paths.artifacts);
     Ok(json!({"ok":1,"uninstalled":1,"local_state_removed":1}))
 }
+/// The `--dry-run` report. It reads the enrolled-device file and lists each local item that exists,
+/// so it needs no adb or connected device and creates nothing.
+fn uninstall_plan(paths: &Paths) -> Result<Value> {
+    let mut would_remove = Vec::new();
+    if let Some(endpoint) = fs::read(&paths.device).ok().and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok()).and_then(|v| v["endpoint"].as_str().map(str::to_owned)) {
+        would_remove.push(format!("helper app dev.codex.aubridge on {endpoint}"));
+    }
+    for (label, path) in
+        [("device binding", &paths.device), ("operation journal", &paths.journal), ("screen space", &paths.root.join("screen-space.json")), ("artifacts", &paths.artifacts)]
+    {
+        if path.exists() {
+            would_remove.push(format!("{label}: {}", path.display()));
+        }
+    }
+    Ok(json!({"ok":1,"dry_run":1,"would_remove":would_remove}))
+}
 /// The helper APK to install: the path given, else `aubridge.apk` beside `au`, else the copy built
 /// into release binaries (written to private state first, after its hash is checked).
-fn apk_to_install(given: Option<&Path>, paths: &Paths) -> Result<PathBuf> {
+fn apk_to_install(given: Option<&Path>, paths: &Paths) -> Result<(PathBuf, bool)> {
     if let Some(path) = given.map(PathBuf::from).or_else(bundled_apk) {
-        return if path.is_file() { Ok(path) } else { Err(Error::new(Code::Args, "Android-Use helper APK was not found")) };
+        return if path.is_file() { Ok((path, false)) } else { Err(Error::new(Code::Args, "Android-Use helper APK was not found")) };
     }
     let bytes = embedded_apk().ok_or_else(|| Error::new(Code::Args, "pass the Android-Use helper APK path or place aubridge.apk beside au"))?;
     let path = paths.root.join("aubridge.apk");
-    fs::write(&path, bytes)?;
-    Ok(path)
+    crate::device::atomic(&path, bytes)?;
+    Ok((path, true))
+}
+
+/// The `versionCode` this `au` expects of the helper: major*1,000,000 + minor*1,000 + patch.
+fn expected_version_code() -> u64 {
+    [env!("CARGO_PKG_VERSION_MAJOR"), env!("CARGO_PKG_VERSION_MINOR"), env!("CARGO_PKG_VERSION_PATCH")].iter().fold(0, |a, p| a * 1000 + p.parse::<u64>().unwrap_or(0))
+}
+/// Installs the embedded helper over an older installed one. Never downgrades, and does nothing
+/// when this `au` embeds no helper or the helper is not installed.
+pub(crate) fn upgrade_helper(adb: &Adb, d: &crate::device::Device) -> Result<()> {
+    let Some(bytes) = embedded_apk() else { return Ok(()) };
+    if adb.helper_version_code(d)?.is_none_or(|installed| installed >= expected_version_code()) {
+        return Ok(());
+    }
+    let path = Paths::discover()?.root.join("aubridge.apk");
+    crate::device::atomic(&path, bytes)?;
+    adb.install(d, &path, true)
 }
 
 #[cfg(embedded_apk)]

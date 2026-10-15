@@ -169,7 +169,7 @@ final class Bridge implements AutoCloseable {
                             .put(seq)
                             .put(0)
                             .put(ui == null ? 0 : ui.generation())
-                            .put(ui == null ? 0 : 7);
+                            .put(ui == null ? 0 : 7 | TreeWindows.CAPABILITY);
                 case "observe":
                     if (ui == null) return err(seq, 10);
                     return ui.observe(seq, q.isNull(2) ? null : q.optString(2), q.optInt(3));
@@ -179,6 +179,9 @@ final class Bridge implements AutoCloseable {
                             .put(seq)
                             .put(0)
                             .put(ui.semantic(q.isNull(2) ? "" : q.optString(2)));
+                case "tree":
+                    if (ui == null) return err(seq, 10);
+                    return new JSONArray().put(seq).put(0).put(TreeWindows.dump(ui));
                 case "marks":
                     if (ui == null) return err(seq, 10);
                     return new JSONArray().put(seq).put(0).put(ui.marks());

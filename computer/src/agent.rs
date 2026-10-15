@@ -17,11 +17,21 @@ use crate::{
     resolve, visual,
 };
 use serde_json::{json, Value};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 /// Quiet time the helper waits for after a change before the reply is built, and the longest it
 /// waits: a tap redraws quickly, typed text feeds debounced search lists, a launched app cold-starts.
 const QUIET_MS: u16 = 200;
+/// The quiet window: `QUIET_ENV` when it is a whole number of milliseconds up to `TYPED_QUIET_MS`, else `QUIET_MS`.
+fn quiet_window(value: Option<&str>) -> u16 {
+    value.and_then(|ms| ms.parse().ok()).filter(|ms| (1..=TYPED_QUIET_MS).contains(ms)).unwrap_or(QUIET_MS)
+}
+
+/// Overrides `QUIET_MS` (the quiet window after an action) for sweeps such as `benchmark-live`.
+const QUIET_ENV: &str = "AU_QUIET_MS";
 const TYPED_QUIET_MS: u16 = 900;
 const SETTLE_CAP_MS: u16 = 1500;
 const LAUNCH_CAP_MS: u16 = 5000;
@@ -68,6 +78,14 @@ pub(crate) struct AgentState {
     pub(crate) mapping: Vec<String>,
     /// Whether the last target resolved by a containing label rather than an exact one.
     pub(crate) loose: bool,
+    /// A served session limits labels the agent was never shown (see `unseen_label_runs`).
+    pub(crate) strict: bool,
+    /// Normalized labels of every row shown to the agent this session.
+    pub(crate) seen: HashSet<String>,
+    /// The last plan launched an app, so its screen is the one the agent just chose to enter.
+    pub(crate) opened: bool,
+    /// The screen generation the last Android plan ran against, to tell whether it moved.
+    pub(crate) acted_from: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -183,7 +201,12 @@ impl Engine {
                     start += consumed;
                 }
                 Err(error) if resolve::is_screen_miss(&error) => {
-                    let mut response = self.screen_miss(&error, &done);
+                    let missed = resolve::missed_label(&error).map(normalized);
+                    let failing = actions.iter().find_map(|action| match action {
+                        Action::Android(android) if Some(normalized(&display(&target_label(android)))) == missed => Some(android),
+                        _ => None,
+                    });
+                    let mut response = self.screen_miss(&error, &done, failing);
                     response.failed = !done.is_empty() && changed.is_some();
                     return Ok(response);
                 }
@@ -248,6 +271,13 @@ impl Engine {
         let mut ops: Vec<Op> = Vec::with_capacity(actions.len());
         for (index, action) in actions.iter().enumerate() {
             let Action::Android(action) = action else { return Err(Error::new(Code::Protocol, "an action group mixed surfaces")) };
+            // A switch is read before and after its tap, so it runs as a plan of its own.
+            if matches!(action, AndroidAction::Set { .. } | AndroidAction::Toggle(_)) {
+                if index > 0 {
+                    return Ok((self.run_android(&actions[..index], ops, &scene, identity)?, index));
+                }
+                return Ok((self.switch_step(action, &scene, identity)?, 1));
+            }
             self.agent.loose = false;
             let noted = self.agent.mapping.len();
             let compiled = self.compile_android(action, &scene);
@@ -280,6 +310,68 @@ impl Engine {
         Ok((self.run_android(actions, ops, &scene, identity)?, actions.len()))
     }
 
+    /// `set` taps only a switch that is not yet in the asked state; `toggle` and `set` both read
+    /// the state again afterwards, so a tap that changed nothing is a failure, not a success.
+    fn switch_step(&mut self, action: &AndroidAction, scene: &Scene, identity: Option<&str>) -> Result<Step> {
+        let (target, want) = match action {
+            AndroidAction::Set { target, on } => (target, Some(*on)),
+            AndroidAction::Toggle(target) => (target, None),
+            _ => return Err(Error::new(Code::Protocol, "not a switch action")),
+        };
+        let (name, state) = (display_n(&target.label, 64), |on: bool| if on { "on" } else { "off" });
+        let op = Op::Tap(self.resolve_target(scene, target)?);
+        let before = self.switch_state(target)?;
+        let done = |text: String, changed| Step { echo: "Done.".len(), text, image: None, changed };
+        match (before, want) {
+            (Some(now), Some(on)) if now == on => return Ok(done(format!("Done. {name} was already {}.", state(on)), None)),
+            (None, Some(_)) => {
+                return Err(Error::plain(
+                    Code::Args,
+                    format!("\"{name}\" is not a uniquely named switch or checkbox on this screen; nothing was run. Read the screen, then use its label without number, or e12."),
+                ))
+            }
+            _ => {}
+        }
+        let mut step = self.run_android(&[Action::Android(action.clone())], vec![op], scene, identity)?;
+        let Some(before) = before else { return Ok(step) };
+        // Some switches commit a moment after the screen settles.
+        let mut after = self.switch_state(target)?;
+        for _ in 0..3 {
+            if after != Some(before) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            after = self.switch_state(target)?;
+        }
+        if after == Some(before) {
+            let screen = self.model_read(CommandRead::Screen { full: false, matching: None, delta: false }).map(|read| read.text).unwrap_or_default();
+            return Err(Error::plain(Code::Partial, format!("Tapped {name}, but it is still {}. Screen now:\n{screen}", state(before))));
+        }
+        if let Some(now) = after {
+            step = done(format!("Done. {name} is now {}.", state(now)), step.changed);
+        }
+        Ok(step)
+    }
+
+    /// Whether the switch or checkbox the target names is on, or `None` when none is on screen.
+    fn switch_state(&mut self, target: &Target) -> Result<Option<bool>> {
+        // `number N` counts helper nodes, not these merged rows, so it could name another control.
+        if target.ordinal.is_some() {
+            return Ok(None);
+        }
+        let rows = self.semantic_rows("")?;
+        // A row copied from the screen (`sw Wi-Fi=on`) names the switch it shows.
+        let mut label = normalized(&target.label);
+        if !rows.iter().any(|row| normalized(&row.label) == label) {
+            if let Some((name, None)) = resolve::from_row(&target.label) {
+                label = normalized(&name);
+            }
+        }
+        let mut hits = rows.iter().filter(|row| if target.handle.is_some() { row.handle == target.handle } else { normalized(&row.label) == label });
+        let row = hits.next().filter(|_| target.handle.is_some() || hits.next().is_none());
+        Ok(row.filter(|row| matches!(row.kind.as_str(), "switch" | "checkbox")).map(|row| matches!(row.state.as_str(), "checked" | "on")))
+    }
+
     fn run_android(&mut self, actions: &[Action], ops: Vec<Op>, scene: &Scene, identity: Option<&str>) -> Result<Step> {
         if ops.len() > MAX_OPS || ops.iter().filter(|op| op.mutates()).count() > usize::from(MAX_MUTATIONS) {
             return Err(Error::new(Code::Bounds, "the action command exceeds its safety limit"));
@@ -287,9 +379,13 @@ impl Engine {
         let mut ops = ops;
         if ops.iter().any(Op::mutates) {
             let package = ops.iter().rev().find_map(|op| if let Op::Launch(package) = op { Some(package.clone()) } else { None });
+            self.agent.opened = package.is_some() || ops.iter().any(|op| matches!(op, Op::Setting(..)));
+            if self.agent.opened {
+                self.agent.seen.clear();
+            }
             let typed = ops.iter().any(|op| matches!(op, Op::Text(..)));
             ops.push(Op::Settle {
-                quiet_ms: if typed { TYPED_QUIET_MS } else { QUIET_MS },
+                quiet_ms: if typed { TYPED_QUIET_MS } else { quiet_window(std::env::var(QUIET_ENV).ok().as_deref()) },
                 cap_ms: if package.is_some() { LAUNCH_CAP_MS } else { SETTLE_CAP_MS },
                 package: package.unwrap_or_default(),
             });
@@ -301,6 +397,7 @@ impl Engine {
             max_mutations: MAX_MUTATIONS,
             ops: ops.into_boxed_slice(),
         };
+        self.agent.acted_from = scene.generation;
         let run = self.run_plan(&plan);
         self.end_image_unless_unchanged(&run, scene.generation);
         let receipt = run.map_err(crate::journal::explain_reuse)?;
@@ -352,7 +449,7 @@ impl Engine {
     fn compile_android(&mut self, action: &AndroidAction, scene: &Scene) -> Result<Op> {
         use AndroidAction as A;
         Ok(match action {
-            A::Tap(target) | A::Toggle(target) => Op::Tap(self.resolve_target(scene, target)?),
+            A::Tap(target) | A::Toggle(target) | A::Set { target, .. } => Op::Tap(self.resolve_target(scene, target)?),
             A::Hold(target) => Op::Long(self.resolve_target(scene, target)?),
             A::Type { text, target } => Op::Text(self.resolve_target_as(scene, target, "edit")?, text.clone()),
             A::Scroll { direction, target } => Op::Scroll(self.resolve_target_as(scene, target, "scroll")?, *direction),
@@ -382,7 +479,10 @@ impl Engine {
             A::ScreenRecord(seconds) => Op::Capture(Capture::ScreenRecord(*seconds)),
             A::NotificationOpen(target) => Op::NotificationOpen(self.notification_key(target)?),
             A::NotificationDismiss(target) => Op::NotificationDismiss(self.notification_key(target)?),
-            A::NotificationAction(target) => Op::NotificationAction(self.notification_key(target)?),
+            A::NotificationAction(target, label) => {
+                let (key, label) = resolve::notification_action(&self.read(Read::Notifications)?, target, label.as_deref())?;
+                Op::NotificationAction(key, label)
+            }
             A::PointTap { x, y } => {
                 let (x, y) = self.map_point(*x, *y)?;
                 Op::PointTap { x, y }
@@ -403,6 +503,19 @@ impl Engine {
     /// `want` is `"edit"` when the step needs a text field and `"scroll"` when it needs a scrollable
     /// area, so a heading or a control with the same words is not a candidate.
     fn resolve_target_as(&mut self, scene: &Scene, target: &Target, want: &str) -> Result<u16> {
+        let first = self.resolve_exact_as(scene, target, want);
+        // A whole row copied from `screen` (`sw Wi-Fi=on`, `Save#2`) names its control when its
+        // text is not itself a label.
+        match (&first, resolve::from_row(&target.label)) {
+            (Err(error), Some((label, ordinal))) if target.handle.is_none() && resolve::is_screen_miss(error) => {
+                let row = Target { label: label.into(), ordinal: target.ordinal.or(ordinal), handle: None };
+                self.resolve_exact_as(scene, &row, want).or(first)
+            }
+            _ => first,
+        }
+    }
+
+    fn resolve_exact_as(&mut self, scene: &Scene, target: &Target, want: &str) -> Result<u16> {
         let args = json!({"label": target.label.as_ref(), "ordinal": target.ordinal.unwrap_or(0), "want": want, "handle": target.handle.map_or(-1, i32::from)});
         match self.bridge_read(|bridge| bridge.query("resolve", args.clone())) {
             Ok(value) => {
@@ -410,24 +523,44 @@ impl Engine {
                 if let (Some(handle), true) = (target.handle, refs.is_empty()) {
                     return Err(Error::plain(Code::Missing, format!("e{handle} is not on the current screen; read the screen again for current handles")));
                 }
+                if !self.unseen_label_runs(target, tier, refs.len(), &labels) {
+                    return Err(resolve::missing(&target.label, "screen"));
+                }
                 // A single control whose label only contains the request is acted on when it is
                 // plainly what was meant, and the result names it; otherwise it counts as missing.
-                if tier >= 2 && refs.len() == 1 && target.ordinal.is_none() {
-                    let actual = labels.first().map(String::as_str).unwrap_or_default();
+                // A number does not excuse the check: `Save number 2` may not reach "Save and delete all".
+                if tier >= 2 && (refs.len() == 1 || target.ordinal.is_some()) {
+                    let actual = labels.get(target.ordinal.map_or(0, |n| usize::from(n) - 1)).map(String::as_str).unwrap_or_default();
                     if !resolve::near_miss(&target.label, actual) {
                         return Err(Error::plain(
                             Code::Missing,
                             format!("{}; the closest label is \"{}\", which was not tapped", resolve::missing(&target.label, "screen").message, display(actual)),
                         ));
                     }
-                    self.agent.mapping.push(format!("\"{}\" is the closest label to \"{}\"", display(actual), display(&target.label)));
+                    if target.ordinal.is_none() {
+                        self.agent.mapping.push(format!("\"{}\" is the closest label to \"{}\"", display(actual), display(&target.label)));
+                    }
                 }
                 self.agent.loose = tier >= 2 && !refs.is_empty();
                 resolve::choose(target, refs, "screen")
+                    .map_err(|error| if error.code == Code::Ambiguous && target.ordinal.is_none() { self.say_which(error, &labels) } else { error })
             }
             Err(error) if error.code == Code::Unsupported => resolve::scene_target(scene, target),
             Err(error) => Err(error),
         }
+    }
+
+    /// In a served session, a label the agent was never shown runs only as an exact, unique, safe
+    /// match in the app it just opened; anything else is a miss that shows the screen.
+    fn unseen_label_runs(&self, target: &Target, tier: u64, count: usize, labels: &[String]) -> bool {
+        let needle = normalized(&target.label);
+        let state = &self.agent;
+        // Shown means the exact label, or the one control a near match resolves to.
+        let shown = state.seen.contains(&needle) || (count == 1 && labels.first().is_some_and(|label| state.seen.contains(&normalized(label))));
+        if !state.strict || target.handle.is_some() || shown {
+            return true;
+        }
+        state.opened && tier < 2 && count == 1 && target.ordinal.is_none() && !resolve::risky(&needle) && !labels.iter().any(|label| resolve::risky(label))
     }
 
     /// The scrollable area a bare `scroll DIRECTION` should move: the helper
@@ -623,7 +756,9 @@ fn deadline(actions: &[Action]) -> u32 {
 fn target_label(action: &AndroidAction) -> String {
     use AndroidAction as A;
     match action {
-        A::Tap(t) | A::Toggle(t) | A::Hold(t) | A::Type { target: t, .. } | A::Scroll { target: t, .. } | A::ScrollUntil { target: Some(t), .. } => t.label.to_string(),
+        A::Tap(t) | A::Toggle(t) | A::Set { target: t, .. } | A::Hold(t) | A::Type { target: t, .. } | A::Scroll { target: t, .. } | A::ScrollUntil { target: Some(t), .. } => {
+            t.label.to_string()
+        }
         _ => String::new(),
     }
 }
@@ -631,7 +766,7 @@ fn target_label(action: &AndroidAction) -> String {
 /// Whether an action can bring up a different screen than the one it was compiled against.
 fn navigates(action: &AndroidAction) -> bool {
     use AndroidAction as A;
-    matches!(action, A::OpenApp(_) | A::OpenSetting(_) | A::OpenLink(_) | A::Key(_) | A::NotificationOpen(_) | A::NotificationAction(_))
+    matches!(action, A::OpenApp(_) | A::OpenSetting(_) | A::OpenLink(_) | A::Key(_) | A::NotificationOpen(_) | A::NotificationAction(..))
 }
 
 fn is_media(action: &Action) -> bool {
