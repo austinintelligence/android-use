@@ -35,6 +35,9 @@ pub struct Engine {
     /// durable; without the salt a new session could collide with old records.
     session: String,
     request_counter: u64,
+    /// The last `stopped` the helper reported; Chrome stays refused while it says stopped even
+    /// if the helper stops answering.
+    stopped: bool,
 }
 
 /// Transport failures worth one reconnect-and-retry for read-only calls.
@@ -68,6 +71,7 @@ impl Engine {
             agent: AgentState::default(),
             session: session_id(),
             request_counter: 0,
+            stopped: false,
         })
     }
 
@@ -84,16 +88,17 @@ impl Engine {
     }
 
     /// Stop must also end Chrome control, which never touches the helper: ask it before every
-    /// Chrome read and plan. A helper that does not answer here is not "stopped".
+    /// Chrome read and plan. A helper that does not answer is not known to be stopped, so Chrome
+    /// stays allowed unless the last answer said stopped (Chrome without the helper is allowed).
     fn not_stopped(&mut self) -> Result<()> {
         match self.bridge().and_then(|bridge| bridge.query("env", Value::Null)) {
-            Ok(env) if env.get("stopped").and_then(Value::as_bool) == Some(true) => Err(crate::link::stopped()),
-            Ok(_) => Ok(()),
-            Err(_) => {
-                self.bridge = None;
-                Ok(())
-            }
+            Ok(env) => self.stopped = env.get("stopped").and_then(Value::as_bool) == Some(true),
+            Err(_) => self.bridge = None,
         }
+        if self.stopped {
+            return Err(crate::link::stopped());
+        }
+        Ok(())
     }
 
     pub(crate) fn browser(&mut self) -> Result<&mut Browser> {
@@ -193,7 +198,8 @@ impl Engine {
             Err(_) => return Err(crate::link::helper_killed()),
         };
         let on = |key: &str, default: bool| env.get(key).and_then(Value::as_bool).unwrap_or(default);
-        if on("stopped", false) {
+        self.stopped = on("stopped", false);
+        if self.stopped {
             return Err(crate::link::stopped());
         }
         let (code, message) = if !on("screen_on", true) {
@@ -229,6 +235,13 @@ impl Engine {
         }
         let receipt = match self.bridge().and_then(|bridge| bridge.act(p)) {
             Ok(receipt) => receipt,
+            Err(error) if error.code == Code::Stopped => {
+                // The helper refused before running anything: not uncertain, and not repeatable.
+                self.stopped = true;
+                let refused = Receipt { e: Some("stopped".into()), next: None, ..unknown(&p.id, p.generation) };
+                let _ = self.journal.finish(&digest, &refused);
+                return Err(error);
+            }
             Err(_) => {
                 // The plan may have reached the device. Record that as uncertain,
                 // so a retry is answered from the journal instead of dispatched again.
@@ -385,6 +398,14 @@ mod tests {
             assert_eq!((receipt.ok, receipt.e.as_deref()), (0, Some("unknown")));
         }
         assert_eq!(runs.get(), 1, "the retry was answered from the journal");
+    }
+
+    #[test]
+    fn a_run_refused_because_the_helper_was_stopped_is_stopped_not_unknown() {
+        let link = FakeLink::new(|q| Some(if q[1] == "run" { json!([q[0], 11]) } else { json!([q[0], 0, 1, 7]) }));
+        let (mut engine, _dir) = engine_over(link);
+        let plan = Plan { id: "p2".into(), generation: 1, deadline_ms: 1000, max_mutations: 1, ops: Box::new([crate::api::Op::Tap(0)]) };
+        assert_eq!(engine.run_plan(&plan).err().map(|e| e.code), Some(Code::Stopped));
     }
 
     #[test]

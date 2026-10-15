@@ -185,12 +185,15 @@ mod flows {
     fn a_stopped_helper_is_not_ready_and_chrome_is_stopped_too() {
         let dir = tempfile::tempdir().unwrap();
         let link = FakeLink::new(fake_helper(phone_screenshot()));
-        let phone = link.phone.clone();
+        let (phone, link_killed) = (link.phone.clone(), link.killed.clone());
         let mut engine = Engine::with_link(crate::device::Paths::at(dir.path().to_path_buf()).unwrap(), Box::new(link)).unwrap();
         assert!(engine.read(Read::Status).is_ok());
         *phone.borrow_mut() = json!({"stopped": true});
         assert_eq!(engine.read(Read::Status).err().map(|e| e.code), Some(Code::Stopped));
         assert_eq!(engine.read_page().err().map(|e| e.code), Some(Code::Stopped), "Chrome reads stop with the helper");
+        // Even a helper that stops answering does not reopen Chrome.
+        link_killed.set(true);
+        assert_eq!(engine.read_page().err().map(|e| e.code), Some(Code::Stopped));
     }
 
     #[test]
