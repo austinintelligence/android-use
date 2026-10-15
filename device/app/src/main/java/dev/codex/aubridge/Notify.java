@@ -54,8 +54,7 @@ public final class Notify extends NotificationListenerService {
             JSONArray actions = new JSONArray();
             if (n != null && n.actions != null)
                 for (Notification.Action a : n.actions)
-                    if (runnable(a))
-                        actions.put(cut(a.title.toString(), 80));
+                    if (runnable(a)) actions.put(cut(a.title.toString(), 80));
             item.put("actions", actions);
             synchronized (recent) {
                 current.put(sbn.getKey(), sbn);
@@ -123,8 +122,7 @@ public final class Notify extends NotificationListenerService {
                 runnable++;
                 if (label == null
                         ? chosen == null
-                        : label.equalsIgnoreCase(cut(action.title.toString(), 80)))
-                    chosen = action;
+                        : label.equalsIgnoreCase(cut(action.title.toString(), 80))) chosen = action;
             }
             if (chosen == null || (label == null && runnable > 1)) return false;
             chosen.actionIntent.send();
