@@ -76,7 +76,7 @@ fi
 # The attestation proves the archive was built by this repository's release workflow. Only a logged-in gh can
 # check it; gh without a login counts as no gh.
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-  if ! gh attestation verify "$TMP/$ASSET" --repo "$SLUG" >/dev/null; then
+  if ! gh attestation verify "$TMP/$ASSET" --repo "$SLUG" --signer-workflow "$SLUG/.github/workflows/release.yml" >/dev/null; then
     echo "Attestation check failed for $ASSET. Aborting." >&2
     exit 1
   fi
