@@ -153,7 +153,7 @@ mod flows {
     fn preflight_reports_locked_screen_off_and_helper_killed_with_one_step_each() {
         let dir = tempfile::tempdir().unwrap();
         let link = FakeLink::new(fake_helper(phone_screenshot()));
-        let (phone, killed, connects) = (link.phone.clone(), link.killed.clone(), link.helper_connects.clone());
+        let (phone, killed) = (link.phone.clone(), link.killed.clone());
         let mut engine = Engine::with_link(crate::device::Paths::at(dir.path().to_path_buf()).unwrap(), Box::new(link)).unwrap();
         let tap = |engine: &mut Engine| act(engine, r#"open app "Settings""#).map(|r| r.text).map_err(|e| (e.code.wire(), e.message));
         let say = |code: &'static str, text: &str| Err((code, text.to_owned()));
@@ -161,12 +161,22 @@ mod flows {
         assert_eq!(tap(&mut engine), say("screen_off", "The screen is off. Press the phone's power button, then resend."));
         *phone.borrow_mut() = json!({"screen_on": true, "locked": true});
         assert_eq!(tap(&mut engine), say("locked", "The phone is locked. Unlock it, then resend."));
-        assert_eq!(*connects.borrow(), 0, "nothing reached the helper while the phone was unusable");
         killed.set(true);
         assert_eq!(tap(&mut engine), say("helper_killed", "The Android-Use helper is not running. Run `au setup`."));
         killed.set(false);
         *phone.borrow_mut() = json!({"screen_on": true, "locked": false});
         assert!(tap(&mut engine).unwrap().starts_with("Done"), "the same request runs once the phone is fixed");
+    }
+
+    #[test]
+    fn a_helper_without_env_is_treated_as_running_and_preflight_reuses_the_connection() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut inner = fake_helper(phone_screenshot());
+        let link = FakeLink::new(move |q| if q[1] == "env" { Some(json!([q[0], 5])) } else { inner(q) });
+        let connects = link.helper_connects.clone();
+        let mut engine = Engine::with_link(crate::device::Paths::at(dir.path().to_path_buf()).unwrap(), Box::new(link)).unwrap();
+        assert!(act(&mut engine, r#"open app "Settings""#).unwrap().text.starts_with("Done"));
+        assert_eq!(*connects.borrow(), 1, "one connection served the preflight and the act");
     }
 
     #[test]

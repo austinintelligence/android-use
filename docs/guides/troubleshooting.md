@@ -44,7 +44,7 @@ Install or update Google Chrome on Android and open it once. Android Use uses Ch
 
 ## The agent reports `locked`, `screen_off`, or `helper_killed`
 
-Before its first action, and after any failure, Android Use checks the phone. Unlock it (`locked`) or press the power button (`screen_off`), then resend the same command: nothing ran. `helper_killed` means the Android-Use helper does not answer (it was stopped, or Android ended it); run `au setup`. If Android keeps ending it, exempt Android-Use from battery optimization under Settings → Battery: `au status` and `au doctor` warn when it is not exempt, and when TalkBack is on, because TalkBack changes what the screen reports.
+Before its first action, and after any failure, Android Use checks the phone. Unlock it (`locked`) or press the power button (`screen_off`), then resend the same command: nothing ran. `helper_killed` means the Android-Use helper does not answer, even after Android Use tries to start it (Android ended it, or it was uninstalled); run `au setup`. If Android keeps ending it, exempt Android-Use from battery optimization under Settings → Battery: `au status` and `au doctor` warn when it is not exempt, and when TalkBack is on, because TalkBack changes what the screen reports.
 
 ## The agent reports `stale`
 

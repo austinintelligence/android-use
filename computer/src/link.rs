@@ -27,10 +27,6 @@ pub trait DeviceLink {
     fn device(&mut self) -> Result<Device>;
     fn helper(&mut self) -> Result<Bridge>;
     fn chrome(&mut self) -> Result<Browser>;
-    /// The phone's state as the helper reports it (`screen_on`, `locked`,
-    /// `battery_exempt`, `talkback`, ...). A helper that cannot answer is a
-    /// `HelperKilled` error; a device that cannot be reached keeps its own code.
-    fn env(&mut self) -> Result<serde_json::Value>;
     fn reset(&mut self);
 }
 
@@ -118,16 +114,6 @@ impl DeviceLink for AdbLink {
         Browser::connect(self.clone())
     }
 
-    fn env(&mut self) -> Result<serde_json::Value> {
-        self.resolved()?;
-        match self.helper().and_then(|mut bridge| bridge.query("env", serde_json::Value::Null)) {
-            // A helper from before 1.3 has no `env`; it is running, so let the act proceed.
-            Err(error) if error.code == Code::Unsupported => Ok(json!({})),
-            Err(_) => Err(helper_killed()),
-            ok => ok,
-        }
-    }
-
     fn reset(&mut self) {
         self.device = None;
     }
@@ -154,14 +140,20 @@ mod fake {
         pub(crate) helper_connects: Rc<RefCell<u32>>,
         /// What the phone reports about itself; tests set `screen_on`, `locked`, `stopped`.
         pub(crate) phone: Rc<RefCell<Value>>,
-        /// The helper process is gone: `env` fails as `AdbLink` does when nothing answers.
+        /// The helper process is gone: connecting fails.
         pub(crate) killed: Rc<std::cell::Cell<bool>>,
     }
 
     struct Scripted {
         script: Rc<RefCell<Script>>,
+        phone: Rc<RefCell<Value>>,
+        killed: Rc<std::cell::Cell<bool>>,
         reply: Option<Value>,
         open: bool,
+    }
+
+    fn self_phone_unset(phone: &RefCell<Value>) -> bool {
+        phone.borrow().is_null()
     }
 
     impl FakeLink {
@@ -172,7 +164,13 @@ mod fake {
 
     impl Wire for Scripted {
         fn send(&mut self, value: &Value) -> Result<()> {
-            self.reply = self.open.then(|| (self.script.borrow_mut())(value)).flatten();
+            // `env` answers from the phone knob, so a test sets the state without scripting every op.
+            self.open &= !self.killed.get();
+            self.reply = if self.open && value[1] == "env" && !self_phone_unset(&self.phone) {
+                Some(json!([value[0], 0, *self.phone.borrow()]))
+            } else {
+                self.open.then(|| (self.script.borrow_mut())(value)).flatten()
+            };
             self.open = self.reply.is_some();
             Ok(())
         }
@@ -189,17 +187,14 @@ mod fake {
             Ok(Device { endpoint: "fake".into(), hardware: "fake-serial".into() })
         }
         fn helper(&mut self) -> Result<Bridge> {
+            if self.killed.get() {
+                return Err(Error::new(Code::Io, "the fake helper process is gone"));
+            }
             *self.helper_connects.borrow_mut() += 1;
-            Ok(Bridge::new(Box::new(Scripted { script: self.script.clone(), reply: None, open: true })))
+            Ok(Bridge::new(Box::new(Scripted { script: self.script.clone(), phone: self.phone.clone(), killed: self.killed.clone(), reply: None, open: true })))
         }
         fn chrome(&mut self) -> Result<Browser> {
             Err(Error::new(Code::Device, "a FakeLink has no Chrome"))
-        }
-        fn env(&mut self) -> Result<Value> {
-            if self.killed.get() {
-                return Err(helper_killed());
-            }
-            Ok(self.phone.borrow().clone())
         }
         fn reset(&mut self) {}
     }
