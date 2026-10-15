@@ -40,12 +40,19 @@ impl Paths {
     /// State for the selected target: `<base>/targets/NAME` with `--target NAME` (or `AU_TARGET`),
     /// else the base folder itself, so nothing moves for anyone not using targets.
     pub fn discover() -> Result<Self> {
-        Self::at(Self::locate()?.root)
+        let base = Self::base()?;
+        let located = Self::locate()?;
+        if located.root != base {
+            private_dir(&base)?;
+            private_dir(&base.join("targets"))?;
+        }
+        Self::at(located.root)
     }
     pub(crate) fn at(root: PathBuf) -> Result<Self> {
         let paths = Self::layout(root);
-        fs::create_dir_all(&paths.root)?;
-        fs::create_dir_all(&paths.artifacts)?;
+        private_dir(&paths.root)?;
+        private_dir(&paths.artifacts)?;
+        expire(&paths.artifacts, ARTIFACT_TTL);
         Ok(paths)
     }
     /// The same folders as `discover`, without creating any of them, for a read-only report.
@@ -65,7 +72,7 @@ impl Paths {
     /// Takes the exclusive lock that keeps two `au serve` processes off one target; the lock is
     /// released when the returned file is dropped or the process ends, even by a crash.
     pub fn lock_for_serving(&self) -> Result<fs::File> {
-        let file = fs::OpenOptions::new().create(true).truncate(false).write(true).open(self.root.join("lock"))?;
+        let file = private_file().create(true).truncate(false).write(true).open(self.root.join("lock"))?;
         file.try_lock().map_err(|_| Error::new(Code::Device, "another au serve is already driving this target; stop it, or use a different --target"))?;
         Ok(file)
     }
@@ -421,6 +428,78 @@ fn sanitize_stderr(bytes: &[u8]) -> String {
     }
 }
 
+/// Artifacts older than this are deleted when a target's state opens.
+const ARTIFACT_TTL: Duration = Duration::from_secs(7 * 24 * 3600);
+
+/// Options for a new host-state file: mode 0600 from creation on Unix, so no umask window exists.
+pub(crate) fn private_file() -> fs::OpenOptions {
+    #[cfg_attr(not(unix), allow(unused_mut))]
+    let mut options = fs::OpenOptions::new();
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options
+}
+
+/// Creates `path` and any missing parents with mode 0700, then tightens it and the files au
+/// keeps in it (all of them in `artifacts/`). Other entries are never touched: `AU_HOME` is a
+/// folder the user chose and may hold their own files.
+pub(crate) fn private_dir(path: &Path) -> Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(path)?;
+    tighten(path);
+    Ok(())
+}
+
+/// The files au writes into a state folder.
+#[cfg(unix)]
+fn ours(name: &str) -> bool {
+    name.starts_with("operations.")
+        || ["device.json", "lock", "screen-space.json", "aubridge.apk", "target.json", "instance", "emulator.json", "emulator.log", "ports.lock"].contains(&name)
+}
+
+/// Makes a folder 0700 and its au-written files 0600 when this user owns them. Anything owned by
+/// someone else is left alone with a warning, so a shared `AU_HOME` is never chmod-ed out from
+/// under them. Ownership is learned from a file created inside the folder itself.
+#[cfg(unix)]
+fn tighten(dir: &Path) {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let probe = dir.join(format!(".au-uid-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()));
+    let me = private_file().write(true).create_new(true).open(&probe).and_then(|file| file.metadata()).map(|meta| meta.uid()).ok();
+    let _ = fs::remove_file(probe);
+    let all = dir.file_name().is_some_and(|name| name == "artifacts");
+    let fix = |path: &Path, mode: u32| {
+        let Ok(meta) = fs::symlink_metadata(path) else { return };
+        if meta.file_type().is_symlink() || meta.mode() & 0o077 == 0 {
+            return;
+        }
+        if Some(meta.uid()) == me && fs::set_permissions(path, fs::Permissions::from_mode(mode)).is_ok() {
+            return;
+        }
+        eprintln!("au: {} is readable by other users and is not yours to change; make it private", path.display());
+    };
+    fix(dir, 0o700);
+    for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+        if entry.file_type().is_ok_and(|kind| kind.is_file()) && (all || entry.file_name().to_str().is_some_and(ours)) {
+            fix(&entry.path(), 0o600);
+        }
+    }
+}
+#[cfg(not(unix))]
+fn tighten(_: &Path) {}
+
+/// Deletes regular files in `dir` last modified longer ago than `ttl`.
+pub(crate) fn expire(dir: &Path, ttl: Duration) {
+    for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+        let old = entry.metadata().ok().filter(|meta| meta.is_file()).and_then(|meta| meta.modified().ok()?.elapsed().ok()).is_some_and(|age| age > ttl);
+        if old {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+
 pub fn atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     if path.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false) {
         return Err(Error::new(Code::Io, "refusing to replace a symbolic link"));
@@ -429,7 +508,7 @@ pub fn atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let tmp = path.with_extension(format!("tmp-{suffix}"));
     let backup = path.with_extension(format!("bak-{suffix}"));
     {
-        let mut f = fs::OpenOptions::new().write(true).create_new(true).open(&tmp)?;
+        let mut f = private_file().write(true).create_new(true).open(&tmp)?;
         std::io::Write::write_all(&mut f, bytes)?;
         f.sync_all()?;
     }
@@ -507,5 +586,39 @@ mod tests {
         assert!(!value.to_ascii_lowercase().contains("token"));
         assert!(!value.contains("C:\\"));
         assert!(value.len() <= 512);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod private_state_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn mode(path: &Path) -> u32 {
+        fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[test]
+    fn host_state_is_private_and_old_artifacts_expire() {
+        let home = tempfile::tempdir().unwrap();
+        let root = home.path().join("state");
+        fs::create_dir_all(root.join("artifacts")).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap();
+        let (old, fresh) = (root.join("artifacts/old.png"), root.join("artifacts/fresh.png"));
+        fs::write(&old, "x").unwrap();
+        fs::write(&fresh, "x").unwrap();
+        fs::write(root.join("device.json"), "{}").unwrap();
+        fs::write(root.join("gradlew"), "#!/bin/sh").unwrap();
+        fs::set_permissions(root.join("gradlew"), fs::Permissions::from_mode(0o755)).unwrap();
+        fs::File::options().write(true).open(&old).unwrap().set_modified(std::time::SystemTime::now() - ARTIFACT_TTL - Duration::from_secs(60)).unwrap();
+
+        let paths = Paths::at(root.clone()).unwrap();
+        assert_eq!((mode(&root), mode(&paths.artifacts), mode(&root.join("device.json")), mode(&fresh)), (0o700, 0o700, 0o600, 0o600));
+        assert!(!old.exists() && fresh.exists());
+        assert_eq!(mode(&root.join("gradlew")), 0o755, "files au did not write are left alone");
+
+        atomic(&root.join("new.json"), b"{}").unwrap();
+        paths.lock_for_serving().unwrap();
+        assert_eq!((mode(&root.join("new.json")), mode(&root.join("lock"))), (0o600, 0o600));
     }
 }

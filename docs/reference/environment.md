@@ -18,7 +18,7 @@ Development variables (`BENCH_*`, `E2E_*`, `AU_GRADLE`) are in [testing](../cont
 
 ## Files
 
-Everything lives under `AU_HOME`. The default target keeps `device.json` (the enrolled device), `operations.jsonl` (the journal), and `artifacts/`. An emulator target `NAME` keeps the same under `targets/NAME/`, plus `target.json`, `instance` (its identity), and `emulator.log`; emulator disks are under `emulators/avd/`. `au uninstall` removes the default target's state. `au emulator destroy NAME --yes` removes an emulator's.
+Everything lives under `AU_HOME`, private to your user on macOS and Linux (folders 0700, files 0600); artifacts older than 7 days are deleted at startup, so a shared `AU_HOME` on CI must become per user. The default target keeps `device.json` (the enrolled device), `operations.jsonl` (the journal), and `artifacts/`. An emulator target `NAME` keeps the same under `targets/NAME/`, plus `target.json`, `instance` (its identity), and `emulator.log`; emulator disks are under `emulators/avd/`. `au uninstall` removes the default target's state. `au emulator destroy NAME --yes` removes an emulator's.
 
 ## Output
 

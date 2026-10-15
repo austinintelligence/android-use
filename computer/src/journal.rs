@@ -15,7 +15,7 @@
 use crate::{
     api::{Code, Error, Receipt, Result},
     artifact::valid,
-    device::{atomic, recover, Paths},
+    device::{atomic, private_file, recover, Paths},
     engine::session_id,
 };
 use serde_json::{json, Value};
@@ -107,7 +107,7 @@ impl Journal {
             // The pending record must reach the disk before dispatch: it is what
             // turns a crash mid-operation into `unknown` instead of a replay.
             if journal.held.is_none() {
-                let held = OpenOptions::new().create(true).truncate(false).write(true).open(journal.path.with_extension(format!("owner-{}", journal.owner)))?;
+                let held = private_file().create(true).truncate(false).write(true).open(journal.path.with_extension(format!("owner-{}", journal.owner)))?;
                 held.lock()?;
                 journal.held = Some(held);
             }
@@ -141,7 +141,7 @@ impl Journal {
     /// a counter every writer bumps; the journal is re-parsed only when that
     /// counter or the file length differs from what this process last saw.
     fn locked<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
-        let mut lock = OpenOptions::new().create(true).truncate(false).read(true).write(true).open(&self.lock_path)?;
+        let mut lock = private_file().create(true).truncate(false).read(true).write(true).open(&self.lock_path)?;
         lock.lock()?;
         let mut raw = [0; 8];
         let count = lock.read_exact(&mut raw).map_or(0, |()| u64::from_le_bytes(raw));
@@ -239,7 +239,7 @@ impl Journal {
         kept.trim(MAX_ENTRIES)?;
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
         let aside = self.path.with_extension(format!("oversized-{nanos}"));
-        fs::write(&aside, bytes)?;
+        private_file().write(true).create(true).truncate(true).open(&aside)?.write_all(bytes)?;
         eprintln!("warning: operation journal exceeded 2 MiB; saved it to {} and started a new one", aside.display());
         kept.compact()?;
         self.states = std::mem::take(&mut kept.states);
@@ -281,7 +281,7 @@ impl Journal {
         }
         line.push(b'\n');
         self.wrote = true;
-        let mut file = OpenOptions::new().create(true).append(true).open(&self.path)?;
+        let mut file = private_file().create(true).append(true).open(&self.path)?;
         let before = file.metadata()?.len();
         let written = file.write_all(&line).and_then(|()| if durable { file.sync_all() } else { Ok(()) });
         if let Err(error) = written {

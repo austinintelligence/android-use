@@ -4,6 +4,7 @@
 
 ### Security
 
+- Host state is private and artifacts expire after 7 days; a shared AU_HOME on CI must become per user. On macOS and Linux the state folder, `device.json`, journal, locks, logs, artifacts, and `screen-space.json` are created 0700/0600, existing ones owned by you are tightened at startup, and artifacts older than 7 days are deleted.
 - The npm launcher fails closed: `android-use` and each `@androiduse/<platform>` package ship a `manifest.json` with SHA-256 digests, and a missing manifest, a missing entry for your platform, or a checksum mismatch exits 1 instead of running an unchecked binary. `AU_BIN` still overrides the binary but warns on stderr every time. The launcher forwards SIGINT, SIGTERM, and SIGHUP to `au` and exits with its code. A binary swapped between the check and the launch is not defended against: anyone who can write `node_modules` can rewrite the launcher itself.
 - `au setup` run through `npx` registers `npx -y android-use@X.Y.Z serve --mcp` (pinned to its own version) with agent clients instead of a path inside the npx cache, which disappears when the cache is pruned.
 - The MCP config and install docs pin the release an agent runs (`npx -y android-use@1.2.0`, and the `v1.2.0` install URLs) instead of `android-use@1` or `main`; `cargo xtask version` fails when a pin disagrees with `VERSION`, so a broken or compromised `latest` cannot change what an agent executes.

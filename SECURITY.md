@@ -51,7 +51,7 @@ Grant optional Android permissions only for the task that needs them. Require hu
 
 ## Data and persistence
 
-On Windows, state is stored under `%LOCALAPPDATA%\AndroidUse`; on macOS and Linux under `$XDG_STATE_HOME/android-use`, defaulting to `~/.local/state/android-use`. `AU_HOME` overrides both. It includes the enrolled device identity, an operation journal, and private artifacts. The journal stores bounded operation metadata and digests, not media payloads or raw UI dumps. Artifact contents remain local unless a connected client fetches and transmits them.
+On Windows, state is stored under `%LOCALAPPDATA%\AndroidUse`; on macOS and Linux under `$XDG_STATE_HOME/android-use`, defaulting to `~/.local/state/android-use`. `AU_HOME` overrides both. It includes the enrolled device identity, an operation journal, and private artifacts. The journal stores bounded operation metadata and digests, not media payloads or raw UI dumps. On macOS and Linux folders are mode 0700 and files 0600, created that way, and existing ones owned by you are tightened at startup (anything owned by someone else is left alone with a warning). Artifacts (captures, recordings, downloads) older than 7 days are deleted when a target opens. Artifact contents remain local unless a connected client fetches and transmits them.
 
 `au uninstall` removes the helper from the enrolled device and deletes Android Use's local enrolled-device file, journal, and artifact directory. It does not remove ADB itself or unrelated device data. `au uninstall --dry-run` lists these without changing anything, and uninstall refuses while `au serve` holds the state lock.
 
