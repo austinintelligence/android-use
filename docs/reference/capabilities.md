@@ -18,12 +18,17 @@ List and select tabs; read a page's title, text, and interactive elements; open 
 
 ## Device state
 
-- Notifications: list by title and text, newest first, and open, dismiss, or invoke one by its title, after you enable notification access.
+- Notifications: list by title and text, newest first, and open, dismiss, or invoke one by its title (`run notification action "ACTION" on "TITLE"` when it has several actions), after you enable notification access.
 - Location: a one-shot read, when the helper has permission.
 - Camera: rear or front still, after Android permission.
+- Captures stay on the phone for 24 hours, then expire.
 - Microphone: bounded mono WAV, after Android permission.
-- Screen recording: a bounded MP4 of up to 30 seconds, after you grant Android's screen-capture prompt for that process.
+- Screen recording: a bounded MP4 of up to 30 seconds, after you grant Android's screen-capture prompt for that process. On Android 14 and later each grant covers one recording; `screen_record` reads false again until you allow screen recording in the Android-Use app.
 - Images: crop PNG captures and compare two screens through bounded hashes and sampled differences.
+
+## Tools and 2.0 only
+
+The helper reports status capability bit 3 (value 8) when it can dump every window with the `tree` op: each window's type, layer, display, bounds, title, and package, and its node tree (class, text, description, view id, bounds, flags). Password text is never sent, and a reply is capped at 2,048 nodes and 900 KB, with a `truncated` flag and counts when cut short. No agent command uses it.
 
 ## Targets
 

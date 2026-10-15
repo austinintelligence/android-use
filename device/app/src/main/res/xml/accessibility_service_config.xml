@@ -7,4 +7,4 @@
     android:canTakeScreenshot="true"
     android:canRetrieveWindowContent="true"
     android:description="@string/accessibility_description"
-    android:notificationTimeout="50" />
+    android:notificationTimeout="0" />

@@ -16,6 +16,7 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with: { persist-credentials: false }
       - name: Pin Rust toolchain
         shell: powershell
         run: rustup toolchain install 1.94.0 --profile minimal; rustup default 1.94.0

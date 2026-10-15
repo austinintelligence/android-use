@@ -69,7 +69,7 @@ test("AU_BIN runs unchecked and warns on stderr every time", { skip }, (t) => {
   }
 });
 
-test("signals reach the child and the launcher exits with its code", { skip }, async (t) => {
+test("signals reach the child and the launcher exits with its code", { skip, timeout: 15000 }, async (t) => {
   const p = pkg(t, { body: '#!/bin/sh\ntrap \'echo got-term; exit 7\' TERM\necho ready\nwhile :; do sleep 0.1; done\n' });
   const child = spawn(process.execPath, [join(p.dir, "cli.mjs"), "status"], { env: { ...process.env, AU_BIN: "" } });
   let out = "";

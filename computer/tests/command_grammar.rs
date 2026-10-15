@@ -99,6 +99,7 @@ fn parses_every_canonical_action_family() {
         r#"open notification "Message""#,
         r#"dismiss notification "Message""#,
         r#"run notification action "Message""#,
+        r#"run notification action "Archive" on "Message""#,
         r#"page open "https://example.com""#,
         r#"page click "Submit""#,
         r#"page focus "Email""#,
@@ -199,4 +200,36 @@ fn every_documented_form_parses_and_the_descriptions_list_the_common_ones() {
     }
     assert_eq!(schemas[0]["annotations"]["readOnlyHint"], true);
     assert!(spec::help_text().contains("tap point X Y") && !act.contains("tap point"), "rare forms live behind help");
+}
+
+#[test]
+fn env_reply_carries_the_flags_preflight_and_status_read() {
+    let v: Value = serde_json::from_str(include_str!("../../protocol-golden.json")).unwrap();
+    let (request, reply) = (&v["env"]["request"], &v["env"]["reply"]);
+    assert_eq!((request[1].as_str(), reply[1].as_u64()), (Some("env"), Some(0)));
+    for flag in ["screen_on", "locked", "accessibility", "battery_exempt", "talkback", "stopped"] {
+        assert!(reply[2][flag].is_boolean(), "{flag}");
+    }
+    assert_eq!(au::env_notes(&reply[2]).len(), 1, "battery optimization is on in the sample; TalkBack is off");
+}
+
+#[test]
+fn curly_quotes_and_verb_aliases_parse_as_their_canonical_forms() {
+    for (alias, canonical) in [
+        ("click “Wi-Fi”", r#"tap "Wi-Fi""#),
+        (r#"click "Save" number 2"#, r#"tap "Save" number 2"#),
+        ("go back", "press back"),
+        ("GO BACK then click “More”", r#"press back then tap "More""#),
+        (r#"type “hi” in “Message”"#, r#"type "hi" in "Message""#),
+    ] {
+        assert_eq!(parse_act_command(alias).unwrap(), parse_act_command(canonical).unwrap(), "{alias}");
+    }
+    for (command, on) in [(r#"turn on "Wi-Fi""#, true), (r#"turn off “Wi-Fi”"#, false)] {
+        assert_eq!(
+            format!("{:?}", parse_act_command(command).unwrap()),
+            format!("[Android(Set {{ target: Target {{ label: \"Wi-Fi\", ordinal: None, handle: None }}, on: {on} }})]")
+        );
+    }
+    assert!(parse_act_command("tap “Wi-Fi").is_err(), "an unclosed curly quote is still an error");
+    assert_eq!(parse_act_command(r#"tap "it’s “fine”""#).unwrap(), parse_act_command("tap \"it’s “fine”\"").unwrap(), "curly marks inside straight quotes stay text");
 }

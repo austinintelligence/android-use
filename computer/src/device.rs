@@ -1,4 +1,5 @@
 use crate::api::{Code, Error, Result};
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use std::{
     env, fs,
@@ -6,6 +7,7 @@ use std::{
     net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
@@ -40,24 +42,40 @@ impl Paths {
     /// else the base folder itself, so nothing moves for anyone not using targets.
     pub fn discover() -> Result<Self> {
         let base = Self::base()?;
-        match env::var("AU_TARGET").ok().filter(|name| !name.is_empty()) {
-            Some(name) if crate::emulator::valid_name(&name) => Self::at(base.join("targets").join(name)),
-            Some(_) => Err(Error::new(Code::Args, "target names use lowercase letters, digits, and dashes (at most 32)")),
-            None => Self::at(base),
+        let located = Self::locate()?;
+        if located.root != base {
+            private_dir(&base)?;
+            private_dir(&base.join("targets"))?;
         }
+        Self::at(located.root)
+    }
+    pub(crate) fn at(root: PathBuf) -> Result<Self> {
+        let paths = Self::layout(root);
+        private_dir(&paths.root)?;
+        private_dir(&paths.artifacts)?;
+        expire(&paths.artifacts, ARTIFACT_TTL);
+        Ok(paths)
+    }
+    /// The same folders as `discover`, without creating any of them, for a read-only report.
+    pub fn locate() -> Result<Self> {
+        let base = Self::base()?;
+        let root = match env::var("AU_TARGET").ok().filter(|name| !name.is_empty()) {
+            Some(name) if crate::emulator::valid_name(&name) => base.join("targets").join(name),
+            Some(_) => return Err(Error::new(Code::Args, "target names use lowercase letters, digits, and dashes (at most 32)")),
+            None => base,
+        };
+        Ok(Self::layout(root))
+    }
+    fn layout(root: PathBuf) -> Self {
+        let artifacts = root.join("artifacts");
+        Self { device: root.join("device.json"), journal: root.join("operations.jsonl"), artifacts, root }
     }
     /// Takes the exclusive lock that keeps two `au serve` processes off one target; the lock is
     /// released when the returned file is dropped or the process ends, even by a crash.
     pub fn lock_for_serving(&self) -> Result<fs::File> {
-        let file = fs::OpenOptions::new().create(true).truncate(false).write(true).open(self.root.join("lock"))?;
+        let file = private_file().create(true).truncate(false).write(true).open(self.root.join("lock"))?;
         file.try_lock().map_err(|_| Error::new(Code::Device, "another au serve is already driving this target; stop it, or use a different --target"))?;
         Ok(file)
-    }
-    pub(crate) fn at(root: PathBuf) -> Result<Self> {
-        fs::create_dir_all(&root)?;
-        let artifacts = root.join("artifacts");
-        fs::create_dir_all(&artifacts)?;
-        Ok(Self { device: root.join("device.json"), journal: root.join("operations.jsonl"), artifacts, root })
     }
 }
 
@@ -101,10 +119,6 @@ fn choose_endpoint(binding: &Binding, connected: &[(Box<str>, Box<str>)]) -> Res
 }
 
 impl Adb {
-    #[cfg(test)]
-    pub(crate) fn for_tests() -> Self {
-        Self { path: PathBuf::from("adb-not-used-in-tests") }
-    }
     pub fn discover() -> Result<Self> {
         if let Some(v) = env::var_os("AU_ADB") {
             let p = PathBuf::from(v);
@@ -264,9 +278,21 @@ impl Adb {
     pub fn browser_installed(&self, d: &Device) -> Result<bool> {
         self.package_installed(d, "com.android.chrome")
     }
-    pub(crate) fn start_helper(&self, d: &Device) -> Result<()> {
-        self.run(Some(&d.endpoint), &["shell", "am", "start-foreground-service", "-n", "dev.codex.aubridge/.BridgeService"], Duration::from_secs(8))?;
+    /// `resume` turns a helper that was stopped from its notification back on; the host's
+    /// own reconnects pass false, so Stop is not undone behind the user's back.
+    pub(crate) fn start_helper(&self, d: &Device, resume: bool) -> Result<()> {
+        let mut args = vec!["shell", "am", "start-foreground-service", "-n", "dev.codex.aubridge/.BridgeService"];
+        if resume {
+            args.extend(["--ez", "resume", "true"]);
+        }
+        self.run(Some(&d.endpoint), &args, Duration::from_secs(8))?;
         Ok(())
+    }
+    /// The helper's per-process key. Only the shell user can read it, so `au` can check that
+    /// whatever answers on the helper socket is the helper (see `link::prove`).
+    pub(crate) fn helper_key(&self, d: &Device) -> Result<Vec<u8>> {
+        let out = self.run(Some(&d.endpoint), &["shell", "content", "query", "--uri", "content://dev.codex.aubridge.key"], Duration::from_secs(8))?;
+        parse_key(&String::from_utf8_lossy(&out))
     }
     /// Opens a stream to an abstract socket on the device by speaking to the adb server directly
     /// (`host:transport:SERIAL`, then `localabstract:NAME`), the protocol `adb` itself uses. No
@@ -281,7 +307,12 @@ impl Adb {
             Ok(stream) => stream,
             Err(_) => {
                 // No adb server yet: starting one is what any `adb` command would do first.
-                self.run(None, &["start-server"], Duration::from_secs(10))?;
+                // The daemon can hold the output pipe open; the connect below is the real check.
+                if let Err(error) = self.run(None, &["start-server"], Duration::from_secs(10)) {
+                    if error.code != Code::Timeout {
+                        return Err(error);
+                    }
+                }
                 TcpStream::connect_timeout(&address, Duration::from_secs(2)).map_err(|e| Error::new(Code::Device, format!("cannot reach the adb server: {e}")))?
             }
         };
@@ -303,10 +334,29 @@ impl Adb {
         }
         Ok(stream)
     }
-    pub fn install(&self, d: &Device, apk: &Path) -> Result<()> {
+    /// Installs or upgrades the helper, never downgrading (no `-d`). A release `au` installs only its
+    /// own embedded helper or an APK signed by the pinned release key; `-t` is for dev builds alone.
+    pub fn install(&self, d: &Device, apk: &Path, embedded: bool) -> Result<()> {
         let p = apk.to_str().ok_or_else(|| Error::new(Code::Args, "APK path is not UTF-8"))?;
-        self.run(Some(&d.endpoint), &["install", "-r", "-d", "-t", p], Duration::from_secs(120))?;
+        let dev = cfg!(debug_assertions) || env::var_os("AU_DEV_APK").is_some();
+        if !(embedded || dev || crate::apk::trusted(&std::fs::read(apk)?)) {
+            return Err(Error::new(Code::Args, "the helper APK is not signed by the Android Use release key"));
+        }
+        let flags: &[&str] = if dev { &["install", "-r", "-t"] } else { &["install", "-r"] };
+        self.run(Some(&d.endpoint), &[flags, &[p]].concat(), Duration::from_secs(120)).map_err(|e| {
+            let downgrade = e.message.contains("VERSION_DOWNGRADE");
+            if downgrade {
+                Error::new(e.code, "a newer helper is installed; run au uninstall first to go back to an older one")
+            } else {
+                e
+            }
+        })?;
         Ok(())
+    }
+    /// The installed helper's `versionCode`, or `None` when it is not installed.
+    pub fn helper_version_code(&self, d: &Device) -> Result<Option<u64>> {
+        let out = self.run(Some(&d.endpoint), &["shell", "dumpsys", "package", "dev.codex.aubridge"], Duration::from_secs(10))?;
+        Ok(String::from_utf8_lossy(&out).split_whitespace().find_map(|w| w.strip_prefix("versionCode=")?.parse().ok()))
     }
     pub fn uninstall_helper(&self, d: &Device) -> Result<()> {
         self.run(Some(&d.endpoint), &["uninstall", "dev.codex.aubridge"], Duration::from_secs(30))?;
@@ -314,46 +364,81 @@ impl Adb {
     }
 }
 
-fn run_bounded(program: &Path, args: &[&str], timeout: Duration) -> Result<Vec<u8>> {
+/// Reads `Row: 0 key=BASE64` from `content query`.
+fn parse_key(output: &str) -> Result<Vec<u8>> {
+    let fail = || Error::new(Code::Helper, "cannot read the helper key; update the helper with `au update`");
+    let value = output.lines().find_map(|line| line.split_once("key=")).map(|(_, v)| v.trim()).ok_or_else(fail)?;
+    let key = base64::engine::general_purpose::STANDARD.decode(value).map_err(|_| fail())?;
+    if key.len() < 16 {
+        return Err(fail());
+    }
+    Ok(key)
+}
+
+const READER_GRACE: Duration = Duration::from_secs(2);
+
+/// Reads a child pipe on its own thread; the reader is abandoned if the pipe never closes.
+fn read_pipe(pipe: impl Read + Send + 'static) -> mpsc::Receiver<std::io::Result<Vec<u8>>> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = tx.send(pipe.take(MAX_ADB_OUTPUT + 1).read_to_end(&mut b).map(|_| b));
+    });
+    rx
+}
+
+/// Waits for a child that inherits the terminal; past `timeout` it is killed.
+pub fn wait_deadline(child: &mut std::process::Child, timeout: Duration) -> Result<std::process::ExitStatus> {
+    let end = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        if Instant::now() >= end {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(Error::new(Code::Timeout, "the command did not finish in time and was stopped"));
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+pub(crate) fn run_bounded(program: &Path, args: &[&str], timeout: Duration) -> Result<Vec<u8>> {
+    let name = program.file_stem().map_or_else(|| "command".into(), |stem| stem.to_string_lossy().into_owned());
     let mut child = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| Error::new(Code::Device, format!("failed to start adb: {e}")))?;
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
-    let out = thread::spawn(move || {
-        let mut b = Vec::new();
-        stdout.take(MAX_ADB_OUTPUT + 1).read_to_end(&mut b).map(|_| b)
-    });
-    let err = thread::spawn(move || {
-        let mut b = Vec::new();
-        stderr.take(MAX_ADB_OUTPUT + 1).read_to_end(&mut b).map(|_| b)
-    });
-    let start = Instant::now();
+        .map_err(|e| Error::new(Code::Device, format!("failed to start {name}: {e}")))?;
+    let (out, err) = (read_pipe(child.stdout.take().unwrap()), read_pipe(child.stderr.take().unwrap()));
+    let deadline = Instant::now() + timeout;
     let status = loop {
         if let Some(s) = child.try_wait()? {
             break s;
         }
-        if start.elapsed() >= timeout {
+        if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            let _ = out.join();
-            let _ = err.join();
-            return Err(Error::new(Code::Timeout, "adb command timed out"));
+            return Err(Error::new(Code::Timeout, format!("{name} command timed out")));
         }
         thread::sleep(Duration::from_millis(10));
     };
-    let stdout = out.join().map_err(|_| Error::new(Code::Io, "adb stdout reader failed"))??;
-    let stderr = err.join().map_err(|_| Error::new(Code::Io, "adb stderr reader failed"))??;
+    // A grandchild (such as the adb server) can keep a pipe open after the command exits; wait for
+    // the output a short grace, never past the deadline, then abandon the reader.
+    let collect = |rx: mpsc::Receiver<std::io::Result<Vec<u8>>>, pipe: &str| match rx.recv_timeout(READER_GRACE.min(deadline.saturating_duration_since(Instant::now()))) {
+        Ok(read) => Ok(read?),
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(Error::new(Code::Timeout, format!("{name} {pipe} stayed open after the command ended; the command was abandoned"))),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(Error::new(Code::Io, format!("{name} {pipe} reader failed"))),
+    };
+    let (stdout, stderr) = (collect(out, "stdout")?, collect(err, "stderr")?);
     if stdout.len() as u64 > MAX_ADB_OUTPUT || stderr.len() as u64 > MAX_ADB_OUTPUT {
-        return Err(Error::new(Code::Bounds, "adb output exceeded 256 KiB"));
+        return Err(Error::new(Code::Bounds, format!("{name} output exceeded 256 KiB")));
     }
     if !status.success() {
         let detail = sanitize_stderr(&stderr);
-        return Err(Error::new(Code::Device, format!("adb command failed with {status}: {detail}")));
+        return Err(Error::new(Code::Device, format!("{name} command failed with {status}: {detail}")));
     }
     Ok(stdout)
 }
@@ -382,6 +467,78 @@ fn sanitize_stderr(bytes: &[u8]) -> String {
     }
 }
 
+/// Artifacts older than this are deleted when a target's state opens.
+const ARTIFACT_TTL: Duration = Duration::from_secs(7 * 24 * 3600);
+
+/// Options for a new host-state file: mode 0600 from creation on Unix, so no umask window exists.
+pub(crate) fn private_file() -> fs::OpenOptions {
+    #[cfg_attr(not(unix), allow(unused_mut))]
+    let mut options = fs::OpenOptions::new();
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options
+}
+
+/// Creates `path` and any missing parents with mode 0700, then tightens it and the files au
+/// keeps in it (all of them in `artifacts/`). Other entries are never touched: `AU_HOME` is a
+/// folder the user chose and may hold their own files.
+pub(crate) fn private_dir(path: &Path) -> Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(path)?;
+    tighten(path);
+    Ok(())
+}
+
+/// The files au writes into a state folder.
+#[cfg(unix)]
+fn ours(name: &str) -> bool {
+    name.starts_with("operations.")
+        || ["device.json", "lock", "screen-space.json", "aubridge.apk", "target.json", "instance", "emulator.json", "emulator.log", "ports.lock"].contains(&name)
+}
+
+/// Makes a folder 0700 and its au-written files 0600 when this user owns them. Anything owned by
+/// someone else is left alone with a warning, so a shared `AU_HOME` is never chmod-ed out from
+/// under them. Ownership is learned from a file created inside the folder itself.
+#[cfg(unix)]
+fn tighten(dir: &Path) {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let probe = dir.join(format!(".au-uid-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()));
+    let me = private_file().write(true).create_new(true).open(&probe).and_then(|file| file.metadata()).map(|meta| meta.uid()).ok();
+    let _ = fs::remove_file(probe);
+    let all = dir.file_name().is_some_and(|name| name == "artifacts");
+    let fix = |path: &Path, mode: u32| {
+        let Ok(meta) = fs::symlink_metadata(path) else { return };
+        if meta.file_type().is_symlink() || meta.mode() & 0o077 == 0 {
+            return;
+        }
+        if Some(meta.uid()) == me && fs::set_permissions(path, fs::Permissions::from_mode(mode)).is_ok() {
+            return;
+        }
+        eprintln!("au: {} is readable by other users and is not yours to change; make it private", path.display());
+    };
+    fix(dir, 0o700);
+    for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+        if entry.file_type().is_ok_and(|kind| kind.is_file()) && (all || entry.file_name().to_str().is_some_and(ours)) {
+            fix(&entry.path(), 0o600);
+        }
+    }
+}
+#[cfg(not(unix))]
+fn tighten(_: &Path) {}
+
+/// Deletes regular files in `dir` last modified longer ago than `ttl`.
+pub(crate) fn expire(dir: &Path, ttl: Duration) {
+    for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+        let old = entry.metadata().ok().filter(|meta| meta.is_file()).and_then(|meta| meta.modified().ok()?.elapsed().ok()).is_some_and(|age| age > ttl);
+        if old {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+
 pub fn atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     if path.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false) {
         return Err(Error::new(Code::Io, "refusing to replace a symbolic link"));
@@ -390,7 +547,7 @@ pub fn atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let tmp = path.with_extension(format!("tmp-{suffix}"));
     let backup = path.with_extension(format!("bak-{suffix}"));
     {
-        let mut f = fs::OpenOptions::new().write(true).create_new(true).open(&tmp)?;
+        let mut f = private_file().write(true).create_new(true).open(&tmp)?;
         std::io::Write::write_all(&mut f, bytes)?;
         f.sync_all()?;
     }
@@ -435,6 +592,22 @@ mod tests {
     }
 
     #[test]
+    fn the_helper_key_is_parsed_from_content_query_output() {
+        assert_eq!(parse_key("Row: 0 key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n").unwrap().len(), 32);
+        for bad in ["No result found.\n", "", "Row: 0 key=!!!\n", "Row: 0 key=AAAA\n"] {
+            assert!(parse_key(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_pipe_held_open_after_the_child_exits_returns_within_the_deadline() {
+        let start = Instant::now();
+        let error = run_bounded(Path::new("sh"), &["-c", "sleep 5 & exit 0"], Duration::from_secs(10)).unwrap_err();
+        assert!(error.code == Code::Timeout && start.elapsed() < Duration::from_secs(8), "{error:?}");
+    }
+
+    #[test]
     fn a_shared_serial_is_never_guessed() {
         let pair = |a: &str, b: &str| (Box::<str>::from(a), Box::<str>::from(b));
         // The enrolled endpoint wins even when another transport reports the same serial.
@@ -460,5 +633,39 @@ mod tests {
         assert!(!value.to_ascii_lowercase().contains("token"));
         assert!(!value.contains("C:\\"));
         assert!(value.len() <= 512);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod private_state_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn mode(path: &Path) -> u32 {
+        fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[test]
+    fn host_state_is_private_and_old_artifacts_expire() {
+        let home = tempfile::tempdir().unwrap();
+        let root = home.path().join("state");
+        fs::create_dir_all(root.join("artifacts")).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap();
+        let (old, fresh) = (root.join("artifacts/old.png"), root.join("artifacts/fresh.png"));
+        fs::write(&old, "x").unwrap();
+        fs::write(&fresh, "x").unwrap();
+        fs::write(root.join("device.json"), "{}").unwrap();
+        fs::write(root.join("gradlew"), "#!/bin/sh").unwrap();
+        fs::set_permissions(root.join("gradlew"), fs::Permissions::from_mode(0o755)).unwrap();
+        fs::File::options().write(true).open(&old).unwrap().set_modified(std::time::SystemTime::now() - ARTIFACT_TTL - Duration::from_secs(60)).unwrap();
+
+        let paths = Paths::at(root.clone()).unwrap();
+        assert_eq!((mode(&root), mode(&paths.artifacts), mode(&root.join("device.json")), mode(&fresh)), (0o700, 0o700, 0o600, 0o600));
+        assert!(!old.exists() && fresh.exists());
+        assert_eq!(mode(&root.join("gradlew")), 0o755, "files au did not write are left alone");
+
+        atomic(&root.join("new.json"), b"{}").unwrap();
+        paths.lock_for_serving().unwrap();
+        assert_eq!((mode(&root.join("new.json")), mode(&root.join("lock"))), (0o600, 0o600));
     }
 }

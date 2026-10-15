@@ -10,6 +10,11 @@ on:
 permissions:
   contents: read
 
+# One run per ref: two runs for the same tag would race to create the same release.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   # Release builds must not fail on a passing DNS or registry hiccup.
   CARGO_NET_RETRY: 10
@@ -43,6 +48,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with: { persist-credentials: false }
       - name: Validate immutable release version
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
@@ -105,6 +111,10 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Refuse to sign until the owner has set the environment up
+        env:
+          READY: ${{ vars.RELEASE_SIGNING_READY }}
+        run: test "$READY" = true || { echo "::error::set RELEASE_SIGNING_READY=true on the release-signing environment once it has its reviewers and secrets"; exit 1; }
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: unsigned-helper
@@ -159,6 +169,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with: { persist-credentials: false }
       - name: Install Rust release toolchain
         shell: bash
         run: |
@@ -223,8 +234,7 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          persist-credentials: false
+        with: { persist-credentials: false }
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           pattern: release-*
@@ -276,7 +286,7 @@ jobs:
       # NPM_ENV_READY exists only once the owner has configured the environment; GitHub creates a missing one unprotected.
       - name: Require the npm environment to be configured
         if: vars.NPM_ENV_READY != 'true'
-        run: echo "::error::Configure the npm environment first (docs/contributing/release.md, steps 1-5)"; exit 1
+        run: echo "::error::Configure the npm environment first (docs/contributing/release.md, owner steps 1 and 6)"; exit 1
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
