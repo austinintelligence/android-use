@@ -73,7 +73,7 @@ You need Android 8 or newer with USB debugging, or an emulator. `au` runs on mac
 ```sh
 npx -y android-use@1.2.0 setup                 # npm; needs Node.js 20.11+
 brew install austinintelligence/tap/android-use && au setup   # Homebrew
-curl -fsSL https://raw.githubusercontent.com/austinintelligence/android-use/v1.2.0/install/install.sh | sh && au setup
+curl -fsSL https://raw.githubusercontent.com/austinintelligence/android-use/v1.2.0/install/install.sh | ANDROID_USE_VERSION=1.2.0 sh && au setup
 ```
 
 On Windows, run `install/install.ps1` in PowerShell, or unzip the archive from [Releases](https://github.com/austinintelligence/android-use/releases) and run `.\au.exe setup`. Every download is checked against `SHA256SUMS`, and the archive contains `au` with the Android helper built in.

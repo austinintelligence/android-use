@@ -22,6 +22,8 @@ The workflow validates, builds the six archives with the signed helper embedded,
 
 ## 4. Publish
 
+Between the bump merging and this step, `main` names `android-use@X.Y.Z` and the `vX.Y.Z` install URLs before npm and the release exist, so the `npx` launcher in `.mcp.json` and the docs fail for anyone who pulls `main` then. Keep that window short: publish right after the tag, and do not announce the release until the npm step succeeds.
+
 From a fresh clone of `main`, after the release exists:
 
 ```sh

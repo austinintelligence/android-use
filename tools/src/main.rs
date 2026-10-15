@@ -270,18 +270,22 @@ fn pins_agree(root: &Path, version: &str) -> Result<(), String> {
     for path in PINNED_DOCS {
         let text = fs::read_to_string(root.join(path)).map_err(ioe)?;
         if let Some(pin) = pin_mismatch(&text, version) {
-            return Err(format!("{path} pins {pin}, not VERSION {version}"));
+            return Err(format!("{path} names {pin}; pin it to VERSION {version}"));
         }
     }
     Ok(())
 }
 /// The first `android-use@X` (npm) or `android-use/vX/` (release URL) in `text` whose X is not `version`.
-fn pin_mismatch<'a>(text: &'a str, version: &str) -> Option<&'a str> {
+fn pin_mismatch(text: &str, version: &str) -> Option<String> {
+    if let Some(bare) = ["android-use setup", "android-use serve"].into_iter().find(|launch| text.contains(launch)) {
+        return Some(bare.to_owned());
+    }
     ["android-use@", "android-use/v"].into_iter().find_map(|marker| {
         text.match_indices(marker).find_map(|(at, _)| {
             let rest = &text[at + marker.len()..];
             let end = rest.find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '-'))).unwrap_or(rest.len());
-            (&rest[..end] != version).then(|| &text[at..at + marker.len() + end])
+            let pin = rest[..end].trim_end_matches('.');
+            (pin != version).then(|| text[at..at + marker.len() + pin.len()].to_owned())
         })
     })
 }
@@ -713,7 +717,7 @@ fn release_notes(root: &Path) -> Result<(), String> {
         })
         .collect();
     print!(
-        "# android-use {version}\n\n{section}\n\n## Install\n\n```sh\nnpx -y android-use setup                                  # npm\nbrew install austinintelligence/tap/android-use           # Homebrew\ncurl -fsSL https://raw.githubusercontent.com/austinintelligence/android-use/v{version}/install/install.sh | sh   # macOS, Linux\n```\n\nOn Windows run `install/install.ps1`, or unpack an archive below and run `au setup`. Every archive contains `au` with the Android helper built in; the helper is also attached on its own for audited deployment.\n\n| Platform | Archive |\n| --- | --- |\n{rows}\n## Verify\n\nCheck an archive against `SHA256SUMS`, and its provenance with `gh attestation verify FILE --repo austinintelligence/android-use`. `android-use.spdx.json` is the software bill of materials, and `release-manifest.json` lists every asset with its size and digest.\n\n## Security\n\nUSB debugging and access to `au serve` are device-control authority; keep them local and private. Android Use ships no remote broker or multi-user authorization. Read [SECURITY.md](https://github.com/austinintelligence/android-use/blob/v{version}/SECURITY.md) before exposing any transport beyond your computer. Full history: [CHANGELOG.md](https://github.com/austinintelligence/android-use/blob/v{version}/CHANGELOG.md).\n"
+        "# android-use {version}\n\n{section}\n\n## Install\n\n```sh\nnpx -y android-use@{version} setup                        # npm\nbrew install austinintelligence/tap/android-use           # Homebrew\ncurl -fsSL https://raw.githubusercontent.com/austinintelligence/android-use/v{version}/install/install.sh | ANDROID_USE_VERSION={version} sh   # macOS, Linux\n```\n\nOn Windows run `install/install.ps1`, or unpack an archive below and run `au setup`. Every archive contains `au` with the Android helper built in; the helper is also attached on its own for audited deployment.\n\n| Platform | Archive |\n| --- | --- |\n{rows}\n## Verify\n\nCheck an archive against `SHA256SUMS`, and its provenance with `gh attestation verify FILE --repo austinintelligence/android-use`. `android-use.spdx.json` is the software bill of materials, and `release-manifest.json` lists every asset with its size and digest.\n\n## Security\n\nUSB debugging and access to `au serve` are device-control authority; keep them local and private. Android Use ships no remote broker or multi-user authorization. Read [SECURITY.md](https://github.com/austinintelligence/android-use/blob/v{version}/SECURITY.md) before exposing any transport beyond your computer. Full history: [CHANGELOG.md](https://github.com/austinintelligence/android-use/blob/v{version}/CHANGELOG.md).\n"
     );
     Ok(())
 }
@@ -726,9 +730,15 @@ mod tests {
         assert_eq!(pin_mismatch("npx -y android-use@1.2.0 setup", "1.2.0"), None);
         assert_eq!(pin_mismatch("| sh && au setup", "1.2.0"), None);
         assert_eq!(pin_mismatch("curl .../android-use/v1.2.0/install/install.sh", "1.2.0"), None);
-        for (text, pin) in [("\"android-use@1\"", "android-use@1"), ("npx -y android-use@latest setup", "android-use@latest"), ("android-use/v1.1.2/install", "android-use/v1.1.2")]
-        {
-            assert_eq!(pin_mismatch(text, "1.2.0"), Some(pin), "{text}");
+        assert_eq!(pin_mismatch("npx -y android-use@1.2.0. setup", "1.2.0"), None, "a sentence-final period is not part of the pin");
+        for (text, pin) in [
+            ("\"android-use@1\"", "android-use@1"),
+            ("npx -y android-use@latest setup", "android-use@latest"),
+            ("android-use/v1.1.2/install", "android-use/v1.1.2"),
+            ("npx -y android-use setup", "android-use setup"),
+            ("npx android-use serve --mcp", "android-use serve"),
+        ] {
+            assert_eq!(pin_mismatch(text, "1.2.0").as_deref(), Some(pin), "{text}");
         }
     }
 
