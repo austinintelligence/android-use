@@ -120,8 +120,6 @@ impl Engine {
         Error::plain(error.code, format!("{} {}.", error.message, lines.join("; ")))
     }
 
-    }
-
     /// Remembers which labels the agent has been shown, for `unseen_label_runs`: only rows that
     /// appear in the `shown` text, and a whole new screen replaces what was seen before.
     pub(crate) fn note_seen(&mut self, rows: &[SemanticRow], shown: &str, replace: bool) {
