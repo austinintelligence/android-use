@@ -23,6 +23,7 @@
 
 ### Fixed
 
+- Camera, microphone, and location capture on Android 14+ (#5, #21, #22, #24): the helper declares and claims the matching foreground-service types, a microphone that returns only zeros is an error instead of a silent recording, a camera that opens after the capture timed out is closed at once, a location read always completes (including when a provider is disabled), and captures no longer hold the UI lock, so taps and reads keep working during them. Overlapping captures keep each other's service types, so a location read cannot stop a screen recording.
 - Screen recording works on Android 14+ (#7): the helper promotes its foreground service to the `mediaProjection` type first, then gets the projection, registers its callback, and only then creates the virtual display. Android 14 allows a screen-capture grant once, so the helper clears it after use and a second recording asks again instead of crashing.
 - `au setup`, `au install`, and `au uninstall AGENT` write agent config safely: only a missing file counts as empty (any other read error aborts without writing), a failed backup aborts the write, the file's existing mode is kept, `claude mcp` and `codex mcp` are killed after 30 seconds, and a failed re-add restores the old entry.
 

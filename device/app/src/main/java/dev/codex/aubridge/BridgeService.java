@@ -10,6 +10,7 @@ import android.os.Build;
 import android.os.IBinder;
 
 public final class BridgeService extends Service {
+    private static final Safety.Held HELD = new Safety.Held();
     private static volatile BridgeService instance;
     private Bridge bridge;
 
@@ -55,33 +56,41 @@ public final class BridgeService extends Service {
         return null;
     }
 
-    static void projectionStarted() {
-        promote("Screen recording is active", ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
+    static void begin(int type) {
+        update(type, true);
     }
 
-    /** Puts the service back to its idle type and notification once a recording is over. */
-    static void projectionStopped() {
-        promote("Authenticated local Android control", 0);
+    static void end(int type) {
+        update(type, false);
     }
 
-    private static void promote(String text, int projection) {
+    /** Keeps the union of the types in use, so one capture ending cannot drop another's. */
+    private static synchronized void update(int type, boolean on) {
         BridgeService service = instance;
         if (service == null || Build.VERSION.SDK_INT < 29) return;
+        // Before Android 14 the service claims every manifest type; narrowing it would drop
+        // camera, microphone and location until it restarts. Only the notification changes.
+        boolean modern = Build.VERSION.SDK_INT >= 34;
+        if (!modern && type != ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION) return;
+        int mask = on ? HELD.add(type) : HELD.remove(type);
         Notification note =
                 new Notification.Builder(service, "bridge")
                         .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
                         .setContentTitle("Android-Use")
-                        .setContentText(text)
+                        .setContentText(
+                                mask == 0
+                                        ? "Authenticated local Android control"
+                                        : "Capture is active")
                         .build();
-        // Before Android 14 the service claims every manifest type; narrowing it to the
-        // projection would drop camera, microphone and location until it restarts.
-        int type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MANIFEST;
-        if (Build.VERSION.SDK_INT >= 34)
-            type = projection | ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE;
         try {
-            service.startForeground(31, note, type);
+            service.startForeground(
+                    31,
+                    note,
+                    modern
+                            ? mask | ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                            : ServiceInfo.FOREGROUND_SERVICE_TYPE_MANIFEST);
         } catch (RuntimeException e) {
-            // The recording reports its own failure.
+            // The capture reports its own permission or background failure.
         }
     }
 }
