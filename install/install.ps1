@@ -49,7 +49,7 @@ try {
 
   # The attestation proves the archive was built by this repository's release workflow. Only a logged-in gh can check it.
   if ((Get-Command gh -ErrorAction SilentlyContinue) -and (gh auth status 2>&1 | Out-Null; $LASTEXITCODE -eq 0)) {
-    gh attestation verify (Join-Path $Tmp $Asset) --repo austinintelligence/android-use | Out-Null
+    gh attestation verify (Join-Path $Tmp $Asset) --repo austinintelligence/android-use --signer-workflow austinintelligence/android-use/.github/workflows/release.yml | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Attestation check failed for $Asset. Aborting." }
   } elseif ($env:AU_REQUIRE_ATTESTATION -eq '1') {
     throw 'AU_REQUIRE_ATTESTATION=1 needs the GitHub CLI (gh), logged in with gh auth login, to verify the attestation (cosign alone cannot). Aborting.'
