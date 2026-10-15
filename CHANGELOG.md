@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Security
+
+- Loose matches are safe near misses. A notification, tab, or app whose name only contains or starts with your words is used only when it is the single such item and adds no risky word (`pay`, `delete`, `transfer`, ...); otherwise the command reports a miss that lists the candidates. `open app "Bank"` no longer opens "Bank Transfer".
+
+### Changed
+
+- Newlines in screen text show as spaces. Tabs and bidi override/isolate characters (U+202A–U+202E, U+2066–U+2069, U+200E, U+200F) do too, so screen text cannot fake extra rows or reorder text.
+- `transfer` joins the risky words.
+
 ### Fixed
 
 - `cargo xtask` gates fail closed: a missing release artifact fails the size gate instead of measuring 0 bytes, and the stale-version check flags only standalone versions such as `v2` or `v3.1`, not words that contain one (`dev2`).

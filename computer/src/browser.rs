@@ -486,7 +486,12 @@ fn tab_match(tabs: &[Tab], target: &Target) -> Result<Box<str>> {
     let label = |tab: &Tab| normalized(if tab.title.is_empty() { "untitled" } else { &tab.title });
     let ids = |test: &dyn Fn(&Tab) -> bool| tabs.iter().filter(|tab| tab.kind == "page" && !needle.is_empty() && test(tab)).map(|tab| tab.id.as_str().into()).collect::<Vec<_>>();
     let exact = ids(&|tab| label(tab) == needle || normalized(&tab.url) == needle);
-    choose(target, if exact.is_empty() { ids(&|tab| label(tab).starts_with(&needle)) } else { exact }, "tab list")
+    if !exact.is_empty() {
+        return choose(target, exact, "tab list");
+    }
+    let near =
+        tabs.iter().filter(|tab| tab.kind == "page" && !needle.is_empty() && label(tab).starts_with(&needle)).map(|tab| (Box::<str>::from(tab.id.as_str()), label(tab))).collect();
+    crate::resolve::loose(target, near, "tab list")
 }
 
 fn dom_action_expression(stable_id: u64, command: &str) -> String {
@@ -788,6 +793,18 @@ mod tests {
         let find = |label: &str| tab_match(&tabs, &Target { label: label.into(), ordinal: None, handle: None }).map(|id| id.to_string());
         assert_eq!(find("search").unwrap_err().code, Code::Missing);
         assert_eq!((find("untitled").unwrap(), find("about:blank").unwrap(), find("Results for\u{2026}").unwrap()), ("b".into(), "b".into(), "a".into()));
+    }
+
+    #[test]
+    fn an_ambiguous_or_risky_loose_tab_match_is_a_miss() {
+        let tab = |id: &str, title: &str| Tab { id: id.into(), kind: "page".into(), title: title.into(), url: String::new(), websocket: None };
+        let find = |tabs: &[Tab], label: &str| tab_match(tabs, &Target { label: label.into(), ordinal: None, handle: None });
+        let two = [tab("a", "Docs overview"), tab("b", "Docs billing")];
+        let miss = find(&two, "docs").unwrap_err();
+        assert_eq!(miss.code, Code::Missing);
+        assert!(miss.message.contains("docs billing"), "{}", miss.message);
+        assert_eq!(find(&[tab("c", "Account delete everything")], "account").unwrap_err().code, Code::Missing);
+        assert_eq!(find(&[tab("d", "Docs overview")], "docs").unwrap().as_ref(), "d");
     }
 
     /// Runs `ops` against a fake Chrome page that answers request n with `reply(method, n)`; `None` drops it.

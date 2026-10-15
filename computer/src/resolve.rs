@@ -35,6 +35,39 @@ pub(crate) fn pick<T: Clone + PartialEq>(target: &Target, candidates: &[Candidat
     choose(target, matches, surface)
 }
 
+/// Like `pick`, but a label that merely contains the request counts only when it is the single
+/// such item and adds no risky word; otherwise it is a miss that names the candidates.
+pub(crate) fn pick_safe<T: Clone + PartialEq>(target: &Target, candidates: &[Candidate<T>], surface: &str) -> Result<T> {
+    let needle = normalized(&target.label);
+    let exact = matching(candidates, |label| *label == needle);
+    if !exact.is_empty() || needle.is_empty() {
+        return choose(target, exact, surface);
+    }
+    let near: Vec<(T, &String)> = candidates.iter().filter_map(|c| c.labels.iter().find(|l| l.contains(&needle)).map(|l| (c.value.clone(), l))).collect();
+    loose(target, near, surface)
+}
+
+/// Accepts the one loose match that is not risky; anything else is a miss listing what was near.
+pub(crate) fn loose<T: Clone + PartialEq>(target: &Target, near: Vec<(T, impl AsRef<str>)>, surface: &str) -> Result<T> {
+    let needle = normalized(&target.label);
+    if let [(value, label)] = near.as_slice() {
+        if !risky_extra(&needle, label.as_ref()) {
+            return Ok(value.clone());
+        }
+    }
+    let mut miss = missing(&target.label, surface);
+    if !near.is_empty() {
+        let names: Vec<String> = near.iter().take(5).map(|(_, label)| format!("\"{}\"", display(label.as_ref()))).collect();
+        miss.message = format!("{}. Similar items that were not chosen: {}. Use the full label.", miss.message, names.join(", "));
+    }
+    Err(miss)
+}
+
+/// Whether `label` adds a risky word beyond the words of `wanted`.
+fn risky_extra(wanted: &str, label: &str) -> bool {
+    normalized(label).split(' ').any(|word| RISKY.contains(&word) && !wanted.split(' ').any(|w| w == word))
+}
+
 /// Applies the ordinal/ambiguity rule to an already-ordered match list.
 pub(crate) fn choose<T: Clone>(target: &Target, matches: Vec<T>, surface: &str) -> Result<T> {
     if matches.is_empty() {
@@ -109,8 +142,11 @@ pub(crate) fn app(rows: &Value, name: &str) -> Result<String> {
         })
         .collect();
     let target = Target { label: name.into(), ordinal: None, handle: None };
-    pick(&target, &candidates, "device").map_err(|error| match error.code {
-        Code::Missing => Error::plain(Code::Missing, format!("No installed app is named \"{}\". Use the name shown under its launcher icon.", display(name))),
+    pick_safe(&target, &candidates, "device").map_err(|error| match error.code {
+        Code::Missing => {
+            let similar = error.message.split_once(". Similar").map_or(String::new(), |(_, rest)| format!(" Similar{}", rest.trim_end_matches(" Use the full label.")));
+            Error::plain(Code::Missing, format!("No installed app is named \"{}\".{similar} Use the name shown under its launcher icon.", display(name)))
+        }
         Code::Ambiguous => Error::plain(Code::Ambiguous, format!("\"{}\" matches more than one app. Use the app's full display name.", display(name))),
         _ => error,
     })
@@ -140,12 +176,12 @@ pub(crate) fn notification(value: &Value, target: &Target) -> Result<Box<str>> {
             (!key.is_empty()).then(|| Candidate::new(Box::<str>::from(key), [notification_label(item)]))
         })
         .collect();
-    pick(target, &candidates, "notification list")
+    pick_safe(target, &candidates, "notification list")
 }
 
 /// Words that make an extra label word unsafe to guess at: `tap "Save"` may tap "Save draft",
 /// but never "Save and delete all".
-const RISKY: [&str; 20] = [
+const RISKY: [&str; 21] = [
     "delete",
     "remove",
     "erase",
@@ -166,6 +202,7 @@ const RISKY: [&str; 20] = [
     "install",
     "uninstall",
     "factory",
+    "transfer",
 ];
 
 /// Whether the only control whose label merely contains `wanted` is plainly what the agent meant:
@@ -261,7 +298,26 @@ mod tests {
         let rows = json!([["com.google.android.apps.maps", "Maps"], ["com.example.mail", "Mail"], ["com.google.android.gm", "Gmail"]]);
         assert_eq!(app(&rows, "maps").unwrap(), "com.google.android.apps.maps");
         assert_eq!(app(&rows, "Mail").unwrap(), "com.example.mail");
-        assert_eq!(app(&rows, "ail").unwrap_err().code, Code::Ambiguous);
+        assert_eq!(app(&rows, "ail").unwrap_err().code, Code::Missing, "an ambiguous loose match is a miss");
+        assert!(app(&rows, "ail").unwrap_err().message.contains("\"gmail\""), "and lists the candidates");
         assert_eq!(app(&rows, "Camera").unwrap_err().code, Code::Missing);
+    }
+
+    #[test]
+    fn open_app_refuses_a_risky_extra_word_candidate() {
+        let rows = json!([["com.bank.transfer", "Bank Transfer"], ["com.bank.app", "Bank Notes"]]);
+        assert_eq!(app(&rows, "Bank").unwrap_err().code, Code::Missing);
+        assert_eq!(app(&rows, "Bank Transfer").unwrap(), "com.bank.transfer", "exact names still open");
+        assert_eq!(app(&json!([["com.bank.transfer", "Bank Transfer"]]), "Bank").unwrap_err().code, Code::Missing);
+    }
+
+    #[test]
+    fn a_risky_near_miss_notification_is_not_picked() {
+        let value = json!({"enabled":true,"items":[{"id":"k-pay","title":"Pay now","text":""}]});
+        assert_eq!(notification(&value, &target("Now", None)).unwrap_err().code, Code::Missing);
+        let value = json!({"enabled":true,"items":[{"id":"k-del","title":"Delete all photos","text":""}]});
+        assert_eq!(notification(&value, &target("Photos", None)).unwrap_err().code, Code::Missing);
+        let value = json!({"enabled":true,"items":[{"id":"k-ok","title":"Calendar event","text":""}]});
+        assert_eq!(notification(&value, &target("Calendar", None)).unwrap().as_ref(), "k-ok");
     }
 }
