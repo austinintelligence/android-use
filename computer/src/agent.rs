@@ -302,7 +302,10 @@ impl Engine {
         match (before, want) {
             (Some(now), Some(on)) if now == on => return Ok(done(format!("Done. {name} was already {}.", state(on)), None)),
             (None, Some(_)) => {
-                return Err(Error::plain(Code::Args, format!("\"{name}\" is not a switch or checkbox on this screen; nothing was run. Read the screen for its current state.")))
+                return Err(Error::plain(
+                    Code::Args,
+                    format!("\"{name}\" is not a uniquely named switch or checkbox on this screen; nothing was run. Read the screen, then use its label without number, or e12."),
+                ))
             }
             _ => {}
         }
@@ -329,11 +332,14 @@ impl Engine {
 
     /// Whether the switch or checkbox the target names is on, or `None` when none is on screen.
     fn switch_state(&mut self, target: &Target) -> Result<Option<bool>> {
+        // `number N` counts helper nodes, not these merged rows, so it could name another control.
+        if target.ordinal.is_some() {
+            return Ok(None);
+        }
         let rows = self.semantic_rows("")?;
         let label = normalized(&target.label);
-        // The ordinal counts every row with the label, as target resolution does, not only switches.
         let mut hits = rows.iter().filter(|row| if target.handle.is_some() { row.handle == target.handle } else { normalized(&row.label) == label });
-        let row = hits.nth(usize::from(target.ordinal.unwrap_or(1)).saturating_sub(1));
+        let row = hits.next().filter(|_| target.handle.is_some() || hits.next().is_none());
         Ok(row.filter(|row| matches!(row.kind.as_str(), "switch" | "checkbox")).map(|row| matches!(row.state.as_str(), "checked" | "on")))
     }
 

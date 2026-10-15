@@ -353,12 +353,13 @@ mod flows {
     }
 
     #[test]
-    fn a_numbered_target_reads_the_state_of_the_switch_it_taps() {
+    fn a_numbered_or_duplicate_label_never_guesses_which_switch_it_means() {
         let (mut engine, _dir) = engine();
         act(&mut engine, r#"open app "com.example.switches""#).unwrap();
-        // "Alarm" number 1 is a button, number 2 the switch that is on.
-        assert_eq!(act(&mut engine, r#"set "Alarm" number 2 on"#).unwrap().text, "Done. Alarm was already on.");
-        assert!(act(&mut engine, r#"set "Alarm" number 1 on"#).unwrap_err_or_text().contains("not a switch or checkbox"));
+        for command in [r#"set "Alarm" number 2 on"#, r#"set "Alarm" number 1 on"#] {
+            assert!(act(&mut engine, command).unwrap_err_or_text().contains("not a uniquely named switch"), "{command}");
+        }
+        assert!(act(&mut engine, r#"set "Alarm" on"#).unwrap_err_or_text().contains("matches 2 items"));
     }
 
     #[test]
