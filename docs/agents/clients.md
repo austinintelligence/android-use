@@ -9,6 +9,7 @@ au install            # every agent found on this computer
 au install cursor     # one agent: claude, codex, cursor, gemini, vscode, claude-desktop, opencode
 au install --dry-run  # show what would change; write nothing
 au uninstall cursor   # remove only the android-use entry
+au uninstall cursor --force  # also remove an android-use entry au did not write
 ```
 
 `au setup` runs `au install` for you after the device is ready.
