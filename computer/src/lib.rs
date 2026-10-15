@@ -3,6 +3,7 @@
 pub mod adapter;
 mod agent;
 pub mod api;
+mod apk;
 mod artifact;
 pub mod bridge;
 mod browser;
@@ -13,6 +14,7 @@ pub mod device;
 pub mod emulator;
 pub mod engine;
 mod format;
+pub mod link;
 pub use format::render_screen;
 pub mod install;
 mod journal;
