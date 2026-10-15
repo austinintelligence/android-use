@@ -23,6 +23,7 @@
 
 ### Fixed
 
+- Screen recording works on Android 14+ (#7): the helper promotes its foreground service to the `mediaProjection` type first, then gets the projection, registers its callback, and only then creates the virtual display. Android 14 allows a screen-capture grant once, so the helper clears it after use and a second recording asks again instead of crashing.
 - `au setup`, `au install`, and `au uninstall AGENT` write agent config safely: only a missing file counts as empty (any other read error aborts without writing), a failed backup aborts the write, the file's existing mode is kept, `claude mcp` and `codex mcp` are killed after 30 seconds, and a failed re-add restores the old entry.
 
 - `au uninstall` flags now work as named: `--dry-run` only reports, unknown flags are errors, and uninstall refuses while `au serve` is running.

@@ -56,16 +56,32 @@ public final class BridgeService extends Service {
     }
 
     static void projectionStarted() {
+        promote("Screen recording is active", ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
+    }
+
+    /** Puts the service back to its idle type and notification once a recording is over. */
+    static void projectionStopped() {
+        promote("Authenticated local Android control", 0);
+    }
+
+    private static void promote(String text, int projection) {
         BridgeService service = instance;
         if (service == null || Build.VERSION.SDK_INT < 29) return;
         Notification note =
                 new Notification.Builder(service, "bridge")
                         .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
                         .setContentTitle("Android-Use")
-                        .setContentText("Screen recording is active")
+                        .setContentText(text)
                         .build();
-        int type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION;
-        if (Build.VERSION.SDK_INT >= 34) type |= ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE;
-        service.startForeground(31, note, type);
+        // Before Android 14 the service claims every manifest type; narrowing it to the
+        // projection would drop camera, microphone and location until it restarts.
+        int type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MANIFEST;
+        if (Build.VERSION.SDK_INT >= 34)
+            type = projection | ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE;
+        try {
+            service.startForeground(31, note, type);
+        } catch (RuntimeException e) {
+            // The recording reports its own failure.
+        }
     }
 }

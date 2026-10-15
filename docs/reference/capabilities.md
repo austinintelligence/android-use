@@ -22,7 +22,7 @@ List and select tabs; read a page's title, text, and interactive elements; open 
 - Location: a one-shot read, when the helper has permission.
 - Camera: rear or front still, after Android permission.
 - Microphone: bounded mono WAV, after Android permission.
-- Screen recording: a bounded MP4 of up to 30 seconds, after you grant Android's screen-capture prompt for that process.
+- Screen recording: a bounded MP4 of up to 30 seconds, after you grant Android's screen-capture prompt for that process. On Android 14 and later each grant covers one recording; `screen_record` reads false again until you allow screen recording in the Android-Use app.
 - Images: crop PNG captures and compare two screens through bounded hashes and sampled differences.
 
 ## Targets
