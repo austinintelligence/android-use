@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
-import { dirname, join, relative, sep } from "node:path";
+import { constants } from "node:os";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readManifest, sha256 } from "./manifest.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const version = "1.2.0";
@@ -46,36 +47,42 @@ const optionalDir = (() => {
     return null;
   }
 })();
-const candidates = [
-  process.env.AU_BIN,
-  join(here, "bin", platform, name),
-  optionalDir && join(optionalDir, "bin", name),
-  join(here, name),
-].filter(Boolean);
-const binary = candidates.find(existsSync);
-if (!binary) fail(`The ${platform} au binary is missing from this package. Install the platform package or set AU_BIN.`);
+// AU_BIN is an explicit override and skips verification; every other binary must match its package manifest.
+let binary = process.env.AU_BIN;
+let pkgDir = here;
+if (binary) {
+  console.error(`warning: AU_BIN is set, so ${binary} runs without an integrity check.`);
+} else {
+  const local = join(here, "bin", platform, name);
+  const inPlatformPackage = optionalDir && join(optionalDir, "bin", name);
+  if (existsSync(local)) binary = local;
+  else if (inPlatformPackage && existsSync(inPlatformPackage)) [binary, pkgDir] = [inPlatformPackage, optionalDir];
+  else fail(`The ${platform} au binary is missing from this package. Install the platform package or set AU_BIN.`);
 
-// Check the binary and helper APK against the manifest of the package they came from.
-const pkgDir = optionalDir && binary.startsWith(optionalDir + sep) ? optionalDir : here;
-const manifest = join(pkgDir, "manifest.json");
-if (existsSync(manifest)) {
+  let files;
   try {
-    const files = JSON.parse(readFileSync(manifest, "utf8")).files ?? {};
-    const verify = (file) => {
-      const key = relative(pkgDir, file).replaceAll("\\", "/");
-      if (!files[key]) return;
-      if (!existsSync(file)) fail("The Android Use package is incomplete. Reinstall it from a trusted source.");
-      const actual = createHash("sha256").update(readFileSync(file)).digest("hex");
-      if (actual !== files[key]) fail("The Android Use package failed its integrity check. Reinstall it from a trusted source.");
-    };
-    verify(binary);
-    verify(join(dirname(binary), "aubridge.apk"));
-  } catch {
-    fail("The Android Use package manifest could not be verified.");
+    files = readManifest(pkgDir);
+  } catch (e) {
+    fail(`Cannot verify the Android Use package: ${e.message}. Reinstall it from a trusted source.`);
   }
+  // The binary must be listed; the helper APK is checked when it is listed.
+  const verify = (file, required) => {
+    const key = relative(pkgDir, file).replaceAll("\\", "/");
+    if (!files[key]) return required && fail(`Cannot verify the Android Use package: manifest.json has no entry for ${platform} (${key}). Reinstall it from a trusted source.`);
+    if (!existsSync(file)) fail("The Android Use package is incomplete. Reinstall it from a trusted source.");
+    if (sha256(file) !== files[key]) fail("The Android Use package failed its integrity check. Reinstall it from a trusted source.");
+  };
+  verify(binary, true);
+  verify(join(dirname(binary), "aubridge.apk"), false);
 }
 
 // stdout is the MCP channel for "serve", so nothing above writes to stdout on that path.
-const child = spawn(binary, [command, ...process.argv.slice(3)], { stdio: "inherit", windowsHide: true });
+// Pass termination signals to au, then exit the way au did. The handlers exist before au does, so a
+// signal that lands while it starts is held and sent once it is running instead of orphaning it.
+let child;
+let early;
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => (child ? child.kill(signal) : (early ??= signal)));
+child = spawn(binary, [command, ...process.argv.slice(3)], { stdio: "inherit", windowsHide: true });
+if (early) child.kill(early);
 child.on("error", (e) => fail(e.message));
-child.on("exit", (code, signal) => process.exit(signal ? 1 : code ?? 1));
+child.on("exit", (code, signal) => process.exit(signal ? 128 + (constants.signals[signal] ?? 1) : code ?? 1));
