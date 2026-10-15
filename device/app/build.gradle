@@ -7,7 +7,10 @@ def signingPropertiesPath = System.getenv("AUBRIDGE_SIGNING_PROPERTIES")
 def versionParts = releaseVersion.tokenize(".")*.toInteger()
 // The release key is used only by the release build type, and only when this file is named explicitly.
 def signingPropertiesFile = signingPropertiesPath ? file(signingPropertiesPath) : null
-def releaseSigned = signingPropertiesFile != null && signingPropertiesFile.exists()
+if (signingPropertiesFile != null && !signingPropertiesFile.exists()) {
+    throw new GradleException("AUBRIDGE_SIGNING_PROPERTIES names a file that does not exist: " + signingPropertiesFile)
+}
+def releaseSigned = signingPropertiesFile != null
 def signingProperties = new Properties()
 if (releaseSigned) {
     signingPropertiesFile.withInputStream { signingProperties.load(it) }
