@@ -238,6 +238,8 @@ impl Engine {
             Err(error) if error.code == Code::Stopped => {
                 // The helper refused before running anything: not uncertain, and not repeatable.
                 self.stopped = true;
+                // A resend after Resume must run, not meet this record: new ids from here on.
+                self.session = session_id();
                 let refused = Receipt { e: Some("stopped".into()), next: None, ..unknown(&p.id, p.generation) };
                 let _ = self.journal.finish(&digest, &refused);
                 return Err(error);
@@ -404,8 +406,10 @@ mod tests {
     fn a_run_refused_because_the_helper_was_stopped_is_stopped_not_unknown() {
         let link = FakeLink::new(|q| Some(if q[1] == "run" { json!([q[0], 11]) } else { json!([q[0], 0, 1, 7]) }));
         let (mut engine, _dir) = engine_over(link);
+        let before = engine.operation_id(Some("7"), "android");
         let plan = Plan { id: "p2".into(), generation: 1, deadline_ms: 1000, max_mutations: 1, ops: Box::new([crate::api::Op::Tap(0)]) };
         assert_eq!(engine.run_plan(&plan).err().map(|e| e.code), Some(Code::Stopped));
+        assert_ne!(engine.operation_id(Some("7"), "android"), before, "a resend after Resume gets a fresh id, not the refused record");
     }
 
     #[test]
