@@ -198,11 +198,12 @@ pub fn install() -> Result<Value> {
     if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
         return Err(Error::new(Code::Args, format!("run au emulator install in a terminal so you can read and accept the SDK license; it installs: {}", wanted.join(", "))));
     }
-    let status = Command::new(&manager)
+    let mut child = Command::new(&manager)
         .arg(format!("--sdk_root={}", sdk.display()))
         .args(&wanted)
-        .status()
+        .spawn()
         .map_err(|e| Error::new(Code::Device, format!("sdkmanager failed to start (it needs a JDK; set JAVA_HOME): {e}")))?;
+    let status = crate::device::wait_deadline(&mut child, Duration::from_secs(4 * 3600))?;
     if !status.success() {
         return Err(Error::new(Code::Device, format!("sdkmanager exited with {status}; nothing more was installed")));
     }
@@ -247,7 +248,7 @@ pub fn create(name: &str, image: Option<&str>, profile: Profile) -> Result<Value
     fs::create_dir_all(&avd)?;
     fs::write(l.avd_home().join(format!("{name}.ini")), ini)?;
     fs::write(avd.join("config.ini"), config)?;
-    fs::create_dir_all(l.target(name))?;
+    crate::device::private_dir(&l.target(name))?;
     fs::write(l.target(name).join("target.json"), json!({"schema":1,"name":name,"kind":"emulator","avd":name,"image":image.id}).to_string())?;
     Ok(json!({"ok":1,"name":name,"image":image.id,"next":format!("au emulator start {name}")}))
 }
@@ -282,10 +283,11 @@ fn is_ours_settled(adb: &Adb, dir: &Path, endpoint: &str) -> bool {
 
 fn require_target(l: &Layout, name: &str) -> Result<PathBuf> {
     let dir = l.target(name);
-    if valid_name(name) && read_json(&dir.join("target.json")).is_some_and(|t| t["kind"] == "emulator") {
+    let owned = read_json(&dir.join("target.json")).is_some_and(|t| t["kind"] == "emulator" && t["avd"] == name);
+    if valid_name(name) && owned {
         Ok(dir)
     } else {
-        Err(Error::new(Code::Args, format!("{name} is not an emulator created by au; see au emulator list")))
+        Err(Error::new(Code::Args, format!("{name} is not an emulator created by au, so au will not touch it; see au emulator list")))
     }
 }
 
@@ -311,13 +313,14 @@ pub fn start(name: &str, window: bool) -> Result<Value> {
     }
     let emulator = emulator_binary(&sdk_root()?)?;
     // Port choice and the spawn happen under one lock, so two starts at once cannot pick one pair.
-    fs::create_dir_all(l.base.join("emulators"))?;
-    let lock = fs::OpenOptions::new().create(true).truncate(false).write(true).open(l.base.join("emulators/ports.lock"))?;
+    crate::device::private_dir(&l.base.join("emulators"))?;
+    let lock = crate::device::private_file().create(true).truncate(false).write(true).open(l.base.join("emulators/ports.lock"))?;
     lock.lock()?;
     let mut taken = claimed_ports(&l);
     taken.extend(adb.devices_all()?.iter().filter_map(|d| d.endpoint.strip_prefix("emulator-").and_then(|p| p.parse::<u16>().ok())));
     let console = free_ports(&taken).ok_or_else(|| Error::new(Code::Bounds, "no free emulator ports (limit: 16 instances)"))?;
-    let log = fs::File::create(dir.join("emulator.log"))?;
+    crate::device::private_dir(&dir)?;
+    let log = crate::device::private_file().write(true).create(true).truncate(true).open(dir.join("emulator.log"))?;
     let mut command = Command::new(&emulator);
     command.args(launch_args(name, console, window)).env("ANDROID_AVD_HOME", l.avd_home()).stdin(Stdio::null()).stdout(log.try_clone()?).stderr(log);
     #[cfg(unix)]
@@ -325,6 +328,21 @@ pub fn start(name: &str, window: bool) -> Result<Value> {
     #[cfg(windows)]
     std::os::windows::process::CommandExt::creation_flags(&mut command, 0x0800_0200);
     let mut child = command.spawn().map_err(|e| Error::new(Code::Device, format!("failed to start the emulator: {e}")))?;
+    let result = finish_start(&mut child, &adb, &dir, name, console, lock);
+    if result.is_err() {
+        abandon(&mut child, &dir);
+    }
+    result
+}
+
+/// Kills an emulator whose start failed and drops its record, so nothing comes up later on a port nothing claims.
+fn abandon(child: &mut std::process::Child, dir: &Path) {
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = fs::remove_file(dir.join("emulator.json"));
+}
+
+fn finish_start(child: &mut std::process::Child, adb: &Adb, dir: &Path, name: &str, console: u16, lock: fs::File) -> Result<Value> {
     let endpoint = format!("emulator-{console}");
     // The identity belongs to the target, not to one boot: enrollment records it, so a restart
     // on another port must write the same value back.
@@ -334,17 +352,17 @@ pub fn start(name: &str, window: bool) -> Result<Value> {
             let mut bytes = [0u8; 8];
             getrandom::fill(&mut bytes).map_err(|_| Error::new(Code::Io, "no random bytes"))?;
             let fresh = bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
-            fs::write(dir.join("instance"), &fresh)?;
+            crate::device::atomic(&dir.join("instance"), fresh.as_bytes())?;
             fresh
         }
     };
-    fs::write(dir.join("emulator.json"), json!({"endpoint":endpoint,"console":console,"adb":console + 1,"pid":child.id(),"instance":instance}).to_string())?;
+    crate::device::atomic(
+        &dir.join("emulator.json"),
+        json!({"endpoint":endpoint,"console":console,"adb":console + 1,"pid":child.id(),"instance":instance}).to_string().as_bytes(),
+    )?;
     let appeared = Instant::now() + Duration::from_secs(90);
-    while adb_state(&adb, &endpoint).as_deref() != Some("device") {
+    while adb_state(adb, &endpoint).as_deref() != Some("device") {
         if child.try_wait()?.is_some() || Instant::now() > appeared {
-            // A timed-out emulator must not come up later on a port nothing claims.
-            let _ = child.kill();
-            let _ = fs::remove_file(dir.join("emulator.json"));
             let tail = fs::read_to_string(dir.join("emulator.log")).unwrap_or_default().lines().rev().take(8).collect::<Vec<_>>().join(" | ");
             return Err(Error::plain(Code::Device, format!("the emulator did not come up; last log lines: {tail}")));
         }
@@ -423,7 +441,11 @@ pub fn snapshot(name: &str, action: &str, tag: &str) -> Result<Value> {
     let endpoint = read_json(&dir.join("emulator.json"))
         .and_then(|i| i["endpoint"].as_str().map(str::to_owned))
         .ok_or_else(|| Error::new(Code::Device, format!("{name} is not running; au emulator start {name}")))?;
-    let out = Adb::discover()?.run(Some(&endpoint), &["emu", "avd", "snapshot", action, tag], Duration::from_secs(120))?;
+    let adb = Adb::discover()?;
+    if !is_ours_settled(&adb, &dir, &endpoint) {
+        return Err(Error::new(Code::Device, format!("{endpoint} is not the emulator au started for {name}; nothing was changed")));
+    }
+    let out = adb.run(Some(&endpoint), &["emu", "avd", "snapshot", action, tag], Duration::from_secs(120))?;
     let text = String::from_utf8_lossy(&out);
     if text.lines().any(|line| line.starts_with("KO")) {
         return Err(Error::new(Code::Device, format!("the emulator refused to {action} snapshot {tag}: {}", text.trim())));
@@ -518,6 +540,33 @@ mod tests {
             assert_eq!(snapshot("any", "save", tag).unwrap_err().code, Code::Args, "{tag:?}");
         }
         assert_eq!(snapshot("any", "delete", "ok_tag-1").unwrap_err().code, Code::Args);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_failed_start_leaves_no_child_and_no_record() {
+        let dir = std::env::temp_dir().join(format!("au-abandon-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("emulator.json"), "{}").unwrap();
+        let mut child = Command::new("sleep").arg("30").spawn().unwrap();
+        abandon(&mut child, &dir);
+        assert!(child.try_wait().unwrap().is_some() && !dir.join("emulator.json").exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn snapshot_and_destroy_refuse_an_avd_au_does_not_own() {
+        let base = std::env::temp_dir().join(format!("au-owned-{}", std::process::id()));
+        let l = Layout { base: base.clone() };
+        // A foreign AVD sits in the SDK's home, not au's; a target without au's record is refused too.
+        fs::create_dir_all(l.target("foreign")).unwrap();
+        assert_eq!(require_target(&l, "foreign").unwrap_err().code, Code::Args);
+        fs::write(l.target("foreign").join("target.json"), json!({"kind":"emulator","avd":"other"}).to_string()).unwrap();
+        assert_eq!(require_target(&l, "foreign").unwrap_err().code, Code::Args);
+        // A half-destroyed target (AVD already gone) can still be destroyed again.
+        fs::write(l.target("foreign").join("target.json"), json!({"kind":"emulator","avd":"foreign"}).to_string()).unwrap();
+        assert!(require_target(&l, "foreign").is_ok());
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[test]

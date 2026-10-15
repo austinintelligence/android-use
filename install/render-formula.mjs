@@ -1,10 +1,13 @@
 #!/usr/bin/env node
-// Print the Homebrew formula for a release, with checksums from its SHA256SUMS.
-// Usage: node install/render-formula.mjs vX.Y.Z [path/to/SHA256SUMS]   (downloads it with gh when no path is given)
+// Print the Homebrew formula for a release, with checksums from its SHA256SUMS, which must be attestation-verified.
+// Usage: node install/render-formula.mjs vX.Y.Z                       (downloads SHA256SUMS and verifies it with gh)
+//        node install/render-formula.mjs vX.Y.Z SHA256SUMS --verified  (you already ran `gh attestation verify` on it)
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { verifyArgs } from "./manifest.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const platforms = JSON.parse(readFileSync(join(here, "platforms.json"), "utf8"));
@@ -56,11 +59,17 @@ export function parseSums(text) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const [tag, path] = process.argv.slice(2);
-  if (!/^v\d+\.\d+\.\d+$/.test(tag ?? "")) {
-    console.error("Usage: node install/render-formula.mjs vX.Y.Z [SHA256SUMS]");
+  const [tag, path, flag] = process.argv.slice(2);
+  if (!/^v\d+\.\d+\.\d+$/.test(tag ?? "") || (path && flag !== "--verified")) {
+    console.error("Usage: node install/render-formula.mjs vX.Y.Z [SHA256SUMS --verified]\nChecksums that were not attestation-verified are refused.");
     process.exit(2);
   }
-  const text = path ? readFileSync(path, "utf8") : execFileSync("gh", ["release", "download", tag, "-p", "SHA256SUMS", "-O", "-"], { encoding: "utf8" });
-  process.stdout.write(renderFormula(tag, parseSums(text)));
+  let file = path;
+  if (!file) {
+    const dir = mkdtempSync(join(tmpdir(), "au-formula-"));
+    file = join(dir, "SHA256SUMS");
+    execFileSync("gh", ["release", "download", tag, "-p", "SHA256SUMS", "--dir", dir], { stdio: "inherit" });
+    execFileSync("gh", verifyArgs(file, process.env.GITHUB_REPOSITORY ?? "austinintelligence/android-use", tag), { stdio: "inherit" });
+  }
+  process.stdout.write(renderFormula(tag, parseSums(readFileSync(file, "utf8"))));
 }

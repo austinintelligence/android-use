@@ -29,6 +29,12 @@ pub enum Code {
     Permission,
     /// A label the agent asked for is not on the current screen or page.
     Missing,
+    /// Preflight: the phone is locked, its screen is off, or the helper is gone.
+    Locked,
+    ScreenOff,
+    HelperKilled,
+    /// Stop was pressed on the helper's notification.
+    Stopped,
 }
 impl Code {
     pub fn wire(self) -> &'static str {
@@ -51,6 +57,10 @@ impl Code {
             Self::Unsupported => "unsupported",
             Self::Permission => "permission",
             Self::Missing => "missing",
+            Self::Locked => "locked",
+            Self::ScreenOff => "screen_off",
+            Self::HelperKilled => "helper_killed",
+            Self::Stopped => "stopped",
         }
     }
 }
@@ -202,7 +212,7 @@ pub enum Op {
     Capture(Capture),
     NotificationOpen(Box<str>),
     NotificationDismiss(Box<str>),
-    NotificationAction(Box<str>),
+    NotificationAction(Box<str>, Option<Box<str>>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -264,7 +274,7 @@ impl Op {
                 | Self::Capture(Capture::Camera { .. } | Capture::Microphone(..) | Capture::ScreenRecord(..))
                 | Self::NotificationOpen(_)
                 | Self::NotificationDismiss(_)
-                | Self::NotificationAction(_)
+                | Self::NotificationAction(..)
         )
     }
     pub fn wire(&self) -> Value {
@@ -293,7 +303,8 @@ impl Op {
             Self::Capture(Capture::ScreenRecord(seconds)) => json!(["screen_record", seconds]),
             Self::NotificationOpen(id) => json!(["notification_open", id]),
             Self::NotificationDismiss(id) => json!(["notification_dismiss", id]),
-            Self::NotificationAction(id) => json!(["notification_action", id]),
+            Self::NotificationAction(id, None) => json!(["notification_action", id]),
+            Self::NotificationAction(id, Some(label)) => json!(["notification_action", id, label]),
         }
     }
 }
@@ -398,8 +409,13 @@ pub(crate) fn safe_url(value: &str) -> bool {
 /// Matching form of a label: case- and whitespace-insensitive, without the
 /// bracket characters agent-facing text strips, so a label quoted back as
 /// displayed ("Inbox 3" for "Inbox [3]") still matches.
+/// Format characters that draw nothing (zero-width, soft hyphen, BOM, word joiner, tags).
+pub(crate) fn invisible(c: char) -> bool {
+    matches!(c, '\u{00AD}' | '\u{FE00}'..='\u{FE0F}' | '\u{180B}'..='\u{180D}' | '\u{E0100}'..='\u{E01EF}' | '\u{034F}' | '\u{115F}'..='\u{1160}' | '\u{17B4}'..='\u{17B5}' | '\u{180E}' | '\u{206A}'..='\u{206F}' | '\u{3164}' | '\u{FFA0}' | '\u{FFF9}'..='\u{FFFB}' | '\u{1D173}'..='\u{1D17A}' | '\u{200B}'..='\u{200D}' | '\u{2060}'..='\u{2064}' | '\u{FEFF}' | '\u{E0000}'..='\u{E007F}')
+}
+
 pub(crate) fn normalized(value: &str) -> String {
-    let visible: String = value.chars().filter(|c| !matches!(c, '{' | '}' | '[' | ']')).collect();
+    let visible: String = value.chars().filter(|&c| !matches!(c, '{' | '}' | '[' | ']') && !invisible(c)).collect();
     let words = visible.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
     // A label truncated for display ends in an ellipsis; the text before it still names the item.
     match words.strip_suffix('\u{2026}') {

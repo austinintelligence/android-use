@@ -15,14 +15,16 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class Ui extends AccessibilityService {
     private static volatile Ui instance;
     private final Object guard = new Object();
-    private long generation = 1;
-    private long lastInvalidation;
+    // Events only bump these, never take the lock; a scene older than the generation is rebuilt on
+    // demand.
+    private final AtomicLong generation = new AtomicLong(1);
     private volatile long lastEvent;
-    private Scene scene;
+    private volatile Scene scene;
 
     static Ui get() {
         return instance;
@@ -89,19 +91,11 @@ public final class Ui extends AccessibilityService {
     }
 
     long generation() {
-        synchronized (guard) {
-            return generation;
-        }
+        return generation.get();
     }
 
     private void invalidate() {
-        synchronized (guard) {
-            long now = SystemClock.uptimeMillis();
-            if (now - lastInvalidation < 40 && scene == null) return;
-            lastInvalidation = now;
-            generation++;
-            clearLocked();
-        }
+        generation.incrementAndGet();
     }
 
     private void clear() {
@@ -141,7 +135,10 @@ public final class Ui extends AccessibilityService {
 
     Scene snapshot() {
         synchronized (guard) {
-            if (scene == null) scene = build();
+            if (scene == null || scene.generation != generation.get()) {
+                clearLocked();
+                scene = build();
+            }
             return scene;
         }
     }
@@ -526,6 +523,7 @@ public final class Ui extends AccessibilityService {
     }
 
     private Scene build() {
+        long generation = this.generation.get();
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null) return new Scene(generation, "", new ArrayList<>(), 0, false);
         String pkg = root.getPackageName() == null ? "" : root.getPackageName().toString();
@@ -677,7 +675,8 @@ public final class Ui extends AccessibilityService {
                     desc = nonEmpty(d),
                     hint = nonEmpty(h),
                     r = n.getViewIdResourceName();
-            boolean password = n.isPassword(), hasText = !text.isEmpty();
+            boolean password = n.isPassword() || Secret.password(n.getInputType()),
+                    hasText = !text.isEmpty();
             String semantic = shorten(password ? "" : (!text.isEmpty() ? text : desc), 1024);
             String label = shorten(!semantic.isEmpty() ? semantic : r != null ? r : "", 1024);
             Rect bounds = new Rect();

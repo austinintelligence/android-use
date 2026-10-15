@@ -77,8 +77,12 @@ if (binary) {
 }
 
 // stdout is the MCP channel for "serve", so nothing above writes to stdout on that path.
-const child = spawn(binary, [command, ...process.argv.slice(3)], { stdio: "inherit", windowsHide: true });
+// Pass termination signals to au, then exit the way au did. The handlers exist before au does, so a
+// signal that lands while it starts is held and sent once it is running instead of orphaning it.
+let child;
+let early;
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => (child ? child.kill(signal) : (early ??= signal)));
+child = spawn(binary, [command, ...process.argv.slice(3)], { stdio: "inherit", windowsHide: true });
+if (early) child.kill(early);
 child.on("error", (e) => fail(e.message));
-// Pass termination signals to au, then exit the way au did.
-for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => child.kill(signal));
 child.on("exit", (code, signal) => process.exit(signal ? 128 + (constants.signals[signal] ?? 1) : code ?? 1));

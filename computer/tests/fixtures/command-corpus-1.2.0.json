@@ -1,0 +1,378 @@
+{
+  "browser tabs": {
+    "act": "error: Could not parse \"browser tabs\": unknown Android action. Use tap \"LABEL\".",
+    "read": "BrowserTabs"
+  },
+  "capabilities": {
+    "act": "[Look(Capabilities)]",
+    "read": "Capabilities"
+  },
+  "capture screen": {
+    "act": "[Android(CaptureScreen)]",
+    "read": "error: Could not parse \"capture screen\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "close tab \"Docs\"": {
+    "act": "[Browser(CloseTab(Target { label: \"Docs\", ordinal: None, handle: None }))]",
+    "read": "error: Could not parse \"close tab \"Docs\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "crop image \"screen\" from 0 0 with size 100 by 100": {
+    "act": "[Visual(Crop { alias: \"screen\", x: 0, y: 0, w: 100, h: 100 })]",
+    "read": "error: Could not parse \"crop image \"screen\" from 0 0 with size 100 by 100\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "dismiss notification \"Messages\"": {
+    "act": "[Android(NotificationDismiss(Target { label: \"Messages\", ordinal: None, handle: None }))]",
+    "read": "error: Could not parse \"dismiss notification \"Messages\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "find": {
+    "act": "error: Could not parse \"find\": unknown read command. Use tap \"LABEL\".",
+    "read": "error: Could not parse \"find\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "find \"TEXT\"": {
+    "act": "[Look(Screen { full: false, matching: Some(\"TEXT\"), delta: false })]",
+    "read": "Screen { full: false, matching: Some(\"TEXT\"), delta: false }"
+  },
+  "find \"Wi-Fi\"": {
+    "act": "[Look(Screen { full: false, matching: Some(\"Wi-Fi\"), delta: false })]",
+    "read": "Screen { full: false, matching: Some(\"Wi-Fi\"), delta: false }"
+  },
+  "find \"airplane\"": {
+    "act": "[Look(Screen { full: false, matching: Some(\"airplane\"), delta: false })]",
+    "read": "Screen { full: false, matching: Some(\"airplane\"), delta: false }"
+  },
+  "help": {
+    "act": "error: Could not parse \"help\": unknown Android action. Use tap \"LABEL\".",
+    "read": "Help"
+  },
+  "hold \"Photo\"": {
+    "act": "[Android(Hold(Target { label: \"Photo\", ordinal: None, handle: None }))]",
+    "read": "error: Could not parse \"hold \"Photo\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "image difference": {
+    "act": "error: Could not parse \"image difference\": unknown Android action. Use tap \"LABEL\".",
+    "read": "error: Could not parse \"image difference\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "image difference \"screen\" and \"photo\"": {
+    "act": "error: Could not parse \"image difference \"screen\" and \"photo\"\": unknown Android action. Use tap \"LABEL\".",
+    "read": "ImageDifference(\"screen\", \"photo\")"
+  },
+  "image hash": {
+    "act": "error: Could not parse \"image hash\": unknown Android action. Use tap \"LABEL\".",
+    "read": "error: Could not parse \"image hash\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "image hash \"screen\"": {
+    "act": "error: Could not parse \"image hash \"screen\"\": unknown Android action. Use tap \"LABEL\".",
+    "read": "ImageHash(\"screen\")"
+  },
+  "location": {
+    "act": "[Look(Location)]",
+    "read": "Location"
+  },
+  "new tab \"https://example.com\"": {
+    "act": "[Browser(NewTab(\"https://example.com\"))]",
+    "read": "error: Could not parse \"new tab \"https://example.com\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "notifications": {
+    "act": "[Look(Notifications)]",
+    "read": "Notifications"
+  },
+  "open app \"Chrome\"": {
+    "act": "[Android(OpenApp(\"Chrome\"))]",
+    "read": "error: Could not parse \"open app \"Chrome\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "open app \"NAME\"": {
+    "act": "[Android(OpenApp(\"NAME\"))]",
+    "read": "error: Could not parse \"open app \"NAME\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "open app \"Settings\"": {
+    "act": "[Android(OpenApp(\"Settings\"))]",
+    "read": "error: Could not parse \"open app \"Settings\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "open app \"Settings\" then tap \"Network & internet\" then verify text \"Airplane mode\" exists": {
+    "act": "[Android(OpenApp(\"Settings\")), Android(Tap(Target { label: \"Network & internet\", ordinal: None, handle: None })), Android(VerifyText(\"Airplane mode\"))]",
+    "read": "error: Could not parse \"open app \"Settings\" then tap \"Network & internet\" then verify text \"Airplane mode\" exists\": read accepts one command at a time. Use screen, find \"TEXT\", or page text."
+  },
+  "open link \"https://example.com\"": {
+    "act": "[Android(OpenLink(\"https://example.com\"))]",
+    "read": "error: Could not parse \"open link \"https://example.com\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "open notification \"Messages\"": {
+    "act": "[Android(NotificationOpen(Target { label: \"Messages\", ordinal: None, handle: None }))]",
+    "read": "error: Could not parse \"open notification \"Messages\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "open notification \"TITLE\"": {
+    "act": "[Android(NotificationOpen(Target { label: \"TITLE\", ordinal: None, handle: None }))]",
+    "read": "error: Could not parse \"open notification \"TITLE\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "open setting \"wifi\"": {
+    "act": "[Android(OpenSetting(\"wifi\"))]",
+    "read": "error: Could not parse \"open setting \"wifi\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "page": {
+    "act": "[Look(Page)]",
+    "read": "Page"
+  },
+  "page ...": {
+    "act": "error: Could not parse \"page ...\": unknown page action. Use page click \"LABEL\".",
+    "read": "error: Could not parse \"page ...\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "page [text]": {
+    "act": "error: Could not parse \"page text\": unknown page action. Use page click \"LABEL\".",
+    "read": "error: Could not parse \"page text\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "page back": {
+    "act": "[Browser(Back)]",
+    "read": "error: Could not parse \"page back\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "page click \"LABEL\"": {
+    "act": "[Browser(Click(Target { label: \"LABEL\", ordinal: None, handle: None }))]",
+    "read": "error: Could not parse \"page click \"LABEL\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "page click \"More information\"": {
+    "act": "[Browser(Click(Target { label: \"More information\", ordinal: None, handle: None }))]",
+    "read": "error: Could not parse \"page click \"More information\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "page click \"More\"": {
+    "act": "[Browser(Click(Target { label: \"More\", ordinal: None, handle: None }))]",
+    "read": "error: Could not parse \"page click \"More\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "page focus \"Email\"": {
+    "act": "[Browser(Focus(Target { label: \"Email\", ordinal: None, handle: None }))]",
+    "read": "error: Could not parse \"page focus \"Email\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "page open \"https://example.com\"": {
+    "act": "[Browser(Open(\"https://example.com\"))]",
+    "read": "error: Could not parse \"page open \"https://example.com\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "page open \"https://example.com\" then page wait for text \"Example Domain\" up to 10 seconds": {
+    "act": "[Browser(Open(\"https://example.com\")), Browser(WaitText { text: \"Example Domain\", seconds: 10 })]",
+    "read": "error: Could not parse \"page open \"https://example.com\" then page wait for text \"Example Domain\" up to 10 seconds\": read accepts one command at a time. Use screen, find \"TEXT\", or page text."
+  },
+  "page open \"https://…\"": {
+    "act": "[Browser(Open(\"https://…\"))]",
+    "read": "error: Could not parse \"page open \"https://…\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "page press \"Enter\"": {
+    "act": "[Browser(Key(\"Enter\"))]",
+    "read": "error: Could not parse \"page press \"Enter\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "page screenshot": {
+    "act": "[Browser(Screenshot)]",
+    "read": "error: Could not parse \"page screenshot\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "page scroll 600": {
+    "act": "[Browser(Scroll(600))]",
+    "read": "error: Could not parse \"page scroll 600\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "page text": {
+    "act": "[Look(PageText { matching: None })]",
+    "read": "PageText { matching: None }"
+  },
+  "page text matching \"Example\"": {
+    "act": "[Look(PageText { matching: Some(\"Example\") })]",
+    "read": "PageText { matching: Some(\"Example\") }"
+  },
+  "page type \"hi\" in \"Search\"": {
+    "act": "[Browser(Type { text: \"hi\", target: Target { label: \"Search\", ordinal: None, handle: None } })]",
+    "read": "error: Could not parse \"page type \"hi\" in \"Search\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "page wait for text \"Done\" up to 5 seconds": {
+    "act": "[Browser(WaitText { text: \"Done\", seconds: 5 })]",
+    "read": "error: Could not parse \"page wait for text \"Done\" up to 5 seconds\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "press back": {
+    "act": "[Android(Key(Back))]",
+    "read": "error: Could not parse \"press back\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "press enter": {
+    "act": "[Android(Key(Enter))]",
+    "read": "error: Could not parse \"press enter\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "record screen for 5 seconds": {
+    "act": "[Android(ScreenRecord(5))]",
+    "read": "error: Could not parse \"record screen for 5 seconds\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "run notification action \"Messages\"": {
+    "act": "[Android(NotificationAction(Target { label: \"Messages\", ordinal: None, handle: None }))]",
+    "read": "error: Could not parse \"run notification action \"Messages\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "screen": {
+    "act": "[Look(Screen { full: false, matching: None, delta: false })]",
+    "read": "Screen { full: false, matching: None, delta: false }"
+  },
+  "screen [full|changes|matching \"TEXT\"]": {
+    "act": "error: Could not parse \"screen full|changes|matching \"TEXT\"\": quoted values must be separated by spaces. Use tap \"LABEL\".",
+    "read": "error: Could not parse \"screen full|changes|matching \"TEXT\"\": quoted values must be separated by spaces. Use screen, find \"TEXT\", or page text."
+  },
+  "screen changes": {
+    "act": "[Look(Screen { full: false, matching: None, delta: true })]",
+    "read": "Screen { full: false, matching: None, delta: true }"
+  },
+  "screen full": {
+    "act": "[Look(Screen { full: true, matching: None, delta: false })]",
+    "read": "Screen { full: true, matching: None, delta: false }"
+  },
+  "screen matching \"VPN\"": {
+    "act": "[Look(Screen { full: false, matching: Some(\"VPN\"), delta: false })]",
+    "read": "Screen { full: false, matching: Some(\"VPN\"), delta: false }"
+  },
+  "scroll down": {
+    "act": "[Android(ScrollScreen(Down))]",
+    "read": "error: Could not parse \"scroll down\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "scroll down [until \"TEXT\"]": {
+    "act": "error: Could not parse \"scroll down until \"TEXT\"\": quoted values must be separated by spaces. Use tap \"LABEL\".",
+    "read": "error: Could not parse \"scroll down until \"TEXT\"\": quoted values must be separated by spaces. Use screen, find \"TEXT\", or page text."
+  },
+  "scroll down in \"AREA\"": {
+    "act": "[Android(Scroll { direction: Down, target: Target { label: \"AREA\", ordinal: None, handle: None } })]",
+    "read": "error: Could not parse \"scroll down in \"AREA\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "scroll down in \"List\"": {
+    "act": "[Android(Scroll { direction: Down, target: Target { label: \"List\", ordinal: None, handle: None } })]",
+    "read": "error: Could not parse \"scroll down in \"List\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "scroll down in \"List\" until \"About\"": {
+    "act": "[Android(ScrollUntil { direction: Down, target: Some(Target { label: \"List\", ordinal: None, handle: None }), text: \"About\" })]",
+    "read": "error: Could not parse \"scroll down in \"List\" until \"About\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "scroll down until \"About\"": {
+    "act": "[Android(ScrollUntil { direction: Down, target: None, text: \"About\" })]",
+    "read": "error: Could not parse \"scroll down until \"About\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "scroll … until \"TEXT\"": {
+    "act": "error: Could not parse \"scroll … until \"TEXT\"\": scroll direction must be up, down, left, or right. Use scroll down, scroll down in \"AREA\", or scroll down until \"TEXT\".",
+    "read": "error: Could not parse \"scroll … until \"TEXT\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "select tab \"Docs\"": {
+    "act": "[Browser(SelectTab(Target { label: \"Docs\", ordinal: None, handle: None }))]",
+    "read": "error: Could not parse \"select tab \"Docs\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "status": {
+    "act": "[Look(Status)]",
+    "read": "Status"
+  },
+  "swipe": {
+    "act": "error: Could not parse \"swipe\": unknown Android action. Use swipe from 500 1500 to 500 500 over 300 milliseconds.",
+    "read": "error: Could not parse \"swipe\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "swipe from 500 1500 to 500 500 over 300 milliseconds": {
+    "act": "[Android(Swipe { x1: 500, y1: 1500, x2: 500, y2: 500, duration_ms: 300 })]",
+    "read": "error: Could not parse \"swipe from 500 1500 to 500 500 over 300 milliseconds\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "swipe from X1 Y1 to X2 Y2 over MS milliseconds": {
+    "act": "error: Could not parse \"swipe from X1 Y1 to X2 Y2 over MS milliseconds\": duration must be an integer. Use swipe from 500 1500 to 500 500 over 300 milliseconds.",
+    "read": "error: Could not parse \"swipe from X1 Y1 to X2 Y2 over MS milliseconds\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "take rear camera photo": {
+    "act": "[Android(Camera { facing: \"rear\", width: None, height: None })]",
+    "read": "error: Could not parse \"take rear camera photo\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "tap \"LABEL\"": {
+    "act": "[Android(Tap(Target { label: \"LABEL\", ordinal: None, handle: None }))]",
+    "read": "error: Could not parse \"tap \"LABEL\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "tap \"Save\" number 2": {
+    "act": "[Android(Tap(Target { label: \"Save\", ordinal: Some(2), handle: None }))]",
+    "read": "error: Could not parse \"tap \"Save\" number 2\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "tap \"Save\" then find \"Saved\"": {
+    "act": "[Android(Tap(Target { label: \"Save\", ordinal: None, handle: None })), Look(Screen { full: false, matching: Some(\"Saved\"), delta: false })]",
+    "read": "error: Could not parse \"tap \"Save\" then find \"Saved\"\": read accepts one command at a time. Use screen, find \"TEXT\", or page text."
+  },
+  "tap \"Save\" then screen": {
+    "act": "[Android(Tap(Target { label: \"Save\", ordinal: None, handle: None })), Look(Screen { full: false, matching: None, delta: false })]",
+    "read": "error: Could not parse \"tap \"Save\" then screen\": read accepts one command at a time. Use screen, find \"TEXT\", or page text."
+  },
+  "tap \"Wi-Fi\"": {
+    "act": "[Android(Tap(Target { label: \"Wi-Fi\", ordinal: None, handle: None }))]",
+    "read": "error: Could not parse \"tap \"Wi-Fi\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "tap e12": {
+    "act": "[Android(Tap(Target { label: \"e12\", ordinal: None, handle: Some(12) }))]",
+    "read": "error: Could not parse \"tap e12\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "tap e4": {
+    "act": "[Android(Tap(Target { label: \"e4\", ordinal: None, handle: Some(4) }))]",
+    "read": "error: Could not parse \"tap e4\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "tap e7": {
+    "act": "[Android(Tap(Target { label: \"e7\", ordinal: None, handle: Some(7) }))]",
+    "read": "error: Could not parse \"tap e7\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "tap eN": {
+    "act": "error: Could not parse \"tap eN\": target must be in straight double quotes. Use tap \"LABEL\".",
+    "read": "error: Could not parse \"tap eN\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "tap point": {
+    "act": "error: Could not parse \"tap point\": tap point needs X and Y. Use tap \"LABEL\".",
+    "read": "error: Could not parse \"tap point\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "tap point 100 200": {
+    "act": "[Android(PointTap { x: 100, y: 200 })]",
+    "read": "error: Could not parse \"tap point 100 200\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "tap point X Y": {
+    "act": "error: Could not parse \"tap point X Y\": x must be an integer. Use tap \"LABEL\".",
+    "read": "error: Could not parse \"tap point X Y\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "toggle \"Wi-Fi\"": {
+    "act": "[Android(Toggle(Target { label: \"Wi-Fi\", ordinal: None, handle: None }))]",
+    "read": "error: Could not parse \"toggle \"Wi-Fi\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "type \"TEXT\" in \"FIELD\"": {
+    "act": "[Android(Type { text: \"TEXT\", target: Target { label: \"FIELD\", ordinal: None, handle: None } })]",
+    "read": "error: Could not parse \"type \"TEXT\" in \"FIELD\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "type \"TEXT\" in \"FIELD\" then tap \"TARGET\" then verify text \"EXPECTED RESULT\" exists": {
+    "act": "[Android(Type { text: \"TEXT\", target: Target { label: \"FIELD\", ordinal: None, handle: None } }), Android(Tap(Target { label: \"TARGET\", ordinal: None, handle: None })), Android(VerifyText(\"EXPECTED RESULT\"))]",
+    "read": "error: Could not parse \"type \"TEXT\" in \"FIELD\" then tap \"TARGET\" then verify text \"EXPECTED RESULT\" exists\": read accepts one command at a time. Use screen, find \"TEXT\", or page text."
+  },
+  "type \"hello\" in \"Message\"": {
+    "act": "[Android(Type { text: \"hello\", target: Target { label: \"Message\", ordinal: None, handle: None } })]",
+    "read": "error: Could not parse \"type \"hello\" in \"Message\"\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "type \"hello\" in \"Message\" then tap \"Send\"": {
+    "act": "[Android(Type { text: \"hello\", target: Target { label: \"Message\", ordinal: None, handle: None } }), Android(Tap(Target { label: \"Send\", ordinal: None, handle: None }))]",
+    "read": "error: Could not parse \"type \"hello\" in \"Message\" then tap \"Send\"\": read accepts one command at a time. Use screen, find \"TEXT\", or page text."
+  },
+  "type \"hi\" in \"Message\" then tap \"Send\"": {
+    "act": "[Android(Type { text: \"hi\", target: Target { label: \"Message\", ordinal: None, handle: None } }), Android(Tap(Target { label: \"Send\", ordinal: None, handle: None }))]",
+    "read": "error: Could not parse \"type \"hi\" in \"Message\" then tap \"Send\"\": read accepts one command at a time. Use screen, find \"TEXT\", or page text."
+  },
+  "verify": {
+    "act": "error: Could not parse \"verify\": unknown Android action. Use verify \"LABEL\" exists, or verify text \"TEXT\" exists.",
+    "read": "error: Could not parse \"verify\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "verify \"Next\" exists": {
+    "act": "[Android(VerifyExists(Target { label: \"Next\", ordinal: None, handle: None }))]",
+    "read": "error: Could not parse \"verify \"Next\" exists\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "verify \"Next\" is gone": {
+    "act": "[Android(VerifyGone(Target { label: \"Next\", ordinal: None, handle: None }))]",
+    "read": "error: Could not parse \"verify \"Next\" is gone\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "verify text \"Saved\" exists": {
+    "act": "[Android(VerifyText(\"Saved\"))]",
+    "read": "error: Could not parse \"verify text \"Saved\" exists\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "verify text \"…\" exists": {
+    "act": "[Android(VerifyText(\"…\"))]",
+    "read": "error: Could not parse \"verify text \"…\" exists\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "wait for \"Next\" up to 5 seconds": {
+    "act": "[Android(WaitTarget { target: Target { label: \"Next\", ordinal: None, handle: None }, seconds: 5 })]",
+    "read": "error: Could not parse \"wait for \"Next\" up to 5 seconds\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "wait for screen change up to 5 seconds": {
+    "act": "[Android(WaitScreenChange { seconds: 5 })]",
+    "read": "error: Could not parse \"wait for screen change up to 5 seconds\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "wait for text \"Done\" up to 5 seconds": {
+    "act": "[Android(WaitText { text: \"Done\", seconds: 5 })]",
+    "read": "error: Could not parse \"wait for text \"Done\" up to 5 seconds\": unknown read command. Use screen, find \"TEXT\", or page text."
+  },
+  "wait for text \"TEXT\" up to 5 seconds": {
+    "act": "[Android(WaitText { text: \"TEXT\", seconds: 5 })]",
+    "read": "error: Could not parse \"wait for text \"TEXT\" up to 5 seconds\": unknown read command. Use screen, find \"TEXT\", or page text."
+  }
+}
