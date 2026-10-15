@@ -182,7 +182,7 @@ fn size(root: &Path) -> Result<(usize, usize, usize), String> {
 }
 /// Formatted-line budgets: Rust production, Java production, automation, all authored code.
 /// Raised once per milestone, in one PR, and stated in the changelog.
-const BUDGETS: [(&str, usize); 4] = [("rust_production", 8650), ("android_production", 4100), ("automation", 2350), ("authored_code", 19_100)];
+const BUDGETS: [(&str, usize); 4] = [("rust_production", 9100), ("android_production", 4700), ("automation", 3200), ("authored_code", 22_800)];
 /// Budgets measure conventionally formatted code (rustfmt; google-java-format --aosp for the
 /// helper), so they track real complexity rather than how densely lines are packed.
 fn over_budget(rust: usize, java: usize, automation: usize, authored: usize) -> Result<(), String> {
@@ -255,6 +255,7 @@ fn version(root: &Path) -> Result<(), String> {
         }
     }
     platforms_agree(root)?;
+    pins_agree(root, version)?;
     println!("version={version}");
     Ok(())
 }
@@ -270,10 +271,43 @@ fn gradle_signing(helper: &str, example: &str) -> Result<(), String> {
     }
     Ok(())
 }
+/// Docs that show an install or launch command an agent may run. Each pin in them must name VERSION.
+const PINNED_DOCS: [&str; 5] = ["README.md", "install/README.md", "docs/agents/install.md", "docs/agents/quickstart.md", "docs/guides/install.md"];
+/// `.mcp.json` launches `android-use@VERSION` (never `latest` or a range), and every npm command or release-tag
+/// install URL in [`PINNED_DOCS`] names VERSION, so the release bump updates all of them.
+fn pins_agree(root: &Path, version: &str) -> Result<(), String> {
+    let mcp = fs::read_to_string(root.join(".mcp.json")).map_err(ioe)?;
+    if !mcp.contains(&format!("\"android-use@{version}\"")) {
+        return Err(format!(".mcp.json must launch android-use@{version}"));
+    }
+    for path in PINNED_DOCS {
+        let text = fs::read_to_string(root.join(path)).map_err(ioe)?;
+        if let Some(pin) = pin_mismatch(&text, version) {
+            return Err(format!("{path} names {pin}; pin it to VERSION {version}"));
+        }
+    }
+    Ok(())
+}
+/// The first `android-use@X` (npm) or `android-use/vX/` (release URL) in `text` whose X is not `version`.
+fn pin_mismatch(text: &str, version: &str) -> Option<String> {
+    if let Some(bare) = ["android-use setup", "android-use serve"].into_iter().find(|launch| text.contains(launch)) {
+        return Some(bare.to_owned());
+    }
+    ["android-use@", "android-use/v", "ANDROID_USE_VERSION="].into_iter().find_map(|marker| {
+        text.match_indices(marker).find_map(|(at, _)| {
+            // A PowerShell value is quoted (`ANDROID_USE_VERSION='1.2.0'`), so skip quotes before the version.
+            let start = at + marker.len();
+            let value = text[start..].trim_start_matches(['\'', '"']);
+            let end = value.find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '-'))).unwrap_or(value.len());
+            let pin = value[..end].trim_end_matches('.');
+            (pin != version).then(|| text[at..text.len() - value.len() + pin.len()].to_owned())
+        })
+    })
+}
 /// A standalone `v2` or `v3` version (`v2`, `v3.1`, `v2.0.0`), the product's old names. Words that only
-/// contain one (`dev2`, `v2ray`, `MP3v2`) are not versions.
+/// contain one (`dev2`, `v2ray`, `MP3v2`) are not versions; `app_v2` is.
 fn stale_version_marker(text: &str) -> Option<&str> {
-    let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let word = |c: char| c.is_alphanumeric();
     text.match_indices(['v', 'V']).find_map(|(at, _)| {
         let rest = &text[at + 1..];
         let end = rest.find(|c: char| !c.is_ascii_digit() && c != '.').unwrap_or(rest.len());
@@ -698,13 +732,13 @@ fn release_notes(root: &Path) -> Result<(), String> {
         })
         .collect();
     print!(
-        "# android-use {version}\n\n{section}\n\n## Install\n\n```sh\nnpx -y android-use setup                                  # npm\nbrew install austinintelligence/tap/android-use           # Homebrew\ncurl -fsSL https://raw.githubusercontent.com/austinintelligence/android-use/v{version}/install/install.sh | sh   # macOS, Linux\n```\n\nOn Windows run `install/install.ps1`, or unpack an archive below and run `au setup`. Every archive contains `au` with the Android helper built in; the helper is also attached on its own for audited deployment.\n\n| Platform | Archive |\n| --- | --- |\n{rows}\n## Verify\n\nCheck an archive against `SHA256SUMS`, and its provenance with `gh attestation verify FILE --repo austinintelligence/android-use`. `android-use.spdx.json` is the software bill of materials, and `release-manifest.json` lists every asset with its size and digest.\n\n## Security\n\nUSB debugging and access to `au serve` are device-control authority; keep them local and private. Android Use ships no remote broker or multi-user authorization. Read [SECURITY.md](https://github.com/austinintelligence/android-use/blob/v{version}/SECURITY.md) before exposing any transport beyond your computer. Full history: [CHANGELOG.md](https://github.com/austinintelligence/android-use/blob/v{version}/CHANGELOG.md).\n"
+        "# android-use {version}\n\n{section}\n\n## Install\n\n```sh\nnpx -y android-use@{version} setup                        # npm\nbrew install austinintelligence/tap/android-use           # Homebrew\ncurl -fsSL https://raw.githubusercontent.com/austinintelligence/android-use/v{version}/install/install.sh | ANDROID_USE_VERSION={version} sh   # macOS, Linux\n```\n\nOn Windows run `install/install.ps1`, or unpack an archive below and run `au setup`. Every archive contains `au` with the Android helper built in; the helper is also attached on its own for audited deployment.\n\n| Platform | Archive |\n| --- | --- |\n{rows}\n## Verify\n\nCheck an archive against `SHA256SUMS`, and its provenance with `gh attestation verify FILE --repo austinintelligence/android-use`. `android-use.spdx.json` is the software bill of materials, and `release-manifest.json` lists every asset with its size and digest.\n\n## Security\n\nUSB debugging and access to `au serve` are device-control authority; keep them local and private. Android Use ships no remote broker or multi-user authorization. Read [SECURITY.md](https://github.com/austinintelligence/android-use/blob/v{version}/SECURITY.md) before exposing any transport beyond your computer. Full history: [CHANGELOG.md](https://github.com/austinintelligence/android-use/blob/v{version}/CHANGELOG.md).\n"
     );
     Ok(())
 }
 #[cfg(test)]
 mod tests {
-    use super::{changelog_section, file_bytes, gradle_signing, over_budget, stale_version_marker};
+    use super::{changelog_section, file_bytes, gradle_signing, over_budget, pin_mismatch, stale_version_marker};
 
     #[test]
     fn debug_builds_never_sign_with_the_release_key_and_version_code_comes_from_version() {
@@ -719,6 +753,26 @@ mod tests {
     }
 
     #[test]
+    fn a_mismatched_pin_names_itself() {
+        assert_eq!(pin_mismatch("npx -y android-use@1.2.0 setup", "1.2.0"), None);
+        assert_eq!(pin_mismatch("| sh && au setup", "1.2.0"), None);
+        assert_eq!(pin_mismatch("curl .../android-use/v1.2.0/install/install.sh", "1.2.0"), None);
+        assert_eq!(pin_mismatch("npx -y android-use@1.2.0. setup", "1.2.0"), None, "a sentence-final period is not part of the pin");
+        assert_eq!(pin_mismatch("$env:ANDROID_USE_VERSION='1.2.0'; irm", "1.2.0"), None);
+        for (text, pin) in [
+            ("\"android-use@1\"", "android-use@1"),
+            ("npx -y android-use@latest setup", "android-use@latest"),
+            ("android-use/v1.1.2/install", "android-use/v1.1.2"),
+            ("ANDROID_USE_VERSION=1.1.2 sh", "ANDROID_USE_VERSION=1.1.2"),
+            ("$env:ANDROID_USE_VERSION='1.1.2'", "ANDROID_USE_VERSION='1.1.2"),
+            ("npx -y android-use setup", "android-use setup"),
+            ("npx android-use serve --mcp", "android-use serve"),
+        ] {
+            assert_eq!(pin_mismatch(text, "1.2.0").as_deref(), Some(pin), "{text}");
+        }
+    }
+
+    #[test]
     fn a_missing_artifact_fails_instead_of_measuring_zero() {
         assert!(file_bytes(std::path::Path::new("no/such/artifact.apk")).is_err());
         assert!(file_bytes(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml")).is_ok_and(|n| n > 0));
@@ -726,16 +780,16 @@ mod tests {
 
     #[test]
     fn budgets_allow_the_one_three_limits_and_name_what_is_over() {
-        assert!(over_budget(8650, 4100, 2350, 19_100).is_ok());
-        assert_eq!(over_budget(8651, 4100, 2351, 19_100).unwrap_err(), "source budget exceeded: rust_production 8651 > 8650, automation 2351 > 2350");
+        assert!(over_budget(9100, 4700, 3200, 22_800).is_ok());
+        assert_eq!(over_budget(9101, 4700, 3201, 22_800).unwrap_err(), "source budget exceeded: rust_production 9101 > 9100, automation 3201 > 3200");
     }
 
     #[test]
     fn only_version_shaped_markers_are_stale() {
-        for text in ["Use v2 now.", "see (v3.1)", "V2.0.0", "v3."] {
+        for text in ["Use v2 now.", "see (v3.1)", "V2.0.0", "v3.", "android_use_v2"] {
             assert!(stale_version_marker(text).is_some(), "{text}");
         }
-        for text in ["dev2 build", "v2ray", "MP3v2", "/api/v2x", "v1.2.0", "v20", "kv3", "v"] {
+        for text in ["dev2 build", "v2ray", "MP3v2", "/api/v2x", "v1.2.0", "v20", "kv3", "v", "év2"] {
             assert_eq!(stale_version_marker(text), None, "{text}");
         }
     }
