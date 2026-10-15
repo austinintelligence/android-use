@@ -99,6 +99,7 @@ fn parses_every_canonical_action_family() {
         r#"open notification "Message""#,
         r#"dismiss notification "Message""#,
         r#"run notification action "Message""#,
+        r#"run notification action "Archive" on "Message""#,
         r#"page open "https://example.com""#,
         r#"page click "Submit""#,
         r#"page focus "Email""#,
@@ -215,7 +216,7 @@ fn curly_quotes_and_verb_aliases_parse_as_their_canonical_forms() {
     for (command, on) in [(r#"turn on "Wi-Fi""#, true), (r#"turn off “Wi-Fi”"#, false)] {
         assert_eq!(
             format!("{:?}", parse_act_command(command).unwrap()),
-            format!("[Android(Turn {{ target: Target {{ label: \"Wi-Fi\", ordinal: None, handle: None }}, on: {on} }})]")
+            format!("[Android(Set {{ target: Target {{ label: \"Wi-Fi\", ordinal: None, handle: None }}, on: {on} }})]")
         );
     }
     assert!(parse_act_command("tap “Wi-Fi").is_err(), "an unclosed curly quote is still an error");

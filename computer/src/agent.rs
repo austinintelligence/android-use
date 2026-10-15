@@ -25,6 +25,13 @@ use std::{
 /// Quiet time the helper waits for after a change before the reply is built, and the longest it
 /// waits: a tap redraws quickly, typed text feeds debounced search lists, a launched app cold-starts.
 const QUIET_MS: u16 = 200;
+/// The quiet window: `QUIET_ENV` when it is a whole number of milliseconds up to `TYPED_QUIET_MS`, else `QUIET_MS`.
+fn quiet_window(value: Option<&str>) -> u16 {
+    value.and_then(|ms| ms.parse().ok()).filter(|ms| (1..=TYPED_QUIET_MS).contains(ms)).unwrap_or(QUIET_MS)
+}
+
+/// Overrides `QUIET_MS` (the quiet window after an action) for sweeps such as `benchmark-live`.
+const QUIET_ENV: &str = "AU_QUIET_MS";
 const TYPED_QUIET_MS: u16 = 900;
 const SETTLE_CAP_MS: u16 = 1500;
 const LAUNCH_CAP_MS: u16 = 5000;
@@ -77,6 +84,8 @@ pub(crate) struct AgentState {
     pub(crate) seen: HashSet<String>,
     /// The last plan launched an app, so its screen is the one the agent just chose to enter.
     pub(crate) opened: bool,
+    /// The screen generation the last Android plan ran against, to tell whether it moved.
+    pub(crate) acted_from: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -262,6 +271,13 @@ impl Engine {
         let mut ops: Vec<Op> = Vec::with_capacity(actions.len());
         for (index, action) in actions.iter().enumerate() {
             let Action::Android(action) = action else { return Err(Error::new(Code::Protocol, "an action group mixed surfaces")) };
+            // A switch is read before and after its tap, so it runs as a plan of its own.
+            if matches!(action, AndroidAction::Set { .. } | AndroidAction::Toggle(_)) {
+                if index > 0 {
+                    return Ok((self.run_android(&actions[..index], ops, &scene, identity)?, index));
+                }
+                return Ok((self.switch_step(action, &scene, identity)?, 1));
+            }
             self.agent.loose = false;
             let noted = self.agent.mapping.len();
             let compiled = self.compile_android(action, &scene);
@@ -294,6 +310,68 @@ impl Engine {
         Ok((self.run_android(actions, ops, &scene, identity)?, actions.len()))
     }
 
+    /// `set` taps only a switch that is not yet in the asked state; `toggle` and `set` both read
+    /// the state again afterwards, so a tap that changed nothing is a failure, not a success.
+    fn switch_step(&mut self, action: &AndroidAction, scene: &Scene, identity: Option<&str>) -> Result<Step> {
+        let (target, want) = match action {
+            AndroidAction::Set { target, on } => (target, Some(*on)),
+            AndroidAction::Toggle(target) => (target, None),
+            _ => return Err(Error::new(Code::Protocol, "not a switch action")),
+        };
+        let (name, state) = (display_n(&target.label, 64), |on: bool| if on { "on" } else { "off" });
+        let op = Op::Tap(self.resolve_target(scene, target)?);
+        let before = self.switch_state(target)?;
+        let done = |text: String, changed| Step { echo: "Done.".len(), text, image: None, changed };
+        match (before, want) {
+            (Some(now), Some(on)) if now == on => return Ok(done(format!("Done. {name} was already {}.", state(on)), None)),
+            (None, Some(_)) => {
+                return Err(Error::plain(
+                    Code::Args,
+                    format!("\"{name}\" is not a uniquely named switch or checkbox on this screen; nothing was run. Read the screen, then use its label without number, or e12."),
+                ))
+            }
+            _ => {}
+        }
+        let mut step = self.run_android(&[Action::Android(action.clone())], vec![op], scene, identity)?;
+        let Some(before) = before else { return Ok(step) };
+        // Some switches commit a moment after the screen settles.
+        let mut after = self.switch_state(target)?;
+        for _ in 0..3 {
+            if after != Some(before) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            after = self.switch_state(target)?;
+        }
+        if after == Some(before) {
+            let screen = self.model_read(CommandRead::Screen { full: false, matching: None, delta: false }).map(|read| read.text).unwrap_or_default();
+            return Err(Error::plain(Code::Partial, format!("Tapped {name}, but it is still {}. Screen now:\n{screen}", state(before))));
+        }
+        if let Some(now) = after {
+            step = done(format!("Done. {name} is now {}.", state(now)), step.changed);
+        }
+        Ok(step)
+    }
+
+    /// Whether the switch or checkbox the target names is on, or `None` when none is on screen.
+    fn switch_state(&mut self, target: &Target) -> Result<Option<bool>> {
+        // `number N` counts helper nodes, not these merged rows, so it could name another control.
+        if target.ordinal.is_some() {
+            return Ok(None);
+        }
+        let rows = self.semantic_rows("")?;
+        // A row copied from the screen (`sw Wi-Fi=on`) names the switch it shows.
+        let mut label = normalized(&target.label);
+        if !rows.iter().any(|row| normalized(&row.label) == label) {
+            if let Some((name, None)) = resolve::from_row(&target.label) {
+                label = normalized(&name);
+            }
+        }
+        let mut hits = rows.iter().filter(|row| if target.handle.is_some() { row.handle == target.handle } else { normalized(&row.label) == label });
+        let row = hits.next().filter(|_| target.handle.is_some() || hits.next().is_none());
+        Ok(row.filter(|row| matches!(row.kind.as_str(), "switch" | "checkbox")).map(|row| matches!(row.state.as_str(), "checked" | "on")))
+    }
+
     fn run_android(&mut self, actions: &[Action], ops: Vec<Op>, scene: &Scene, identity: Option<&str>) -> Result<Step> {
         if ops.len() > MAX_OPS || ops.iter().filter(|op| op.mutates()).count() > usize::from(MAX_MUTATIONS) {
             return Err(Error::new(Code::Bounds, "the action command exceeds its safety limit"));
@@ -307,7 +385,7 @@ impl Engine {
             }
             let typed = ops.iter().any(|op| matches!(op, Op::Text(..)));
             ops.push(Op::Settle {
-                quiet_ms: if typed { TYPED_QUIET_MS } else { QUIET_MS },
+                quiet_ms: if typed { TYPED_QUIET_MS } else { quiet_window(std::env::var(QUIET_ENV).ok().as_deref()) },
                 cap_ms: if package.is_some() { LAUNCH_CAP_MS } else { SETTLE_CAP_MS },
                 package: package.unwrap_or_default(),
             });
@@ -319,6 +397,7 @@ impl Engine {
             max_mutations: MAX_MUTATIONS,
             ops: ops.into_boxed_slice(),
         };
+        self.agent.acted_from = scene.generation;
         let run = self.run_plan(&plan);
         self.end_image_unless_unchanged(&run, scene.generation);
         let receipt = run.map_err(crate::journal::explain_reuse)?;
@@ -370,17 +449,7 @@ impl Engine {
     fn compile_android(&mut self, action: &AndroidAction, scene: &Scene) -> Result<Op> {
         use AndroidAction as A;
         Ok(match action {
-            A::Tap(target) | A::Toggle(target) => Op::Tap(self.resolve_target(scene, target)?),
-            A::Turn { target, on } => {
-                let (target, state) = self.switch_state(target)?;
-                let at = self.resolve_target(scene, &target)?;
-                // Already in the wanted state: a check that changes nothing, not a tap that would undo it.
-                if state == *on {
-                    Op::Assert(Predicate::Exists(Match::Ref(at)))
-                } else {
-                    Op::Tap(at)
-                }
-            }
+            A::Tap(target) | A::Toggle(target) | A::Set { target, .. } => Op::Tap(self.resolve_target(scene, target)?),
             A::Hold(target) => Op::Long(self.resolve_target(scene, target)?),
             A::Type { text, target } => Op::Text(self.resolve_target_as(scene, target, "edit")?, text.clone()),
             A::Scroll { direction, target } => Op::Scroll(self.resolve_target_as(scene, target, "scroll")?, *direction),
@@ -410,7 +479,10 @@ impl Engine {
             A::ScreenRecord(seconds) => Op::Capture(Capture::ScreenRecord(*seconds)),
             A::NotificationOpen(target) => Op::NotificationOpen(self.notification_key(target)?),
             A::NotificationDismiss(target) => Op::NotificationDismiss(self.notification_key(target)?),
-            A::NotificationAction(target) => Op::NotificationAction(self.notification_key(target)?),
+            A::NotificationAction(target, label) => {
+                let (key, label) = resolve::notification_action(&self.read(Read::Notifications)?, target, label.as_deref())?;
+                Op::NotificationAction(key, label)
+            }
             A::PointTap { x, y } => {
                 let (x, y) = self.map_point(*x, *y)?;
                 Op::PointTap { x, y }
@@ -426,31 +498,6 @@ impl Engine {
     /// label; falls back to the cached scene for helpers that cannot.
     fn resolve_target(&mut self, scene: &Scene, target: &Target) -> Result<u16> {
         self.resolve_target_as(scene, target, "")
-    }
-
-    /// The switch or checkbox a `turn on|off` names (a screen row such as `sw Wi-Fi=on` included)
-    /// and whether it is on. Anything unclear is an error, never a tap.
-    fn switch_state(&mut self, target: &Target) -> Result<(Target, bool)> {
-        let rows = self.semantic_rows("")?;
-        let find = |label: &str| {
-            let wanted = normalized(label);
-            rows.iter().filter(|row| row.kind != "heading" && normalized(&row.label) == wanted).collect::<Vec<_>>()
-        };
-        let label = match (find(&target.label).is_empty(), resolve::from_row(&target.label)) {
-            (true, Some((label, ordinal))) if ordinal.is_none() => label,
-            (true, Some(_)) => return Err(Error::plain(Code::Args, "Numbered switches cannot be turned on or off by number; use tap. Nothing was run.")),
-            _ => target.label.to_string(),
-        };
-        // The host's rows and the helper's controls are numbered differently, so a number cannot say
-        // which switch's state was read: only a label that names exactly one row is turned.
-        match (find(&label).as_slice(), target.ordinal) {
-            ([row], None) if matches!(row.kind.as_str(), "switch" | "checkbox") => {
-                Ok((Target { label: label.into(), ordinal: None, handle: None }, matches!(row.state.as_str(), "checked" | "on")))
-            }
-            ([row], None) => Err(Error::plain(Code::Args, format!("\"{}\" is not a switch or checkbox. Nothing was run.", display(&row.label)))),
-            ([], _) => Err(resolve::missing(&target.label, "screen")),
-            _ => Err(Error::plain(Code::Args, format!("\"{}\" cannot be turned on or off here because it is not one unique switch; use tap. Nothing was run.", display(&label)))),
-        }
     }
 
     /// `want` is `"edit"` when the step needs a text field and `"scroll"` when it needs a scrollable
@@ -709,7 +756,7 @@ fn deadline(actions: &[Action]) -> u32 {
 fn target_label(action: &AndroidAction) -> String {
     use AndroidAction as A;
     match action {
-        A::Tap(t) | A::Toggle(t) | A::Turn { target: t, .. } | A::Hold(t) | A::Type { target: t, .. } | A::Scroll { target: t, .. } | A::ScrollUntil { target: Some(t), .. } => {
+        A::Tap(t) | A::Toggle(t) | A::Set { target: t, .. } | A::Hold(t) | A::Type { target: t, .. } | A::Scroll { target: t, .. } | A::ScrollUntil { target: Some(t), .. } => {
             t.label.to_string()
         }
         _ => String::new(),
@@ -719,7 +766,7 @@ fn target_label(action: &AndroidAction) -> String {
 /// Whether an action can bring up a different screen than the one it was compiled against.
 fn navigates(action: &AndroidAction) -> bool {
     use AndroidAction as A;
-    matches!(action, A::OpenApp(_) | A::OpenSetting(_) | A::OpenLink(_) | A::Key(_) | A::NotificationOpen(_) | A::NotificationAction(_))
+    matches!(action, A::OpenApp(_) | A::OpenSetting(_) | A::OpenLink(_) | A::Key(_) | A::NotificationOpen(_) | A::NotificationAction(..))
 }
 
 fn is_media(action: &Action) -> bool {

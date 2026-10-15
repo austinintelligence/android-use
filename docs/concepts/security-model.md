@@ -31,4 +31,4 @@ What an agent can do is exactly what you could do by tapping, so give it only th
 
 ## Sensitive data
 
-Screenshots, notifications, and page text can hold credentials and messages. They reach the agent only as command results. Large captures stay in a private artifact folder; the journal keeps operation metadata and digests, not content. Do not put the state folder in a synced or shared directory.
+Screenshots, notifications, and page text can hold credentials and messages. They reach the agent only as command results. Large captures stay in a private artifact folder (mode 0700, deleted after 7 days); the journal keeps operation metadata and digests, not content. Do not put the state folder in a synced or shared directory.

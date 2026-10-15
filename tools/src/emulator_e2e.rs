@@ -50,7 +50,7 @@ pub fn run(root: &Path) -> Result<(), String> {
 fn body(root: &Path, au: &str, name: &str, home: &Path) -> Result<Checks, String> {
     let apk = root.join("device/app/build/outputs/apk/debug/app-debug.apk");
     let au_run = |args: &[&str]| -> Result<Value, String> {
-        let out = Command::new(au).args(args).env("AU_HOME", home).stdin(Stdio::null()).output().map_err(|e| format!("could not run {au}: {e}"))?;
+        let out = Command::new(au).args(args).env("AU_HOME", home).env("AU_DEV_APK", "1").stdin(Stdio::null()).output().map_err(|e| format!("could not run {au}: {e}"))?;
         serde_json::from_slice(&out.stdout).map_err(|_| format!("au {} printed no JSON: {}", args.join(" "), String::from_utf8_lossy(&out.stderr)))
     };
     let ok = |value: Value, what: &str| -> Result<Value, String> {
