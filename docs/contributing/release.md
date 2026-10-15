@@ -32,7 +32,7 @@ These are repository settings; the workflow cannot create them.
 2. **Required reviewer** on `release-signing` (and preferably `release`), with "Prevent self-review" on, so a person approves each signing.
 3. **Signing secrets**: move `AUBRIDGE_KEYSTORE_B64`, `AUBRIDGE_STORE_PASSWORD`, and `AUBRIDGE_KEY_PASSWORD` out of the repository secrets into the `release-signing` environment, then delete the repository-level copies.
 4. **Tag ruleset** (Settings → Rules → Rulesets): target tags `v*`, restrict creation to maintainers, and block updates and deletions.
-5. `npm` is the environment of the workflow's `npm` job, the only job that publishes to npm. It holds no secret: npm trusted publishing signs in with the workflow's OIDC identity. Register the trusted publisher on npmjs.com (step 4 below).
+5. `npm` is the environment of the workflow's `npm` job, the only job that publishes to npm. It holds no secret: npm trusted publishing signs in with the workflow's OIDC identity. Register the trusted publisher on npmjs.com (step 4 below), and add the environment variable `NPM_ENV_READY=true` to the `npm` environment (not to the repository) once steps 1 and 5 are done: the job fails closed without it, because GitHub creates a missing environment unprotected.
 
 Steps 1 to 4 are preconditions, not guards the workflow enforces. GitHub creates a missing environment on first use, and repository-level secrets stay readable by any job until step 3 is done. Until `npm` is limited to `v*` tags, a writer can run a modified `release.yml` from a branch in that environment, and npm's trusted-publisher match (workflow file and environment, not ref) would accept it. Finish the settings before the first tag.
 
