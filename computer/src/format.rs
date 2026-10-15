@@ -446,6 +446,7 @@ pub(crate) fn describe_action(action: &Action) -> String {
         Action::Android(action) => match action {
             A::Tap(t) => format!("tap {}", quoted(&t.label)),
             A::Toggle(t) => format!("toggle {}", quoted(&t.label)),
+            A::Turn { target, on } => format!("turn {} {}", if *on { "on" } else { "off" }, quoted(&target.label)),
             A::Hold(t) => format!("hold {}", quoted(&t.label)),
             A::Type { target, .. } => format!("type into {}", quoted(&target.label)),
             A::Scroll { direction, target } => format!("scroll {} in {}", format!("{direction:?}").to_lowercase(), quoted(&target.label)),
@@ -501,6 +502,7 @@ fn done_phrase(action: &Action) -> String {
     match action {
         Action::Android(A::Tap(t)) => format!("tapped {}", short(&t.label)),
         Action::Android(A::Toggle(t)) => format!("toggled {}", short(&t.label)),
+        Action::Android(A::Turn { target, on }) => format!("turned {} {}", short(&target.label), if *on { "on" } else { "off" }),
         Action::Android(A::Hold(t)) => format!("held {}", short(&t.label)),
         Action::Android(A::Type { text, target }) | Action::Browser(B::Type { text, target }) => format!("typed {} in {}", short(text), short(&target.label)),
         Action::Android(A::VerifyExists(t)) => format!("verified {} exists", short(&t.label)),

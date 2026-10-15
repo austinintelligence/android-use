@@ -363,6 +363,15 @@ impl Engine {
         use AndroidAction as A;
         Ok(match action {
             A::Tap(target) | A::Toggle(target) => Op::Tap(self.resolve_target(scene, target)?),
+            A::Turn { target, on } => {
+                let at = self.resolve_target(scene, target)?;
+                // Already in the wanted state: a check that changes nothing, not a tap that would undo it.
+                if target.ordinal.is_none() && self.switch_is(&target.label, *on) {
+                    Op::Assert(Predicate::Exists(Match::Ref(at)))
+                } else {
+                    Op::Tap(at)
+                }
+            }
             A::Hold(target) => Op::Long(self.resolve_target(scene, target)?),
             A::Type { text, target } => Op::Text(self.resolve_target_as(scene, target, "edit")?, text.clone()),
             A::Scroll { direction, target } => Op::Scroll(self.resolve_target_as(scene, target, "scroll")?, *direction),
@@ -410,9 +419,28 @@ impl Engine {
         self.resolve_target_as(scene, target, "")
     }
 
+    fn switch_is(&mut self, label: &str, on: bool) -> bool {
+        let wanted = normalized(label);
+        let rows = self.semantic_rows("").unwrap_or_default();
+        rows.iter().any(|row| row.kind == "switch" && normalized(&row.label) == wanted && matches!(row.state.as_str(), "checked" | "on") == on)
+    }
+
     /// `want` is `"edit"` when the step needs a text field and `"scroll"` when it needs a scrollable
     /// area, so a heading or a control with the same words is not a candidate.
     fn resolve_target_as(&mut self, scene: &Scene, target: &Target, want: &str) -> Result<u16> {
+        let first = self.resolve_exact_as(scene, target, want);
+        // A whole row copied from `screen` (`sw Wi-Fi=on`, `Save#2`) names its control when its
+        // text is not itself a label.
+        match (&first, resolve::from_row(&target.label)) {
+            (Err(error), Some((label, ordinal))) if target.handle.is_none() && resolve::is_screen_miss(error) => {
+                let row = Target { label: label.into(), ordinal: target.ordinal.or(ordinal), handle: None };
+                self.resolve_exact_as(scene, &row, want).or(first)
+            }
+            _ => first,
+        }
+    }
+
+    fn resolve_exact_as(&mut self, scene: &Scene, target: &Target, want: &str) -> Result<u16> {
         let args = json!({"label": target.label.as_ref(), "ordinal": target.ordinal.unwrap_or(0), "want": want, "handle": target.handle.map_or(-1, i32::from)});
         match self.bridge_read(|bridge| bridge.query("resolve", args.clone())) {
             Ok(value) => {
@@ -647,7 +675,9 @@ fn deadline(actions: &[Action]) -> u32 {
 fn target_label(action: &AndroidAction) -> String {
     use AndroidAction as A;
     match action {
-        A::Tap(t) | A::Toggle(t) | A::Hold(t) | A::Type { target: t, .. } | A::Scroll { target: t, .. } | A::ScrollUntil { target: Some(t), .. } => t.label.to_string(),
+        A::Tap(t) | A::Toggle(t) | A::Turn { target: t, .. } | A::Hold(t) | A::Type { target: t, .. } | A::Scroll { target: t, .. } | A::ScrollUntil { target: Some(t), .. } => {
+            t.label.to_string()
+        }
         _ => String::new(),
     }
 }

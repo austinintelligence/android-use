@@ -231,6 +231,16 @@ mod flows {
     }
 
     #[test]
+    fn rows_curly_quotes_and_verb_aliases_name_the_same_control() {
+        let (mut engine, _dir) = engine();
+        act(&mut engine, r#"open app "Settings""#).unwrap();
+        for command in [r#"tap "sw Wi-Fi=on""#, r#"click “Wi-Fi”"#, r#"turn on "btn Wi-Fi""#, r#"tap "Wi-Fi#1""#] {
+            assert!(act(&mut engine, command).unwrap().text.starts_with("Done."), "{command}");
+        }
+        assert!(act(&mut engine, r#"tap "sw Missing=on""#).unwrap().text.starts_with("No item labeled \"sw Missing=on\""), "a miss reports what was asked");
+    }
+
+    #[test]
     fn the_same_screen_after_an_action_is_reported_as_changes_not_listed_again() {
         let (mut engine, _dir) = engine();
         let first = act(&mut engine, r#"open app "Settings" then tap "Wi-Fi""#).unwrap().text;

@@ -63,6 +63,11 @@ pub const FORMS: &[Form] = &[
         r#"page open "URL" | page click "LABEL" | page type "TEXT" in "FIELD""#,
         &[r#"page open "https://example.com""#, r#"page click "More""#, r#"page type "hi" in "Search""#],
     ),
+    act(
+        false,
+        r#"click "LABEL" | turn on|off "LABEL" | go back (also: curly quotes, a screen row such as "sw Wi-Fi=on" as LABEL)"#,
+        &[r#"click "Wi-Fi""#, r#"turn on "Wi-Fi""#, "go back"],
+    ),
     act(false, r#"hold "LABEL""#, &[r#"hold "Photo""#]),
     act(false, r#"open setting "wifi|bluetooth|display|sound|notifications|apps|battery|accessibility|date and time|developer options""#, &[r#"open setting "wifi""#]),
     act(false, r#"wait for "LABEL" up to N seconds | wait for screen change up to N seconds"#, &[r#"wait for "Next" up to 5 seconds"#, "wait for screen change up to 5 seconds"]),

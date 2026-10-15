@@ -11,8 +11,36 @@ const FIXTURE: &str = "tests/fixtures/command-corpus-1.2.0.json";
 /// a command that used to be rejected and now works, which the test allows on its own.
 const INTENDED: &[&str] = &[];
 const VERBS: &[&str] = &[
-    "tap", "toggle", "type", "scroll", "press", "open", "wait", "verify", "page", "hold", "new", "select", "close", "capture", "take", "record", "swipe", "crop", "dismiss", "run",
-    "notification", "notifications", "screen", "find", "status", "help", "browser", "location", "capabilities", "image",
+    "tap",
+    "toggle",
+    "type",
+    "scroll",
+    "press",
+    "open",
+    "wait",
+    "verify",
+    "page",
+    "hold",
+    "new",
+    "select",
+    "close",
+    "capture",
+    "take",
+    "record",
+    "swipe",
+    "crop",
+    "dismiss",
+    "run",
+    "notification",
+    "notifications",
+    "screen",
+    "find",
+    "status",
+    "help",
+    "browser",
+    "location",
+    "capabilities",
+    "image",
 ];
 
 fn collect(path: &Path, out: &mut Vec<std::path::PathBuf>) {
