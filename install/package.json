@@ -8,6 +8,7 @@
   },
   "files": [
     "cli.mjs",
+    "manifest.mjs",
     "bin/**",
     "manifest.json",
     "LICENSE",
@@ -40,7 +41,7 @@
   ],
   "license": "MIT",
   "scripts": {
-    "lint": "node --check cli.mjs && node --check stage-platform.mjs",
+    "lint": "node --check cli.mjs && node --check manifest.mjs && node --check stage-platform.mjs",
     "test": "node --test"
   },
   "publishConfig": {
