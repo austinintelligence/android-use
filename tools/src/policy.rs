@@ -49,7 +49,8 @@ pub(crate) fn check(text: &str) -> Vec<String> {
         }
         let line = &line.to_lowercase();
         let mut bad = |why: &str| out.push(format!("line {}: {why}", i + 1));
-        if let Some(target) = line.split("uses:").nth(1).map(str::trim).filter(|t| !t.starts_with("./")) {
+        let step = line.trim_start();
+        if let Some(target) = step.strip_prefix("- ").unwrap_or(step).trim_start().strip_prefix("uses:").map(str::trim).filter(|t| !t.starts_with("./")) {
             let sha = target.split('@').nth(1).unwrap_or("");
             if sha.len() != 40 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
                 bad(&format!("`uses: {target}` is not pinned to a full commit SHA"));
@@ -114,15 +115,21 @@ pub(crate) fn check(text: &str) -> Vec<String> {
 /// repository code (no checkout, toolchain, or script from anywhere), uses only the artifact actions,
 /// and refuses to run until the owner marks the environment ready.
 fn jobs(lines: &[&str]) -> Vec<String> {
-    let start = lines.iter().position(|l| l.starts_with("jobs:")).map_or(lines.len(), |n| n + 1);
-    if lines[..start.saturating_sub(1)].iter().any(|l| l.to_lowercase().contains("secrets.") && !l.trim_start().starts_with('#')) {
-        return vec!["workflow-level secrets: pass them to the one job that needs them".into()];
-    }
+    let mut in_jobs = false;
     let mut blocks: Vec<(&str, String)> = Vec::new();
-    for l in &lines[start..] {
+    for l in lines {
+        let code = uncommented(l).to_lowercase();
+        if !l.starts_with([' ', '\t', '#']) && !l.trim().is_empty() {
+            in_jobs = l.starts_with("jobs:");
+        } else if !in_jobs && ["secrets.", "secrets[", "tojson(secrets"].iter().any(|s| code.contains(s)) {
+            return vec!["workflow-level secrets: pass them to the one job that needs them".into()];
+        }
+        if !in_jobs || l.starts_with("jobs:") {
+            continue;
+        }
         match l.strip_prefix("  ").and_then(|r| r.strip_suffix(':')).filter(|r| !r.starts_with([' ', '#'])) {
             Some(name) => blocks.push((name, String::new())),
-            None => blocks.last_mut().map_or((), |(_, b)| b.push_str(&format!("{}\n", uncommented(l).to_lowercase()))),
+            None => blocks.last_mut().map_or((), |(_, b)| b.push_str(&format!("{code}\n"))),
         }
     }
     let mut out = if blocks.is_empty() { vec!["no jobs found at the usual 2-space indent".to_owned()] } else { Vec::new() };
@@ -276,6 +283,11 @@ mod tests {
         assert!(mentions(&check("permissions: { contents: read }\n    jobs:\n      a: {}\n"), "no jobs found"));
         assert!(mentions(&check("permissions: { contents: read }\nenv:\n  K: ${{ SECRETS.K }}\njobs:\n  a:\n    steps: []\n"), "workflow-level secrets"));
         assert!(mentions(&check(&job("      - run: gh api x | bash\n")), "must not use `| bash`"));
+        let late = "permissions: { contents: read }\njobs:\n  sign:\n    environment: release-signing\n    steps:\n      - run: echo ${{ vars.RELEASE_SIGNING_READY }}\nenv:\n  K: ${{ secrets.AUBRIDGE_KEY_PASSWORD }}\n";
+        assert!(mentions(&check(late), "workflow-level secrets"));
+        let statuses = "permissions: { contents: read }\njobs:\n  a:\n    permissions:\n      statuses: write\n    steps:\n      - uses: acme/x@v1\n";
+        let found = check(statuses);
+        assert!(found.len() == 1 && mentions(&found, "acme/x@v1"), "{found:?}");
         for leak in ["${{ secrets.AUBRIDGE_KEY_PASSWORD }}", "${{ secrets['K'] }}", "${{ toJson(secrets) }}"] {
             let leaked = format!("permissions: {{ contents: read }}\njobs:\n  build:\n    steps:\n      - run: echo {leak}\n");
             assert!(mentions(&check(&leaked), "belong only in a release-signing job"), "{leak}");
