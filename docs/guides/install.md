@@ -14,13 +14,13 @@ Pick one. All of them give you the same `au` with the Android helper built in.
 
 | Method | Command |
 | --- | --- |
-| npm (Node.js 20.11+) | `npx -y android-use setup` runs it without installing; `npm i -g android-use` keeps it |
+| npm (Node.js 20.11+) | `npx -y android-use@1.2.0 setup` runs it without installing; `npm i -g android-use@1.2.0` keeps it |
 | Homebrew (macOS, Linux) | `brew install austinintelligence/tap/android-use` |
-| Script (macOS, Linux) | `curl -fsSL https://raw.githubusercontent.com/austinintelligence/android-use/main/install/install.sh \| sh` |
-| Script (Windows PowerShell) | `irm https://raw.githubusercontent.com/austinintelligence/android-use/main/install/install.ps1 \| iex` |
+| Script (macOS, Linux) | `curl -fsSL https://raw.githubusercontent.com/austinintelligence/android-use/v1.2.0/install/install.sh \| ANDROID_USE_VERSION=1.2.0 sh` |
+| Script (Windows PowerShell) | `$env:ANDROID_USE_VERSION='1.2.0'; irm https://raw.githubusercontent.com/austinintelligence/android-use/v1.2.0/install/install.ps1 \| iex` |
 | Archive | Download your platform's file from [Releases](https://github.com/austinintelligence/android-use/releases), check it against `SHA256SUMS`, and unpack it |
 
-The scripts install the newest release (set `ANDROID_USE_VERSION` for another), verify the archive against `SHA256SUMS` before unpacking, and put `au` in `~/.local/bin` (`%LOCALAPPDATA%\AndroidUse\bin` on Windows; set `AU_INSTALL_DIR` to change it). The npm launcher picks the binary for your platform from `@androiduse/<platform>`.
+The scripts install the newest release unless `ANDROID_USE_VERSION` names one; the pinned commands above set it so the tagged script installs the version it names. They verify the archive against `SHA256SUMS` before unpacking, and put `au` in `~/.local/bin` (`%LOCALAPPDATA%\AndroidUse\bin` on Windows; set `AU_INSTALL_DIR` to change it). The npm launcher picks the binary for your platform from `@androiduse/<platform>`.
 
 ## 2. Turn on USB debugging
 
@@ -33,7 +33,7 @@ Connect the unlocked device and tap **Allow** on "Allow USB debugging?". Choose 
 ## 4. Run setup
 
 ```sh
-au setup          # or: npx -y android-use setup
+au setup          # or: npx -y android-use@1.2.0 setup
 ```
 
 Keep the device unlocked. Setup remembers the device, installs the helper, opens the Accessibility screen, registers Android Use with every agent it finds, and waits while you tap **Android-Use**, turn it on, and approve Android's warning. It ends on:

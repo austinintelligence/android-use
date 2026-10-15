@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Security
+
+- The MCP config and install docs pin the release an agent runs (`npx -y android-use@1.2.0`, and the `v1.2.0` install URLs) instead of `android-use@1` or `main`; `cargo xtask version` fails when a pin disagrees with `VERSION`, so a broken or compromised `latest` cannot change what an agent executes.
+
 ### Changed
 
 - Acting is 10 to 40 ms faster: the journal is reloaded only when another process wrote it.

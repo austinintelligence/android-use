@@ -4,7 +4,7 @@
       "command": "npx",
       "args": [
         "-y",
-        "android-use@1",
+        "android-use@1.2.0",
         "serve",
         "--mcp"
       ]

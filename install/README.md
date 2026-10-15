@@ -3,7 +3,7 @@
 Give an AI agent an Android device. This package is the launcher for [Android Use](https://github.com/austinintelligence/android-use): it runs the `au` binary for your computer, which reads the screen, taps, types, opens apps, and drives Chrome on one real device or a local emulator.
 
 ```sh
-npx -y android-use setup
+npx -y android-use@1.2.0 setup
 ```
 
 `setup` installs the small Android-Use helper on the device, registers the MCP server with every agent it finds (Claude Code, Codex, Cursor, Gemini CLI, VS Code, Claude Desktop, OpenCode), and finishes with a live read of the screen. Android asks you to approve USB debugging and the Accessibility service; Android Use never bypasses those prompts.
