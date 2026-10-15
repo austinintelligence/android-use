@@ -4,6 +4,7 @@
 
 ### Changed
 
+- Accessibility events no longer take the helper's UI lock (they bump an atomic generation and the last-event time, and a stale scene is rebuilt on demand), and `notificationTimeout` is 0 instead of 50. The quiet window after an action stays 200 ms but can be set with `AU_QUIET_MS`; `BENCH_QUIET_MS=200,150,120 cargo xtask benchmark-live` compares values.
 - After an action, the screen is reported as soon as it is ready: the host polls the helper's screen generation every 40 ms instead of sleeping 500 ms up to three times while a screen is empty or "Loading", and a tap that left the generation unchanged waits up to 600 ms for a late change before reporting.
 
 ### Security

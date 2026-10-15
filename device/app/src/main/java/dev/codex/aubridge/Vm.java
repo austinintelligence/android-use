@@ -98,8 +98,8 @@ final class Vm {
                 if (SystemClock.elapsedRealtime() > end) throw new Fail(i, true);
                 boolean ok;
                 if (p.mutates && !guarded && p.unguarded()) {
-                    // A long step must not hold the guard: scrolling needs the events it blocks,
-                    // and a capture would block taps and reads for its whole duration.
+                    // A long step must not hold the guard: it would block other workers' observe
+                    // and semantic reads, and a capture would block taps, for its whole duration.
                     synchronized (ui.guard()) {
                         if (ui.snapshot().generation != expected) throw new Stale();
                     }
