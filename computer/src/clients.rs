@@ -10,14 +10,17 @@
 //! commas) is not edited: the snippet to paste is returned instead.
 use crate::{
     api::{Code, Error, Result},
-    device::atomic,
+    device::{atomic, run_bounded},
 };
 use serde_json::{json, Value};
 use std::{
     env, fs,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    time::Duration,
 };
+
+/// How long an agent's own CLI may run before it is killed.
+const CLI_TIMEOUT: Duration = Duration::from_secs(30);
 
 const NAME: &str = "android-use";
 const SKILL_FILES: [(&str, &str); 4] = [
@@ -224,7 +227,7 @@ enum Edit {
 
 /// Adds, updates, or removes `android-use` in a JSON config. `entry` of `None` removes.
 fn edit_json(path: &Path, keys: &[&str], entry: Option<&Value>, o: Options) -> Result<Edit> {
-    let text = fs::read_to_string(path).unwrap_or_default();
+    let text = read_config(path)?;
     let manual =
         |entry: &Value| Edit::Manual(format!("{} has comments or is not strict JSON, so it was not edited. Add under {}: \"{NAME}\": {entry}", path.display(), keys.join(".")));
     let mut root: Value = if text.trim().is_empty() {
@@ -270,29 +273,19 @@ fn edit_json(path: &Path, keys: &[&str], entry: Option<&Value>, o: Options) -> R
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
         }
-        if !text.is_empty() {
-            let _ = fs::copy(&target, format!("{}.au-backup", target.display()));
-        }
-        atomic(&target, render(&root, &indent_of(&text))?.as_bytes())?;
+        backup(&target, &text)?;
+        write_config(&target, render(&root, &indent_of(&text))?.as_bytes())?;
     }
     Ok(Edit::Done(outcome))
 }
 
 /// Codex keeps servers in `[mcp_servers.android-use]` tables; replace or append exactly that table.
-fn edit_toml(path: &Path, command: Option<&[String]>, o: Options) -> Result<Edit> {
-    let text = fs::read_to_string(path).unwrap_or_default();
+fn edit_toml(path: &Path, block: Option<&str>, o: Options) -> Result<Edit> {
+    let text = read_config(path)?;
     let header = format!("[mcp_servers.{NAME}]");
     let lines: Vec<&str> = text.lines().collect();
-    let start = lines.iter().position(|line| line.trim() == header);
-    let end = start.map_or(0, |at| lines[at + 1..].iter().position(|line| line.trim_start().starts_with('[')).map_or(lines.len(), |n| at + 1 + n));
-    let block = command.map(|command| {
-        format!(
-            "{header}\ncommand = {}\nargs = [{}]\n",
-            json!(command[0]),
-            command[1..].iter().map(String::as_str).chain(["serve", "--mcp"]).map(|arg| json!(arg).to_string()).collect::<Vec<_>>().join(", ")
-        )
-    });
-    let outcome = match (start, &block) {
+    let (start, end) = toml_table(&lines);
+    let outcome = match (start, block) {
         (None, None) => return Ok(Edit::Done("absent")),
         (Some(at), Some(block)) if lines[at..end].join("\n").trim_end() == block.trim_end() => return Ok(Edit::Done("unchanged")),
         (Some(at), _) if !ours(&json!(lines[at..end].join(" "))) && !o.force => {
@@ -313,17 +306,86 @@ fn edit_toml(path: &Path, command: Option<&[String]>, o: Options) -> Result<Edit
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        if !text.is_empty() {
-            let _ = fs::copy(path, format!("{}.au-backup", path.display()));
-        }
-        atomic(&fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()), (kept.join("\n").trim_end().to_owned() + "\n").as_bytes())?;
+        let target = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        backup(&target, &text)?;
+        write_config(&target, (kept.join("\n").trim_end().to_owned() + "\n").as_bytes())?;
     }
     Ok(Edit::Done(outcome))
 }
 
-/// Runs the agent's own CLI; true when it succeeded.
-fn run_cli(program: &str, args: &[String]) -> bool {
-    which(program).is_some_and(|path| Command::new(path).args(args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|status| status.success()))
+/// The table au writes for Codex.
+fn toml_block(command: &[String]) -> String {
+    let args = command[1..].iter().map(String::as_str).chain(["serve", "--mcp"]).map(|arg| json!(arg).to_string()).collect::<Vec<_>>().join(", ");
+    format!("[mcp_servers.{NAME}]\ncommand = {}\nargs = [{args}]\n", json!(command[0]))
+}
+
+/// Where the `[mcp_servers.android-use]` table starts and ends in `lines`.
+fn toml_table(lines: &[&str]) -> (Option<usize>, usize) {
+    let start = lines.iter().position(|line| line.trim() == format!("[mcp_servers.{NAME}]"));
+    (start, start.map_or(0, |at| lines[at + 1..].iter().position(|line| line.trim_start().starts_with('[')).map_or(lines.len(), |n| at + 1 + n)))
+}
+
+/// The `android-use` entry as it stands in a client's config (a JSON value or a TOML table).
+fn read_entry(client: Client, file: &Path) -> Option<String> {
+    let text = fs::read_to_string(file).ok()?;
+    if client == Client::Codex {
+        let lines: Vec<&str> = text.lines().collect();
+        let (start, end) = toml_table(&lines);
+        return start.map(|at| lines[at..end].join("\n") + "\n");
+    }
+    let value: Value = serde_json::from_str(&text).ok()?;
+    let node = client.keys().iter().try_fold(&value, |node, key| node.get(*key))?;
+    node.get(NAME).map(Value::to_string)
+}
+
+/// Reads a config file. Only a missing file is an empty config; any other error aborts the edit.
+fn read_config(path: &Path) -> Result<String> {
+    match fs::read_to_string(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        other => other.map_err(|e| Error::new(Code::Io, format!("could not read {}: {e}", path.display()))),
+    }
+}
+
+/// Saves the previous file as `<file>.au-backup`; without the backup the write does not happen.
+fn backup(target: &Path, text: &str) -> Result<()> {
+    if text.is_empty() {
+        return Ok(());
+    }
+    fs::copy(target, format!("{}.au-backup", target.display()))
+        .map(drop)
+        .map_err(|e| Error::new(Code::Io, format!("could not back up {}, so it was not changed: {e}", target.display())))
+}
+
+/// Replaces a config atomically, keeping the file's existing mode (new files stay private).
+fn write_config(target: &Path, bytes: &[u8]) -> Result<()> {
+    let permissions = fs::metadata(target).ok().map(|meta| meta.permissions());
+    atomic(target, bytes)?;
+    Ok(permissions.map_or(Ok(()), |permissions| fs::set_permissions(target, permissions))?)
+}
+
+/// Runs the agent's own CLI, killed after `timeout`; true when it succeeded.
+fn run_cli(program: &Path, args: &[String], timeout: Duration) -> bool {
+    run_bounded(program, &args.iter().map(String::as_str).collect::<Vec<_>>(), timeout).is_ok()
+}
+
+/// Replaces the entry through the agent's CLI (remove the old one, add the new). When the add
+/// fails the old entry is put back, so a failed update never leaves the agent without au.
+fn replace_entry(client: Client, d: &Dirs, cli: &Path, command: &[String], timeout: Duration) -> bool {
+    let file = fs::canonicalize(client.config_file(d)).unwrap_or_else(|_| client.config_file(d));
+    let before = read_entry(client, &file);
+    let _ = run_cli(cli, &cli_args(client, None), timeout);
+    let added = run_cli(cli, &cli_args(client, Some(command)), timeout);
+    // Put back only the one entry, and only if the remove really took it: the running agent
+    // writes this file too, so the rest of it is never rewritten from a snapshot.
+    if let (false, Some(old), None) = (added, &before, read_entry(client, &file)) {
+        let force = Options { force: true, dry_run: false };
+        let _ = if client == Client::Codex {
+            edit_toml(&file, Some(old), force)
+        } else {
+            serde_json::from_str(old).map_err(|_| Error::new(Code::Io, "bad entry")).and_then(|entry| edit_json(&file, client.keys(), Some(&entry), force))
+        };
+    }
+    added
 }
 
 fn already_registered(client: Client, d: &Dirs, command: &[String]) -> Option<bool> {
@@ -357,7 +419,7 @@ fn write_skill(dir: &Path, o: Options) -> Result<&'static str> {
 fn file_edit(client: Client, d: &Dirs, command: Option<&[String]>, o: Options) -> Result<Edit> {
     let path = client.config_file(d);
     match (client, command) {
-        (Client::Codex, _) => edit_toml(&path, command, o),
+        (Client::Codex, _) => edit_toml(&path, command.map(toml_block).as_deref(), o),
         (_, Some(command)) => edit_json(&path, client.keys(), Some(&client.entry(command)), o),
         (_, None) => edit_json(&path, client.keys(), None, o),
     }
@@ -411,9 +473,7 @@ pub fn install(client: Client, d: &Dirs, o: Options) -> Result<Report> {
         Some(_) if already_registered(client, d, &command) == Some(true) => ("unchanged".to_owned(), "via the agent's own CLI".to_owned()),
         Some(_) if o.dry_run => ("would_install".to_owned(), "via the agent's own CLI".to_owned()),
         Some(cli) => {
-            // An older entry is replaced: remove it first (nothing to remove is fine), then add.
-            let _ = run_cli(cli, &cli_args(client, None));
-            if !run_cli(cli, &cli_args(client, Some(&command))) {
+            if !replace_entry(client, d, &which(cli).unwrap_or_default(), &command, CLI_TIMEOUT) {
                 return Err(Error::new(Code::Device, format!("{cli} mcp add failed; run it yourself: {cli} {}", cli_args(client, Some(&command)).join(" "))));
             }
             ("installed".to_owned(), "via the agent's own CLI".to_owned())
@@ -431,7 +491,7 @@ pub fn install(client: Client, d: &Dirs, o: Options) -> Result<Report> {
 pub fn uninstall(client: Client, d: &Dirs, o: Options) -> Result<Report> {
     let cli = client.cli().filter(|cli| which(cli).is_some());
     let (action, mut detail) = match cli {
-        Some(cli) if !o.dry_run && run_cli(cli, &cli_args(client, None)) => ("removed".to_owned(), String::new()),
+        Some(cli) if !o.dry_run && run_cli(&which(cli).unwrap_or_default(), &cli_args(client, None), CLI_TIMEOUT) => ("removed".to_owned(), String::new()),
         _ => outcome(file_edit(client, d, None, o)?, o),
     };
     if let Some(dir) = client.skill_dir(d).filter(|dir| dir.join(".au-installed").exists()) {
@@ -523,11 +583,11 @@ mod tests {
         let theirs = "model = \"x\"\n\n[mcp_servers.other]\ncommand = \"o\"\n";
         fs::write(&path, theirs).unwrap();
         let o = Options::default();
-        assert_eq!(edit_toml(&path, Some(&["/bin/au".to_owned()]), o).unwrap_done(), "installed");
+        assert_eq!(edit_toml(&path, Some(&toml_block(&["/bin/au".to_owned()])), o).unwrap_done(), "installed");
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.starts_with(theirs) && text.contains("[mcp_servers.android-use]\ncommand = \"/bin/au\""), "{text}");
-        assert_eq!(edit_toml(&path, Some(&["/bin/au".to_owned()]), o).unwrap_done(), "unchanged");
-        assert_eq!(edit_toml(&path, Some(&["/new/au".to_owned()]), o).unwrap_done(), "updated");
+        assert_eq!(edit_toml(&path, Some(&toml_block(&["/bin/au".to_owned()])), o).unwrap_done(), "unchanged");
+        assert_eq!(edit_toml(&path, Some(&toml_block(&["/new/au".to_owned()])), o).unwrap_done(), "updated");
         assert_eq!(edit_toml(&path, None, o).unwrap_done(), "removed");
         assert_eq!(fs::read_to_string(&path).unwrap(), theirs);
     }
@@ -557,5 +617,75 @@ mod tests {
                 Edit::Manual(snippet) => panic!("{snippet}"),
             }
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod safe_write_tests {
+    use super::*;
+    use std::{os::unix::fs::PermissionsExt, time::Instant};
+
+    fn fake_cli(dir: &Path, body: &str) -> PathBuf {
+        let path = dir.join("fake-cli");
+        fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    fn cursor(dir: &tempfile::TempDir) -> (Dirs, PathBuf) {
+        let d = Dirs { home: dir.path().to_path_buf(), config: dir.path().join(".config"), app_data: dir.path().join("Library") };
+        let path = Client::Cursor.config_file(&d);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        (d, path)
+    }
+
+    #[test]
+    fn unreadable_config_and_failed_backup_abort_without_writing_and_mode_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let (d, path) = cursor(&dir);
+        fs::write(&path, [0xff, 0xfe, 0x00]).unwrap();
+        assert!(install(Client::Cursor, &d, Options::default()).is_err());
+        assert_eq!(fs::read(&path).unwrap(), [0xff, 0xfe, 0x00]);
+
+        fs::write(&path, "{\"theme\":\"x\"}").unwrap();
+        fs::create_dir(format!("{}.au-backup", path.display())).unwrap();
+        assert!(install(Client::Cursor, &d, Options::default()).unwrap_err().message.contains("back up"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{\"theme\":\"x\"}");
+        fs::remove_dir(format!("{}.au-backup", path.display())).unwrap();
+
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+        install(Client::Cursor, &d, Options::default()).unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o640);
+    }
+
+    #[test]
+    fn a_hung_agent_cli_is_killed_even_when_a_grandchild_holds_the_pipes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (d, _) = cursor(&dir);
+        for body in ["exec sleep 30", "sleep 6 &\nexit 0"] {
+            let started = Instant::now();
+            replace_entry(Client::Claude, &d, &fake_cli(dir.path(), body), &["au".to_owned()], Duration::from_millis(300));
+            assert!(started.elapsed() < Duration::from_secs(3), "{body}: {:?}", started.elapsed());
+        }
+    }
+
+    #[test]
+    fn a_failed_re_add_restores_only_the_old_entry_and_only_when_it_was_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let (d, _) = cursor(&dir);
+        let file = Client::Claude.config_file(&d);
+        let old = "{\"startups\":1,\"mcpServers\":{\"android-use\":{\"command\":\"au\"}}}";
+        let state = |text: &str| fs::write(&file, text).unwrap();
+        // The remove takes the entry and the running agent bumps a counter; the add fails.
+        state(old);
+        let removes = fake_cli(dir.path(), &format!("[ \"$2\" = remove ] && echo '{{\"startups\":2,\"mcpServers\":{{}}}}' > '{}'; exit 1", file.display()));
+        assert!(!replace_entry(Client::Claude, &d, &removes, &["au".to_owned()], CLI_TIMEOUT));
+        let restored: Value = serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(restored, json!({"startups":2,"mcpServers":{"android-use":{"command":"au"}}}));
+        // The remove did nothing, but the agent changed the file meanwhile: leave it alone.
+        state(old);
+        let bumps = fake_cli(dir.path(), &format!("echo '{{\"startups\":9,\"mcpServers\":{{\"android-use\":{{\"command\":\"au\"}}}}}}' > '{}'; exit 1", file.display()));
+        assert!(!replace_entry(Client::Claude, &d, &bumps, &["au".to_owned()], CLI_TIMEOUT));
+        assert!(fs::read_to_string(&file).unwrap().contains("\"startups\":9"));
     }
 }

@@ -15,6 +15,8 @@
 
 ### Fixed
 
+- `au setup`, `au install`, and `au uninstall AGENT` write agent config safely: only a missing file counts as empty (any other read error aborts without writing), a failed backup aborts the write, the file's existing mode is kept, `claude mcp` and `codex mcp` are killed after 30 seconds, and a failed re-add restores the old entry.
+
 - `au uninstall` flags now work as named: `--dry-run` only reports, unknown flags are errors, and uninstall refuses while `au serve` is running.
 - `cargo xtask` gates fail closed: a missing release artifact fails the size gate instead of measuring 0 bytes, and the stale-version check flags only standalone versions such as `v2` or `v3.1`, not words that contain one (`dev2`).
 - `au serve --mcp` answers a bad frame with a JSON-RPC error and keeps serving: an oversized line (`-32600`, its rest discarded), invalid JSON (`-32700`), and a batch array (`-32600`, batches are not supported) used to end the server or get a non-JSON-RPC reply. An oversized operation journal is saved aside once, with a warning, and a fresh one keeps its pending records and newest receipts; owner sidecar files left by exited processes are removed.

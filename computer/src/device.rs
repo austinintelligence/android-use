@@ -344,14 +344,6 @@ fn read_pipe(pipe: impl Read + Send + 'static) -> mpsc::Receiver<std::io::Result
     rx
 }
 
-fn reader_result(rx: &mpsc::Receiver<std::io::Result<Vec<u8>>>, name: &str) -> Result<Vec<u8>> {
-    match rx.recv_timeout(READER_GRACE) {
-        Ok(read) => Ok(read?),
-        Err(mpsc::RecvTimeoutError::Timeout) => Err(Error::new(Code::Timeout, format!("adb {name} stayed open after the command ended; the command was abandoned"))),
-        Err(mpsc::RecvTimeoutError::Disconnected) => Err(Error::new(Code::Io, format!("adb {name} reader failed"))),
-    }
-}
-
 /// Waits for a child that inherits the terminal; past `timeout` it is killed.
 pub fn wait_deadline(child: &mut std::process::Child, timeout: Duration) -> Result<std::process::ExitStatus> {
     let end = Instant::now() + timeout;
@@ -368,38 +360,42 @@ pub fn wait_deadline(child: &mut std::process::Child, timeout: Duration) -> Resu
     }
 }
 
-fn run_bounded(program: &Path, args: &[&str], timeout: Duration) -> Result<Vec<u8>> {
+pub(crate) fn run_bounded(program: &Path, args: &[&str], timeout: Duration) -> Result<Vec<u8>> {
+    let name = program.file_stem().map_or_else(|| "command".into(), |stem| stem.to_string_lossy().into_owned());
     let mut child = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| Error::new(Code::Device, format!("failed to start adb: {e}")))?;
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
-    let (out, err) = (read_pipe(stdout), read_pipe(stderr));
-    let start = Instant::now();
+        .map_err(|e| Error::new(Code::Device, format!("failed to start {name}: {e}")))?;
+    let (out, err) = (read_pipe(child.stdout.take().unwrap()), read_pipe(child.stderr.take().unwrap()));
+    let deadline = Instant::now() + timeout;
     let status = loop {
         if let Some(s) = child.try_wait()? {
             break s;
         }
-        if start.elapsed() >= timeout {
+        if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(Error::new(Code::Timeout, "adb command timed out"));
+            return Err(Error::new(Code::Timeout, format!("{name} command timed out")));
         }
         thread::sleep(Duration::from_millis(10));
     };
-    // A grandchild (the adb server) can keep a pipe open after the client exits.
-    let stdout = reader_result(&out, "stdout")?;
-    let stderr = reader_result(&err, "stderr")?;
+    // A grandchild (such as the adb server) can keep a pipe open after the command exits; wait for
+    // the output a short grace, never past the deadline, then abandon the reader.
+    let collect = |rx: mpsc::Receiver<std::io::Result<Vec<u8>>>, pipe: &str| match rx.recv_timeout(READER_GRACE.min(deadline.saturating_duration_since(Instant::now()))) {
+        Ok(read) => Ok(read?),
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(Error::new(Code::Timeout, format!("{name} {pipe} stayed open after the command ended; the command was abandoned"))),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(Error::new(Code::Io, format!("{name} {pipe} reader failed"))),
+    };
+    let (stdout, stderr) = (collect(out, "stdout")?, collect(err, "stderr")?);
     if stdout.len() as u64 > MAX_ADB_OUTPUT || stderr.len() as u64 > MAX_ADB_OUTPUT {
-        return Err(Error::new(Code::Bounds, "adb output exceeded 256 KiB"));
+        return Err(Error::new(Code::Bounds, format!("{name} output exceeded 256 KiB")));
     }
     if !status.success() {
         let detail = sanitize_stderr(&stderr);
-        return Err(Error::new(Code::Device, format!("adb command failed with {status}: {detail}")));
+        return Err(Error::new(Code::Device, format!("{name} command failed with {status}: {detail}")));
     }
     Ok(stdout)
 }
