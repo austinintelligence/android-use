@@ -100,12 +100,78 @@ pub(crate) fn check(text: &str) -> Vec<String> {
     } else if top_level(&lines, "permissions:").contains("write") {
         out.push("top-level permissions must be read-only; grant write per job".into());
     }
+    out.extend(jobs(&lines));
     if !on.contains("push:") {
         if on.contains("push") {
             out.push("`on:` lists push without limiting it to main or v* tags".into());
         }
     } else if let Some(why) = push_problem(&on) {
         out.push(why);
+    }
+    out
+}
+
+/// Signing secrets live only in a job in the `release-signing` environment. That job runs no
+/// repository code (no checkout, toolchain, or script from anywhere), uses only the artifact actions,
+/// and refuses to run until the owner marks the environment ready.
+fn jobs(lines: &[&str]) -> Vec<String> {
+    let mut in_jobs = false;
+    let mut blocks: Vec<(&str, String)> = Vec::new();
+    for l in lines {
+        let code = uncommented(l).to_lowercase();
+        if !l.starts_with([' ', '\t', '#']) && !l.trim().is_empty() {
+            in_jobs = l.starts_with("jobs:");
+        } else if !in_jobs && ["secrets.", "secrets[", "tojson(secrets"].iter().any(|s| code.contains(s)) {
+            return vec!["workflow-level secrets: pass them to the one job that needs them".into()];
+        }
+        if !in_jobs || l.starts_with("jobs:") {
+            continue;
+        }
+        match l.strip_prefix("  ").and_then(|r| r.strip_suffix(':')).filter(|r| !r.starts_with([' ', '#'])) {
+            Some(name) => blocks.push((name, String::new())),
+            None => blocks.last_mut().map_or((), |(_, b)| b.push_str(&format!("{code}\n"))),
+        }
+    }
+    let mut out = if blocks.is_empty() { vec!["no jobs found at the usual 2-space indent".to_owned()] } else { Vec::new() };
+    for (name, body) in blocks {
+        let signing = body.contains("environment: release-signing");
+        if !signing && ["secrets.", "secrets[", "tojson(secrets", "secrets: inherit"].iter().any(|s| body.contains(s)) {
+            out.push(format!("job {name}: secrets belong only in a release-signing job, and by name"));
+        }
+        if !signing {
+            continue;
+        }
+        for banned in [
+            "actions/checkout",
+            "actions/setup-",
+            "cargo ",
+            "npm ",
+            "gradle",
+            "xtask",
+            "git ",
+            "curl",
+            "wget",
+            " ./",
+            "docker",
+            "| sh",
+            "| bash",
+            "python",
+            "node ",
+            "perl",
+            "eval ",
+        ] {
+            if body.contains(banned) {
+                out.push(format!("job {name}: the signing job must not use `{banned}`"));
+            }
+        }
+        for used in body.lines().filter_map(|l| l.split("uses:").nth(1)).map(str::trim) {
+            if !used.starts_with("actions/download-artifact@") && !used.starts_with("actions/upload-artifact@") {
+                out.push(format!("job {name}: the signing job may only use the artifact actions, not `{used}`"));
+            }
+        }
+        if !body.contains("release_signing_ready") {
+            out.push(format!("job {name}: the signing job must refuse to run until vars.RELEASE_SIGNING_READY is set"));
+        }
     }
     out
 }
@@ -196,6 +262,35 @@ mod tests {
         ] {
             let text = format!("permissions: {{ contents: read }}\njobs:\n  a:\n    steps:\n      - run: {sneaky}\n");
             assert!(!check(&text).is_empty(), "{sneaky}");
+        }
+    }
+
+    #[test]
+    fn the_signing_job_runs_no_repository_code() {
+        let job = |steps: &str| {
+            format!("permissions: {{ contents: read }}\njobs:\n  sign:\n    environment: release-signing\n    steps:\n      - run: test \"$READY\" = ${{ vars.RELEASE_SIGNING_READY }}\n{steps}")
+        };
+        let secret = "      - run: echo ${{ secrets.AUBRIDGE_KEY_PASSWORD }}\n";
+        assert_eq!(check(&job(secret)), Vec::<String>::new());
+        let checkout = format!("      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        with: {{ persist-credentials: false }}\n{secret}");
+        assert!(mentions(&check(&job(&checkout)), "must not use `actions/checkout`"));
+        assert!(mentions(&check(&job("      - run: npm ci\n")), "must not use `npm `"));
+        assert!(mentions(&check(&job("      - run: git clone https://x.example/y && ./y/build.sh\n")), "must not use `git `"));
+        let other = "      - uses: acme/sign@11bd71901bbe5b1630ceea73d27597364c9af683\n";
+        assert!(mentions(&check(&job(other)), "only use the artifact actions"));
+        let unready = "permissions: { contents: read }\njobs:\n  sign:\n    environment: release-signing\n    steps:\n      - run: true\n";
+        assert!(mentions(&check(unready), "RELEASE_SIGNING_READY"));
+        assert!(mentions(&check("permissions: { contents: read }\n    jobs:\n      a: {}\n"), "no jobs found"));
+        assert!(mentions(&check("permissions: { contents: read }\nenv:\n  K: ${{ SECRETS.K }}\njobs:\n  a:\n    steps: []\n"), "workflow-level secrets"));
+        assert!(mentions(&check(&job("      - run: gh api x | bash\n")), "must not use `| bash`"));
+        let late = "permissions: { contents: read }\njobs:\n  sign:\n    environment: release-signing\n    steps:\n      - run: echo ${{ vars.RELEASE_SIGNING_READY }}\nenv:\n  K: ${{ secrets.AUBRIDGE_KEY_PASSWORD }}\n";
+        assert!(mentions(&check(late), "workflow-level secrets"));
+        let statuses = "permissions: { contents: read }\njobs:\n  a:\n    permissions:\n      statuses: write\n    steps:\n      - uses: acme/x@v1\n";
+        let found = check(statuses);
+        assert!(found.len() == 1 && mentions(&found, "acme/x@v1"), "{found:?}");
+        for leak in ["${{ secrets.AUBRIDGE_KEY_PASSWORD }}", "${{ secrets['K'] }}", "${{ toJson(secrets) }}"] {
+            let leaked = format!("permissions: {{ contents: read }}\njobs:\n  build:\n    steps:\n      - run: echo {leak}\n");
+            assert!(mentions(&check(&leaked), "belong only in a release-signing job"), "{leak}");
         }
     }
 

@@ -10,7 +10,7 @@ A release is a version bump merged to `main`, a tag, and then three publishing s
 
 ## 2. Rehearse
 
-After the PR merges, run the release workflow by hand on `main` (Actions → Release → Run workflow). Without a tag it builds the helper, all six platform archives, and the SBOM, runs the release gates, and publishes nothing. Fix anything that fails now; a failure after tagging costs a version number.
+After the PR merges, run the release workflow by hand on `main` (Actions → Release → Run workflow). Without a tag it builds the unsigned helper, all six platform archives (embedding the unsigned helper), and the SBOM, runs the release gates, and stops before signing: the signing and publishing jobs need a `v*` tag, so nothing is signed or published. It can run from any branch. Fix anything that fails now; a failure after tagging costs a version number.
 
 ## 3. Tag
 
@@ -18,9 +18,30 @@ After the PR merges, run the release workflow by hand on `main` (Actions → Rel
 git tag -a vX.Y.Z origin/main -m "android-use vX.Y.Z" && git push origin vX.Y.Z
 ```
 
-The helper's `versionCode` is computed from `VERSION` (major×1,000,000 + minor×1,000 + patch), so a release needs no manual bump; `cargo xtask version` checks the formula. Only the release build type signs with the pinned key, and only when `AUBRIDGE_SIGNING_PROPERTIES` is set (the workflow sets it; a path that does not exist fails the build). A debug build is signed with the debug key, so uninstall a helper signed with the release key (`au uninstall`) before installing it. The pinned certificate hash in `device/release-signer.sha256` is compiled into `au`; rotating the key means changing that file in the same release. A newer `au` upgrades an older helper by itself on connect; going back to an older helper needs `au uninstall` first.
+The helper's `versionCode` is computed from `VERSION` (major×1,000,000 + minor×1,000 + patch), so a release needs no manual bump; `cargo xtask version` checks the formula. The release workflow builds the helper unsigned and signs it with `apksigner` in an isolated job (below); a local release build signs with the pinned key only when `AUBRIDGE_SIGNING_PROPERTIES` names a signing file (a path that does not exist fails the build). A debug build is signed with the debug key, so uninstall a helper signed with the release key (`au uninstall`) before installing it. The pinned certificate hash in `device/release-signer.sha256` is compiled into `au`; rotating the key means changing that file in the same release. A newer `au` upgrades an older helper by itself on connect; going back to an older helper needs `au uninstall` first.
 
-The workflow validates, builds the six archives with the signed helper embedded, writes `SHA256SUMS` and `release-manifest.json`, attests the assets, and creates the GitHub release with notes generated from the changelog.
+The workflow first checks that the tag's commit is on `main` and that CI passed on it. It then validates and builds the unsigned helper, signs it in an isolated job, builds the six archives with the signed helper embedded, writes `SHA256SUMS` and `release-manifest.json`, attests the assets, and creates the GitHub release with notes generated from the changelog.
+
+### How signing is isolated
+
+The `release-signing` job is the only one with the signing secrets. It has no checkout and runs no repository code, no npm, no cargo: it downloads the unsigned APK artifact and runs the SDK's `apksigner`, using only the artifact actions. It reads `device/release-signer.sha256` at the tagged commit through the GitHub API, then runs `apksigner verify --print-certs` and fails unless there is exactly one signer whose certificate SHA-256 equals that pin. `cargo xtask workflow-policy` fails if secrets are referenced outside the `release-signing` job, or if that job uses a checkout, setup action, cargo, npm, gradle, xtask, git, curl, wget, a local script, an interpreter, a pipe into a shell, or any action but the artifact actions, or lacks the ready switch.
+
+### What the repository owner sets up once
+
+These are repository settings; the workflow cannot create them.
+
+1. **Environments** (Settings → Environments): create `release-signing`, `release`, and `npm`. For each, set deployment branches and tags to *Selected branches and tags* and add one tag rule, `v*`, so a branch or a non-release tag can never use them.
+2. **Required reviewer** on `release-signing` (and preferably `release`), with "Prevent self-review" on, so a person approves each signing.
+3. **Signing secrets**: move `AUBRIDGE_KEYSTORE_B64`, `AUBRIDGE_STORE_PASSWORD`, and `AUBRIDGE_KEY_PASSWORD` out of the repository secrets into the `release-signing` environment, then delete the repository-level copies.
+4. **Tag ruleset** (Settings → Rules → Rulesets): target tags `v*`, restrict creation to maintainers, and block updates and deletions.
+5. **Ready switch**: only after steps 1 to 4, add the *environment variable* `RELEASE_SIGNING_READY` = `true` to `release-signing` (not a repository variable). The `sign` job refuses to run without it. A repository or organization variable of the same name would also satisfy it and re-open the unprotected path, so check Settings → Secrets and variables → Actions → Variables for one and delete it. This matters because GitHub creates a missing environment on first use with no protection, and repository-level secrets stay visible to environment jobs: skipping the setup would otherwise let a `v*` tag sign with no reviewer.
+6. `npm` is reserved for npm publishing. Step 4 below is still run by hand, with 2FA; put any future npm token in this environment, not in repository secrets.
+
+The `gate` job and the policy check live in the workflow at the tagged commit, so someone who can push a `v*` tag can tag a commit whose workflow has neither. They catch mistakes, not deliberate misuse; the required reviewer and the tag ruleset (steps 2 and 4) are what stop that.
+
+The policy check reads the YAML as text and finds jobs by indentation: it is a tripwire for ordinary mistakes, and changes under `.github/` still need a careful human review (and a CODEOWNERS entry).
+
+If you push the tag while CI is still running on its commit, `gate` fails; re-run the failed jobs once CI is green. Runs are serialised per tag. A dry run's archives embed the unsigned helper and are named like the real ones: never distribute them.
 
 ## 4. Publish
 

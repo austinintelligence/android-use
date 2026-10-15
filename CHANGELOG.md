@@ -79,6 +79,7 @@
 
 - Every cargo call in the workflows, `cargo xtask`, and the contributor docs uses `--locked`. `cargo-audit` and `cargo-deny` are installed at pinned versions, `deny.toml` rejects yanked crates, runners are `ubuntu-24.04`/`windows-2022` rather than `-latest`, and CI runs on pushes to `main` and on pull requests only.
 - New `cargo xtask workflow-policy`, run by `check` and `verify`: workflows must pin every action to a commit SHA, keep top-level permissions read-only, avoid `pull_request_target`, limit push triggers to `main` and `v*` tags, never pipe a download into a shell, and keep `persist-credentials: false` on every checkout. It is a text-level tripwire, not a YAML parser. Gradle dependencies are not yet locked.
+- The release workflow is tag-gated: a first job checks the tag's commit is on `main` with CI green; the helper is built unsigned; signing runs in an isolated `release-signing` job with no checkout or repository code, and verification requires exactly one signer whose certificate matches `device/release-signer.sha256`; publishing runs in the `release` environment. A manual run builds everything and stops before signing. `workflow-policy` pins these properties. The `sign` job also refuses to run until `RELEASE_SIGNING_READY` is set on its environment. The owner-side settings are in [releasing](docs/contributing/release.md).
 
 ### Maintenance
 
