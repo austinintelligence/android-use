@@ -24,6 +24,7 @@ use std::{
     fs::{self, OpenOptions},
     io::{ErrorKind, Read, Seek, Write},
     path::PathBuf,
+    time::SystemTime,
 };
 
 const MAX_FILE: u64 = 2 * 1024 * 1024;
@@ -48,8 +49,8 @@ pub(crate) struct Journal {
     order: VecDeque<Box<str>>,
     owner: Box<str>,
     held: Option<fs::File>,
-    /// (lock-file write counter, journal length) as of this process's last load or write.
-    seen: Option<(u64, u64)>,
+    /// (lock-file write counter, journal length and mtime) as of this process's last load or write.
+    seen: Option<(u64, u64, Option<SystemTime>)>,
     wrote: bool,
     #[cfg(test)]
     loads: u32,
@@ -145,15 +146,15 @@ impl Journal {
         let mut raw = [0; 8];
         let count = lock.read_exact(&mut raw).map_or(0, |()| u64::from_le_bytes(raw));
         let path = self.path.clone();
-        let length = || fs::metadata(&path).map_or(0, |m| m.len());
+        let length = || fs::metadata(&path).map_or((0, None), |m| (m.len(), m.modified().ok()));
         let before = length();
-        let result = if self.seen == Some((count, before)) { Ok(()) } else { self.reload() }.and_then(|()| f(self));
+        let result = if self.seen == Some((count, before.0, before.1)) { Ok(()) } else { self.reload() }.and_then(|()| f(self));
         let after = length();
-        self.seen = result.is_ok().then_some((count, after));
+        self.seen = result.is_ok().then_some((count, after.0, after.1));
         if after != before || std::mem::take(&mut self.wrote) {
             let next = count.wrapping_add(1);
             if lock.rewind().and_then(|()| lock.write_all(&next.to_le_bytes())).is_ok() {
-                self.seen = self.seen.map(|(_, length)| (next, length));
+                self.seen = self.seen.map(|(_, length, time)| (next, length, time));
             } else {
                 self.seen = None;
             }
@@ -212,20 +213,21 @@ impl Journal {
             return;
         }
         if self.states.contains_key(id) {
-            if let Some(pos) = self.order.iter().position(|v| v.as_ref() == id) {
+            if let Some(pos) = self.order.iter().rposition(|v| v.as_ref() == id) {
                 self.order.remove(pos);
             }
         }
-        self.order.push_back(id.into());
         match kind {
             "p" => {
                 if let Some(g) = a.get(3).and_then(Value::as_u64) {
                     let text = |i: usize| a.get(i).and_then(Value::as_str).unwrap_or_default().into();
+                    self.order.push_back(id.into());
                     self.states.insert(id.into(), State::Pending { digest: digest.into(), generation: g, owner: text(4), surface: text(5) });
                 }
             }
             "d" => {
                 if let Some(r) = a.get(3).cloned().and_then(|v| serde_json::from_value::<Receipt>(v).ok()) {
+                    self.order.push_back(id.into());
                     self.states.insert(id.into(), State::Done { digest: digest.into(), receipt: r });
                 }
             }
@@ -440,16 +442,22 @@ mod tests {
     }
 
     #[test]
-    fn a_rewrite_that_keeps_the_length_is_still_seen_through_the_counter() {
+    fn a_same_length_rewrite_is_seen_through_the_counter_and_bad_records_leave_no_ghosts() {
         let d = tempfile::tempdir().unwrap();
         let mut first = open(&d);
-        let mut second = open(&d);
-        assert!(first.begin("same", 1, A, ANDROID).unwrap().is_none());
-        second.begin("same", 1, A, ANDROID).unwrap();
-        second.finish(A, &receipt("same")).unwrap();
-        second.reconcile(ANDROID).unwrap();
-        assert!(first.begin("same", 1, A, ANDROID).unwrap().is_some());
-        assert!(first.states.contains_key("same") && first.order.len() == first.states.len());
+        assert!(first.begin("ab", 1, A, ANDROID).unwrap().is_none());
+        first.finish(A, &receipt("ab")).unwrap();
+        first.apply(&json!(["bad", "p", A, "x"]));
+        first.apply(&json!(["bad", "p", A, 1]));
+        assert_eq!(first.order.len(), first.states.len(), "a malformed record leaves no ghost in the order queue");
+        let path = first.path.clone();
+        let before = fs::read(&path).unwrap();
+        fs::write(&path, String::from_utf8(before.clone()).unwrap().replace("\"ab\"", "\"cd\"")).unwrap();
+        assert_eq!(fs::read(&path).unwrap().len(), before.len());
+        let lock = first.lock_path.clone();
+        let count = u64::from_le_bytes(fs::read(&lock).unwrap()[..8].try_into().unwrap());
+        fs::write(&lock, (count + 1).to_le_bytes()).unwrap();
+        assert!(first.begin("cd", 1, A, ANDROID).unwrap().is_some(), "the rewritten journal is reloaded");
     }
 
     #[test]
