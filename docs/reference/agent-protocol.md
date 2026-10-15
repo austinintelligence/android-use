@@ -1,6 +1,6 @@
 # Agent protocol
 
-MCP advertises two tools. Each takes one string, `command`; the tool descriptions list the common commands, and `android_read help` lists every one.
+MCP advertises two tools, each taking one string, `command`; `android_read help` lists every command.
 
 - `android_read` never changes the device: `status`, `screen [full|changes|matching "TEXT"]`, `find "TEXT"`, `page [text]`, `notifications`, `help`.
 - `android_act` changes it: `tap "LABEL"`, `type "TEXT" in "FIELD"`, `set "Wi-Fi" on` (no tap if already on), `scroll down [until "TEXT"]`, `open app "NAME"`, `wait for text "TEXT" up to 5 seconds`. Join up to 16 steps with `then`. A read (`find`, `screen`) may sit in the chain and ends the result.
@@ -9,11 +9,11 @@ MCP advertises two tools. Each takes one string, `command`; the tool description
 
 Act first; read only if the state is unknown.
 
-One row per line: a plain name is a button or text; `sw Wi-Fi=on`, `edit Email="x"`, `chk`, `radio`, `tab`, `link`, `list` mark other controls; `Name: value` shows a short state. Quote the name exactly. `Save#2` is the second duplicate: send `tap "Save" number 2`. `e7` is a control with no label: send `tap e7`. `screen full` adds the descriptive subtitles.
+One row per line: a plain name is a button or text; `sw Wi-Fi=on`, `edit Email="x"`, `chk`, `radio`, `tab`, `link`, `list` mark other controls; `Name: value` shows a short state. Quote the name exactly. `Save#2` is the second duplicate: send `tap "Save" number 2`. `e7` is a control with no label: send `tap e7`. `screen full` adds subtitles.
 
 ## Results
 
-A successful action says `Done.` (plus a note when a label was only a close match), then the screen it led to, or only `Changed:` rows (`~ + -`) when it is the screen you last saw. Chains may cross screens: steps after an app, link, or page opens are resolved on what it shows. Results also carry `structuredContent` with `status` and `changed`.
+A successful action says `Done.` (with a note if a label was a close match), then the screen it led to, or only `Changed:` rows (`~ + -`) when it is the screen you last saw. Chains may cross screens: steps after an app, link, or page opens are resolved on what it shows. Results also carry `structuredContent` with `status` and `changed`.
 
 | Result | Meaning | Next move |
 | --- | --- | --- |

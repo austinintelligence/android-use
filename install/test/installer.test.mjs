@@ -23,7 +23,7 @@ async function argvThrough(t, args) {
   return JSON.parse(r.stdout);
 }
 
-test("reports the package version without network access",async()=>{const r=await run(process.execPath,[cli,"--version"]);assert.equal(r.stdout.trim(),"1.2.0")});
+test("reports the package version without network access",async()=>{const r=await run(process.execPath,[cli,"--version"]);assert.equal(r.stdout.trim(),"1.3.0")});
 test("explains the platform binary and lists every au command",async()=>{const r=await run(process.execPath,[cli,"--help"]);assert.match(r.stdout,/platform binary/);for(const c of commands)assert.match(r.stdout,new RegExp(`\\b${c}\\b`))});
 test("rejects commands outside the au surface",async()=>{await assert.rejects(run(process.execPath,[cli,"bogus"]),e=>e.code===2)});
 test("fails closed when a platform binary is absent",async()=>{await assert.rejects(run(process.execPath,[cli,"doctor"],{env:{...process.env,AU_BIN:""}}),e=>/binary is missing/.test(e.stderr))});
