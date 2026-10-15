@@ -20,7 +20,8 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class Ui extends AccessibilityService {
     private static volatile Ui instance;
     private final Object guard = new Object();
-    // Events only bump these, never take the lock; a scene older than the generation is rebuilt on demand.
+    // Events only bump these, never take the lock; a scene older than the generation is rebuilt on
+    // demand.
     private final AtomicLong generation = new AtomicLong(1);
     private volatile long lastEvent;
     private volatile Scene scene;
