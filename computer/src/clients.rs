@@ -181,14 +181,16 @@ fn which(program: &str) -> Option<PathBuf> {
 fn command_for(client: Client) -> Vec<String> {
     let this = env::current_exe().ok().and_then(|path| fs::canonicalize(path).ok());
     let on_path = which("au").filter(|found| fs::canonicalize(found).ok() == this);
-    launch_for(this.as_deref(), on_path, client.gui())
+    launch_for(this.as_deref(), on_path, client.gui(), which("npx"))
 }
 
 /// A binary inside npm's `_npx` cache is deleted when the cache is pruned, so register a pinned
-/// `npx -y android-use@<this version>` instead of that path.
-fn launch_for(this: Option<&Path>, on_path: Option<PathBuf>, gui: bool) -> Vec<String> {
+/// `npx -y android-use@<this version>` instead of that path. Desktop apps often lack the shell's
+/// PATH, so they get the absolute `npx` found now.
+fn launch_for(this: Option<&Path>, on_path: Option<PathBuf>, gui: bool, npx: Option<PathBuf>) -> Vec<String> {
     if this.is_some_and(|path| path.components().any(|part| part.as_os_str() == "_npx")) {
-        return vec![if cfg!(windows) { "npx.cmd" } else { "npx" }.into(), "-y".into(), format!("android-use@{}", env!("CARGO_PKG_VERSION"))];
+        let program = npx.filter(|_| gui).map_or_else(|| if cfg!(windows) { "npx.cmd" } else { "npx" }.to_owned(), |found| found.display().to_string());
+        return vec![program, "-y".into(), format!("android-use@{}", env!("CARGO_PKG_VERSION"))];
     }
     vec![match (on_path, gui) {
         (Some(found), true) => found.display().to_string(),
@@ -283,8 +285,13 @@ fn edit_toml(path: &Path, command: Option<&[String]>, o: Options) -> Result<Edit
     let lines: Vec<&str> = text.lines().collect();
     let start = lines.iter().position(|line| line.trim() == header);
     let end = start.map_or(0, |at| lines[at + 1..].iter().position(|line| line.trim_start().starts_with('[')).map_or(lines.len(), |n| at + 1 + n));
-    let block =
-        command.map(|command| format!("{header}\ncommand = {}\nargs = {}\n", json!(command[0]), json!([&command[1..], &["serve".to_owned(), "--mcp".to_owned()][..]].concat())));
+    let block = command.map(|command| {
+        format!(
+            "{header}\ncommand = {}\nargs = [{}]\n",
+            json!(command[0]),
+            command[1..].iter().map(String::as_str).chain(["serve", "--mcp"]).map(|arg| json!(arg).to_string()).collect::<Vec<_>>().join(", ")
+        )
+    });
     let outcome = match (start, &block) {
         (None, None) => return Ok(Edit::Done("absent")),
         (Some(at), Some(block)) if lines[at..end].join("\n").trim_end() == block.trim_end() => return Ok(Edit::Done("unchanged")),
@@ -449,10 +456,12 @@ mod tests {
     #[test]
     fn setup_under_an_npx_cache_registers_the_pinned_npx_command() {
         let cached = Path::new("/home/u/.npm/_npx/abc123/node_modules/@androiduse/linux-x64/bin/au");
-        let launch = launch_for(Some(cached), Some(PathBuf::from("/usr/bin/au")), false);
+        let launch = launch_for(Some(cached), Some(PathBuf::from("/usr/bin/au")), false, None);
         assert_eq!(launch[1..], ["-y".to_owned(), format!("android-use@{}", env!("CARGO_PKG_VERSION"))]);
         assert_eq!(Client::Cursor.entry(&launch)["args"], json!(["-y", format!("android-use@{}", env!("CARGO_PKG_VERSION")), "serve", "--mcp"]));
-        assert_eq!(launch_for(Some(Path::new("/opt/au/bin/au")), None, false), ["/opt/au/bin/au"]);
+        assert_eq!(launch_for(Some(Path::new("/opt/au/bin/au")), None, false, None), ["/opt/au/bin/au"]);
+        // Desktop apps get the absolute npx, not a bare name they may fail to find.
+        assert_eq!(launch_for(Some(cached), None, true, Some(PathBuf::from("/opt/node/bin/npx")))[0], "/opt/node/bin/npx");
     }
 
     #[test]

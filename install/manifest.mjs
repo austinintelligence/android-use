@@ -13,7 +13,7 @@ export function readManifest(dir) {
   } catch (e) {
     throw new Error(e.code === "ENOENT" ? "manifest.json is missing" : "manifest.json is unreadable");
   }
-  if (!files || typeof files !== "object") throw new Error("manifest.json lists no files");
+  if (files?.constructor !== Object) throw new Error("manifest.json lists no files");
   return files;
 }
 
