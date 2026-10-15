@@ -4,7 +4,8 @@
 # previous au.exe untouched.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+# Windows PowerShell 5.1 defaults to older protocols; this limits it to TLS 1.2. PowerShell 7 already negotiates TLS 1.2+.
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $Repo = 'https://github.com/austinintelligence/android-use'
 $InstallDir = if ($env:AU_INSTALL_DIR) { $env:AU_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'AndroidUse\bin' }
@@ -46,14 +47,14 @@ try {
   $Actual = (Get-FileHash -Algorithm SHA256 (Join-Path $Tmp $Asset)).Hash
   if ($Actual -ine $Expected) { throw "SHA256 mismatch for $Asset (expected $Expected, got $Actual). Aborting." }
 
-  # The attestation proves the archive was built by this repository's release workflow. Only gh can check it.
-  if (Get-Command gh -ErrorAction SilentlyContinue) {
+  # The attestation proves the archive was built by this repository's release workflow. Only a logged-in gh can check it.
+  if ((Get-Command gh -ErrorAction SilentlyContinue) -and (gh auth status 2>&1 | Out-Null; $LASTEXITCODE -eq 0)) {
     gh attestation verify (Join-Path $Tmp $Asset) --repo austinintelligence/android-use | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Attestation check failed for $Asset. Aborting." }
   } elseif ($env:AU_REQUIRE_ATTESTATION -eq '1') {
-    throw 'AU_REQUIRE_ATTESTATION=1 needs the GitHub CLI (gh) to verify the attestation (cosign alone cannot). Aborting.'
+    throw 'AU_REQUIRE_ATTESTATION=1 needs the GitHub CLI (gh), logged in with gh auth login, to verify the attestation (cosign alone cannot). Aborting.'
   } else {
-    Write-Warning 'Skipping the attestation check: install gh to enable it (SHA256SUMS was verified).'
+    Write-Warning 'Skipping the attestation check: install gh and run gh auth login to enable it (SHA256SUMS was verified).'
   }
 
   Add-Type -AssemblyName System.IO.Compression.FileSystem

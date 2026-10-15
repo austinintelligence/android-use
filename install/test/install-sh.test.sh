@@ -32,7 +32,7 @@ done
 case "$*" in *url_effective*) printf '%s' "$FAKE_LATEST"; exit 0 ;; esac
 cp "$FAKE_FIX/${URL##*/}" "$OUT"
 CURL
-printf '#!/bin/sh\necho "$*" >> "$FAKE_LOG"\nexit "${FAKE_GH_EXIT:-0}"\n' > "$W/gh/gh"
+printf '#!/bin/sh\necho "$*" >> "$FAKE_LOG"\n[ "$1" = auth ] && exit "${FAKE_GH_AUTH:-0}"\nexit "${FAKE_GH_EXIT:-0}"\n' > "$W/gh/gh"
 chmod +x "$W/tools/curl" "$W/gh/gh"
 # A PATH holding only what install.sh needs, so a real gh or cosign on this machine cannot leak in.
 for t in gzip sh awk grep tar mktemp uname sha256sum shasum mv rm chmod mkdir cat cp dirname printf; do
@@ -71,6 +71,11 @@ run req "" AU_REQUIRE_ATTESTATION=1
 refused "AU_REQUIRE_ATTESTATION=1 without gh is refused"
 run fail "$W/gh:" FAKE_GH_EXIT=1
 refused "a failed attestation is refused"
+
+run login "$W/gh:" AU_REQUIRE_ATTESTATION=1 FAKE_GH_AUTH=1
+refused "AU_REQUIRE_ATTESTATION=1 with gh not logged in is refused"
+run login2 "$W/gh:" FAKE_GH_AUTH=1
+if [ "$RC" -eq 0 ] && [ "$(cat "$W/dest/au")" != old ] && ! grep -q '^attestation' "$W/log"; then check "gh not logged in counts as no gh" ok; else check "gh not logged in: $OUT" no; fi
 
 run none ""
 if [ "$RC" -eq 0 ] && [ "$(cat "$W/dest/au")" != old ]; then check "no gh and no requirement installs after the checksum" ok; else check "no gh install: $OUT" no; fi
