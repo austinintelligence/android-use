@@ -6,8 +6,7 @@
 
 - `cargo xtask` gates fail closed: a missing release artifact fails the size gate instead of measuring 0 bytes, and the stale-version check flags only standalone versions such as `v2` or `v3.1`, not words that contain one (`dev2`).
 - `cargo xtask golden-capture NAME` needs `--reviewed`, confirming the screen shows nothing personal, and refuses a screen with what looks like an email address, phone number, or card number.
-
-- `verify eN` checks that handle instead of searching for the label "eN"; `wait for eN`, `verify eN is gone`, and `verify "X" number N is gone` are rejected instead of silently dropping the handle or number; a reconnect to the helper clears the cached screen; an `eN` from a screen of another app is refused with "read the screen again".
+- `verify eN` checks that handle instead of searching for the label "eN"; `wait for eN`, `verify eN is gone`, and `verify "X" number N is gone` are rejected instead of silently dropping the handle or number; a reconnect to the helper clears the cached screen; an `eN` from an earlier screen is refused with "read the screen again".
 
 ### Maintenance
 

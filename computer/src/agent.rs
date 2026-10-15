@@ -68,8 +68,8 @@ pub(crate) struct AgentState {
     pub(crate) mapping: Vec<String>,
     /// Whether the last target resolved by a containing label rather than an exact one.
     pub(crate) loose: bool,
-    /// The package whose screen the last numbered image showed; its `eN` handles die with it.
-    pub(crate) marked_in: Option<Box<str>>,
+    /// The package and scene generation of the last numbered image; its `eN` handles die with that screen.
+    pub(crate) marked_in: Option<(Box<str>, u64)>,
 }
 
 #[derive(Clone, Copy)]
@@ -408,8 +408,9 @@ impl Engine {
     /// `want` is `"edit"` when the step needs a text field and `"scroll"` when it needs a scrollable
     /// area, so a heading or a control with the same words is not a candidate.
     fn resolve_target_as(&mut self, scene: &Scene, target: &Target, want: &str) -> Result<u16> {
-        if let Some(handle) = target.handle.filter(|_| self.agent.marked_in.as_deref().is_some_and(|shown| shown != &*scene.package)) {
-            self.agent.marked_in = None;
+        if let Some(handle) =
+            target.handle.filter(|_| self.agent.marked_in.as_ref().is_some_and(|(package, generation)| (&**package, *generation) != (&*scene.package, scene.generation)))
+        {
             return Err(Error::plain(Code::Missing, format!("e{handle} is from an earlier screen; read the screen again for current handles")));
         }
         let args = json!({"label": target.label.as_ref(), "ordinal": target.ordinal.unwrap_or(0), "want": want, "handle": target.handle.map_or(-1, i32::from)});
