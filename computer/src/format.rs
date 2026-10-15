@@ -56,7 +56,11 @@ pub(crate) fn parse_semantic_rows(value: &Value) -> Result<Vec<SemanticRow>> {
 pub(crate) fn display(value: &str) -> String {
     // Line breaks, tabs and bidi controls would fake rows or reorder text, so they become spaces.
     let spaced = |c: char| matches!(c, '\n' | '\r' | '\t' | '\u{200E}' | '\u{200F}' | '\u{061C}' | '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}');
-    let out: String = value.chars().filter(|&c| !matches!(c, '{' | '}' | '[' | ']') && (spaced(c) || !c.is_control())).map(|c| if spaced(c) { ' ' } else { c }).collect();
+    let out: String = value
+        .chars()
+        .filter(|&c| !matches!(c, '{' | '}' | '[' | ']') && (spaced(c) || !(c.is_control() || crate::api::invisible(c))))
+        .map(|c| if spaced(c) { ' ' } else { c })
+        .collect();
     out.trim().to_owned()
 }
 
@@ -702,6 +706,7 @@ mod tests {
         let line = semantic_line(&row("Pay\nSend all\t\u{202E}evil\u{2066}x", "button", "", ""), None, false);
         assert_eq!(line, "btn Pay Send all  evil x".replace("btn ", kind_tag("button")));
         assert!(!line.contains(['\n', '\u{202E}', '\u{2066}']));
+        assert_eq!(display("a\u{200B}b\u{FEFF}c\u{E0041}"), "abc", "invisible characters are dropped");
     }
 
     #[test]

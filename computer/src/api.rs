@@ -398,8 +398,13 @@ pub(crate) fn safe_url(value: &str) -> bool {
 /// Matching form of a label: case- and whitespace-insensitive, without the
 /// bracket characters agent-facing text strips, so a label quoted back as
 /// displayed ("Inbox 3" for "Inbox [3]") still matches.
+/// Format characters that draw nothing (zero-width, soft hyphen, BOM, word joiner, tags).
+pub(crate) fn invisible(c: char) -> bool {
+    matches!(c, '\u{00AD}' | '\u{200B}'..='\u{200D}' | '\u{2060}'..='\u{2064}' | '\u{FEFF}' | '\u{E0000}'..='\u{E007F}')
+}
+
 pub(crate) fn normalized(value: &str) -> String {
-    let visible: String = value.chars().filter(|c| !matches!(c, '{' | '}' | '[' | ']')).collect();
+    let visible: String = value.chars().filter(|&c| !matches!(c, '{' | '}' | '[' | ']') && !invisible(c)).collect();
     let words = visible.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
     // A label truncated for display ends in an ellipsis; the text before it still names the item.
     match words.strip_suffix('\u{2026}') {

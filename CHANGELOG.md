@@ -4,11 +4,11 @@
 
 ### Security
 
-- Loose matches are safe near misses. A notification, tab, or app whose name only contains or starts with your words is used only when it is the single such item, lines up with your words at a word boundary, adds at most two other words, and none is risky (`pay`, `delete`, `transfer`, and forms like `payments` or `delete-all`); otherwise the command reports a miss that lists the candidates. `open app "Bank"` no longer opens "Bank Transfer".
+- Loose matches are safe near misses. A notification, tab, or app whose name only contains or starts with your words is used only when it is the single such item, lines up with your words at a word boundary, adds at most two other words, and none is risky (`pay`, `delete`, `transfer`, and forms like `payments`, `sending`, or `delete-all`); otherwise the command reports a miss that lists the candidates. `open app "Bank"` no longer opens "Bank Transfer".
 
 ### Changed
 
-- Newlines in screen text show as spaces. Tabs and bidi override/isolate characters (U+202A–U+202E, U+2066–U+2069, U+200E, U+200F) do too, so screen text cannot fake extra rows or reorder text.
+- Newlines in screen text show as spaces, and zero-width and other invisible format characters are dropped. Tabs and bidi override/isolate characters (U+202A–U+202E, U+2066–U+2069, U+200E, U+200F) do too, so screen text cannot fake extra rows or reorder text.
 - `transfer` joins the risky words.
 
 ### Fixed

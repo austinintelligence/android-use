@@ -65,7 +65,30 @@ pub(crate) fn loose<T: Clone + PartialEq>(target: &Target, near: Vec<(T, impl As
 
 /// A risky word, or an inflection of one ("payments", "delete-all", "removed").
 fn risky_word(word: &str) -> bool {
-    RISKY.contains(&word) || ["pay", "delet", "remov", "transfer", "eras", "reset"].iter().any(|stem| word.starts_with(stem))
+    RISKY.contains(&word)
+        || [
+            "pay",
+            "delet",
+            "remov",
+            "transfer",
+            "eras",
+            "reset",
+            "buy",
+            "purchas",
+            "send",
+            "submit",
+            "confirm",
+            "clear",
+            "wip",
+            "sign",
+            "log",
+            "order",
+            "install",
+            "uninstall",
+            "factory",
+        ]
+        .iter()
+        .any(|stem| word.starts_with(stem))
 }
 
 /// Applies the ordinal/ambiguity rule to an already-ordered match list.
@@ -311,6 +334,16 @@ mod tests {
             assert_eq!(app(&json!([["x", name]]), query).unwrap_err().code, Code::Missing, "{name}");
         }
         assert_eq!(app(&json!([["x", "Your verification code"]]), "on").unwrap_err().code, Code::Missing, "inside a word");
+        for (name, query) in [
+            ("Wallet Purchases", "Wallet"),
+            ("Mail Sending", "Mail"),
+            ("Files Wiper", "Files"),
+            ("Apps Uninstaller", "Apps"),
+            ("Account Signout", "Account"),
+            ("Bank Tr\u{200B}ansfer", "Bank"),
+        ] {
+            assert_eq!(app(&json!([["x", name]]), query).unwrap_err().code, Code::Missing, "{name}");
+        }
         assert_eq!(app(&rows, "Bank Transfer").unwrap(), "com.bank.transfer", "exact names still open");
         assert_eq!(app(&json!([["com.bank.transfer", "Bank Transfer"]]), "Bank").unwrap_err().code, Code::Missing);
     }
