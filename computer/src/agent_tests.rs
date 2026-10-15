@@ -40,6 +40,10 @@ mod flows {
     fn labels(screen: &str) -> &'static [&'static str] {
         if screen == "settings" {
             &["Wi-Fi", "Bluetooth", "Flaky", "Save draft", "Save and delete all"]
+        } else if screen == "loading" {
+            &["Loading"]
+        } else if screen == "late" {
+            &["Late"]
         } else {
             &["Settings"]
         }
@@ -47,14 +51,26 @@ mod flows {
 
     fn fake_helper(capture: Vec<u8>) -> impl FnMut(&Value) -> Option<Value> {
         let (mut screen, mut generation) = ("home", 1u64);
+        // A screen that replaces the current one by itself at a given time.
+        let mut later: Option<(std::time::Instant, &str)> = None;
+        // The loading screen starts its 120 ms when it is first read, whatever the host did before.
+        let mut unread = false;
         move |q| {
+            if let Some((_, next)) = later.filter(|(at, _)| *at <= std::time::Instant::now()) {
+                (screen, generation, later) = (next, generation + 1, None);
+            }
+            if unread && q[1] == "semantic" {
+                unread = false;
+                later = later.map(|(_, next)| (std::time::Instant::now() + std::time::Duration::from_millis(120), next));
+            }
             let seq = q[0].clone();
             let names = labels(screen);
             let reply = match q[1].as_str().unwrap() {
                 "status" => json!([seq, 0, generation, 7]),
                 "observe" if q[2].as_str() == Some(generation.to_string().as_str()) => json!([seq, 0, generation]),
                 "observe" => json!([seq, 0, generation, "fixture", names.iter().enumerate().map(|(i, l)| json!([i, l, 98, 3])).collect::<Vec<_>>()]),
-                "semantic" => json!([seq, 0, names.iter().map(|l| json!([l, "", "button", "", true, false])).collect::<Vec<_>>()]),
+                // Loading text is plain text (empty kind), as the helper reports it.
+                "semantic" => json!([seq, 0, names.iter().map(|l| json!([l, "", if *l == "Loading" { "" } else { "button" }, "", true, false])).collect::<Vec<_>>()]),
                 "resolve" if q[2]["handle"].as_i64().is_some_and(|handle| handle >= 0) => {
                     let handle = q[2]["handle"].as_u64().unwrap() as usize;
                     json!([seq, 0, {"r": (handle < names.len()).then_some(handle).into_iter().collect::<Vec<_>>(), "t": 0, "l": []}])
@@ -89,7 +105,14 @@ mod flows {
                     let (mut failed, mut artifact) = (None, None);
                     for (at, op) in q[6].as_array().unwrap().iter().enumerate() {
                         match op[0].as_str().unwrap() {
+                            "launch" if op[1] == "com.slow.loading" => {
+                                (screen, generation, changes, later, unread) =
+                                    ("loading", generation + 1, changes + 1, Some((std::time::Instant::now() + std::time::Duration::from_secs(3600), "settings")), true)
+                            }
+                            "launch" if op[1] == "com.slow.late" => (screen, generation, changes) = ("late", generation + 1, changes + 1),
                             "launch" => (screen, generation, changes) = ("settings", generation + 1, changes + 1),
+                            // The tap lands but the screen only reacts 400 ms later.
+                            "tap" if screen == "late" => (changes, later) = (changes + 1, Some((std::time::Instant::now() + std::time::Duration::from_millis(400), "settings"))),
                             "tap" | "tap_point" => (generation, changes) = (generation + 1, changes + 1),
                             "capture" => artifact = Some("a1"),
                             "settle" => {}
@@ -184,6 +207,29 @@ mod flows {
         // Two containing labels are ambiguous, never guessed.
         let two = act(&mut engine, r#"tap "Save""#).unwrap_err_or_text();
         assert!(two.contains("matches 2 items"), "{two}");
+    }
+
+    #[test]
+    fn a_loading_screen_is_reported_when_it_finishes_not_after_a_fixed_sleep() {
+        let (mut engine, _dir) = engine();
+        // A launch that is ready at once sets the baseline for this machine's round trips.
+        let begun = std::time::Instant::now();
+        act(&mut engine, r#"open app "com.slow.late""#).unwrap();
+        let baseline = begun.elapsed();
+        let begun = std::time::Instant::now();
+        let response = act(&mut engine, r#"open app "com.slow.loading""#).unwrap();
+        let extra = begun.elapsed().saturating_sub(baseline);
+        assert!(response.text.contains("Now on screen:\nWi-Fi"), "{}", response.text);
+        // The screen takes 120 ms; a fixed 500 ms sleep would add at least that much.
+        assert!(extra < std::time::Duration::from_millis(450), "{extra:?} more than a ready launch");
+    }
+
+    #[test]
+    fn a_tap_whose_change_lands_late_is_reported_as_changed() {
+        let (mut engine, _dir) = engine();
+        act(&mut engine, r#"open app "com.slow.late""#).unwrap();
+        let response = act(&mut engine, r#"tap "Late""#).unwrap();
+        assert!(response.text.contains("Now on screen:\nWi-Fi"), "{}", response.text);
     }
 
     #[test]

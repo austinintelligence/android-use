@@ -68,6 +68,8 @@ pub(crate) struct AgentState {
     pub(crate) mapping: Vec<String>,
     /// Whether the last target resolved by a containing label rather than an exact one.
     pub(crate) loose: bool,
+    /// The screen generation the last Android plan ran against, to tell whether it moved.
+    pub(crate) acted_from: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -301,6 +303,7 @@ impl Engine {
             max_mutations: MAX_MUTATIONS,
             ops: ops.into_boxed_slice(),
         };
+        self.agent.acted_from = scene.generation;
         let run = self.run_plan(&plan);
         self.end_image_unless_unchanged(&run, scene.generation);
         let receipt = run.map_err(crate::journal::explain_reuse)?;
