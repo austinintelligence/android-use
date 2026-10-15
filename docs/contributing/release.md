@@ -10,7 +10,7 @@ A release is a version bump merged to `main`, a tag, and then three publishing s
 
 ## 2. Rehearse
 
-After the PR merges, run the release workflow by hand on `main` (Actions → Release → Run workflow). Without a tag it builds the helper, all six platform archives, and the SBOM, runs the release gates, and publishes nothing. Fix anything that fails now; a failure after tagging costs a version number.
+After the PR merges, run the release workflow by hand on `main` (Actions → Release → Run workflow). Without a tag it builds the unsigned helper, all six platform archives (embedding the unsigned helper), and the SBOM, runs the release gates, and stops before signing: the signing and publishing jobs need a `v*` tag, so nothing is signed or published. It can run from any branch. Fix anything that fails now; a failure after tagging costs a version number.
 
 ## 3. Tag
 
@@ -18,7 +18,23 @@ After the PR merges, run the release workflow by hand on `main` (Actions → Rel
 git tag -a vX.Y.Z origin/main -m "android-use vX.Y.Z" && git push origin vX.Y.Z
 ```
 
-The workflow validates, builds the six archives with the signed helper embedded, writes `SHA256SUMS` and `release-manifest.json`, attests the assets, and creates the GitHub release with notes generated from the changelog.
+The workflow first checks that the tag's commit is on `main` and that CI passed on it. It then validates and builds the unsigned helper, signs it in an isolated job, builds the six archives with the signed helper embedded, writes `SHA256SUMS` and `release-manifest.json`, attests the assets, and creates the GitHub release with notes generated from the changelog.
+
+### How signing is isolated
+
+The `release-signing` job is the only one with the signing secrets. It has no checkout and runs no repository code, no npm, no cargo: it downloads the unsigned APK artifact and runs the SDK's `apksigner`. It reads `device/release-signer.sha256` at the tagged commit through the GitHub API, then runs `apksigner verify --print-certs` and fails unless there is exactly one signer whose certificate SHA-256 equals that pin. `cargo xtask workflow-policy` fails if a job with signing secrets is outside the `release-signing` environment, or if that job uses a checkout, setup action, cargo, npm, gradle, or xtask.
+
+### What the repository owner sets up once
+
+These are repository settings; the workflow cannot create them.
+
+1. **Environments** (Settings → Environments): create `release-signing`, `release`, and `npm`. For each, set deployment branches and tags to *Selected branches and tags* and add one tag rule, `v*`, so a branch or a non-release tag can never use them.
+2. **Required reviewer** on `release-signing` (and preferably `release`), with "Prevent self-review" on, so a person approves each signing.
+3. **Signing secrets**: move `AUBRIDGE_KEYSTORE_B64`, `AUBRIDGE_STORE_PASSWORD`, and `AUBRIDGE_KEY_PASSWORD` out of the repository secrets into the `release-signing` environment, then delete the repository-level copies.
+4. **Tag ruleset** (Settings → Rules → Rulesets): target tags `v*`, restrict creation to maintainers, and block updates and deletions.
+5. `npm` is reserved for npm publishing. Step 4 below is still run by hand, with 2FA; put any future npm token in this environment, not in repository secrets.
+
+Until step 3 is done the `sign` job fails for lack of secrets, which stops the release before publishing.
 
 ## 4. Publish
 

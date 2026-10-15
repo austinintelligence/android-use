@@ -67,6 +67,7 @@ pub(crate) fn check(text: &str) -> Vec<String> {
     } else if top_level(&lines, "permissions:").contains("write") {
         out.push("top-level permissions must be read-only; grant write per job".into());
     }
+    out.extend(jobs(&lines));
     let on = top_level(&lines, "on:");
     if !on.contains("push:") {
         if on.contains("push") {
@@ -74,6 +75,32 @@ pub(crate) fn check(text: &str) -> Vec<String> {
         }
     } else if let Some(why) = push_problem(&on) {
         out.push(why);
+    }
+    out
+}
+
+/// Signing secrets live only in a job in the `release-signing` environment, and that job runs no
+/// repository code: no checkout, no toolchain setup, no cargo, npm, gradle, or xtask.
+fn jobs(lines: &[&str]) -> Vec<String> {
+    let start = lines.iter().position(|l| l.starts_with("jobs:")).map_or(lines.len(), |n| n + 1);
+    let mut blocks: Vec<(&str, String)> = Vec::new();
+    for l in &lines[start..] {
+        match l.strip_prefix("  ").and_then(|r| r.strip_suffix(':')).filter(|r| !r.starts_with([' ', '#'])) {
+            Some(name) => blocks.push((name, String::new())),
+            None => blocks.last_mut().map_or((), |(_, b)| b.push_str(&format!("{l}\n"))),
+        }
+    }
+    let mut out = Vec::new();
+    for (name, body) in blocks {
+        let signing = body.contains("environment: release-signing");
+        if body.contains("secrets.AUBRIDGE") && !signing {
+            out.push(format!("job {name}: signing secrets belong only in a release-signing job"));
+        }
+        for banned in ["actions/checkout", "actions/setup-", "cargo ", "npm ", "gradle", "xtask"] {
+            if signing && body.lines().any(|l| !l.trim_start().starts_with('#') && l.contains(banned)) {
+                out.push(format!("job {name}: the signing job must not use `{banned}`"));
+            }
+        }
     }
     out
 }
@@ -140,6 +167,18 @@ mod tests {
             assert!(mentions(&security, what), "{what}: {security:?}");
         }
         assert!(mentions(&check("on: push\njobs: {}\n"), "no top-level permissions"));
+    }
+
+    #[test]
+    fn the_signing_job_runs_no_repository_code() {
+        let job = |steps: &str| format!("permissions: {{ contents: read }}\njobs:\n  sign:\n    environment: release-signing\n    steps:\n{steps}");
+        let secret = "      - run: echo ${{ secrets.AUBRIDGE_KEY_PASSWORD }}\n";
+        assert_eq!(check(&job(secret)), Vec::<String>::new());
+        let checkout = format!("      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n{secret}");
+        assert!(mentions(&check(&job(&checkout)), "must not use `actions/checkout`"));
+        assert!(mentions(&check(&job("      - run: npm ci\n")), "must not use `npm `"));
+        let leaked = "permissions: { contents: read }\njobs:\n  build:\n    steps:\n      - run: echo ${{ secrets.AUBRIDGE_KEY_PASSWORD }}\n";
+        assert!(mentions(&check(leaked), "belong only in a release-signing job"));
     }
 
     #[test]
