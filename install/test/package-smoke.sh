@@ -11,19 +11,19 @@ trap 'rm -rf "$W"' EXIT
 mkdir "$W/main" "$W/tarballs" "$W/prefix"
 
 # The same two packages publish-npm.mjs publishes.
-node "$ROOT/install/stage-platform.mjs" "$KEY" "$AU" "$W/platform"
+cd "$ROOT"
+node install/stage-platform.mjs "$KEY" "$AU" "$W/platform"
 for f in cli.mjs manifest.mjs LICENSE README.md package.json; do cp "$ROOT/install/$f" "$W/main/$f"; done
 node --input-type=module -e '
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
-const [root, main, key, version] = process.argv.slice(1);
-const { writeManifest } = await import(pathToFileURL(join(root, "install", "manifest.mjs")).href);
+const [main, key, version] = process.argv.slice(1);
+const { writeManifest } = await import("./install/manifest.mjs");
 const pj = JSON.parse(readFileSync(join(main, "package.json"), "utf8"));
 pj.optionalDependencies = { [`@androiduse/${key}`]: version };
 writeFileSync(join(main, "package.json"), JSON.stringify(pj, null, 2));
 writeManifest(main, ["cli.mjs", "manifest.mjs"]);
-' "$ROOT" "$W/main" "$KEY" "$VERSION"
+' "$W/main" "$KEY" "$VERSION"
 (cd "$W/main" && npm pack --silent --pack-destination "$W/tarballs")
 (cd "$W/platform" && npm pack --silent --pack-destination "$W/tarballs")
 
