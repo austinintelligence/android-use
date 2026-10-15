@@ -399,8 +399,13 @@ pub(crate) fn safe_url(value: &str) -> bool {
 /// Matching form of a label: case- and whitespace-insensitive, without the
 /// bracket characters agent-facing text strips, so a label quoted back as
 /// displayed ("Inbox 3" for "Inbox [3]") still matches.
+/// Format characters that draw nothing (zero-width, soft hyphen, BOM, word joiner, tags).
+pub(crate) fn invisible(c: char) -> bool {
+    matches!(c, '\u{00AD}' | '\u{FE00}'..='\u{FE0F}' | '\u{180B}'..='\u{180D}' | '\u{E0100}'..='\u{E01EF}' | '\u{034F}' | '\u{115F}'..='\u{1160}' | '\u{17B4}'..='\u{17B5}' | '\u{180E}' | '\u{206A}'..='\u{206F}' | '\u{3164}' | '\u{FFA0}' | '\u{FFF9}'..='\u{FFFB}' | '\u{1D173}'..='\u{1D17A}' | '\u{200B}'..='\u{200D}' | '\u{2060}'..='\u{2064}' | '\u{FEFF}' | '\u{E0000}'..='\u{E007F}')
+}
+
 pub(crate) fn normalized(value: &str) -> String {
-    let visible: String = value.chars().filter(|c| !matches!(c, '{' | '}' | '[' | ']')).collect();
+    let visible: String = value.chars().filter(|&c| !matches!(c, '{' | '}' | '[' | ']') && !invisible(c)).collect();
     let words = visible.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
     // A label truncated for display ends in an ellipsis; the text before it still names the item.
     match words.strip_suffix('\u{2026}') {
