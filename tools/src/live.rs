@@ -6,7 +6,8 @@
 //!
 //! Environment: `AU_BIN` (default `target/dist/au`), `AU_ADB` or `adb` on PATH, `BENCH_RUNS`
 //! (default 3), `BENCH_OUT` (default `target/benchmark-live.json`), `BENCH_BASELINE` (a previous
-//! report; with `BENCH_GATE=1` a lower success rate or a p95 more than 20% slower fails the run).
+//! report; with `BENCH_GATE=1` a lower success rate or a p95 more than 20% slower fails the run),
+//! `BENCH_POLICY` (`1.2`, the default, or `act-first`). Each policy's `GATES` are checked last.
 use super::{approx_tokens, ioe, quantile};
 use serde_json::{json, Value};
 use std::{
@@ -211,7 +212,7 @@ fn adb(args: &[&str]) {
 }
 
 /// Each run gets a fresh server: a new agent has seen no screen, so none is summarized as a diff.
-fn run_task(exe: &Path, task: &Task, latency: &mut BTreeMap<String, Vec<u128>>) -> Result<Run, String> {
+fn run_task(exe: &Path, task: &Task, act_first: bool, latency: &mut BTreeMap<String, Vec<u128>>) -> Result<Run, String> {
     let mut mcp = Mcp::start(exe)?;
     let mcp = &mut mcp;
     if let Some(activity) = task.reset {
@@ -232,11 +233,8 @@ fn run_task(exe: &Path, task: &Task, latency: &mut BTreeMap<String, Vec<u128>>) 
         latency.entry(format!("{tool} {}", command.split(' ').next().unwrap_or_default())).or_default().push(call.ms);
         Ok(call)
     };
-    'steps: for step in task.steps {
-        let (tool, command, expect) = match step {
-            Act(command, expect) => ("android_act", *command, *expect),
-            Read(command, expect) => ("android_read", *command, *expect),
-        };
+    'steps: for (tool, command, expect) in script(task.steps, act_first) {
+        let (command, expect) = (command.as_str(), expect);
         let call = turn(mcp, tool, command, &mut calls)?;
         if !call.error && call.text.contains(expect) {
             continue 'steps;
@@ -252,12 +250,78 @@ fn run_task(exe: &Path, task: &Task, latency: &mut BTreeMap<String, Vec<u128>>) 
     Ok(Run { trace, ok, calls, wall_ms: started.elapsed().as_millis(), result_tokens, output_tokens })
 }
 
+/// The turns of a task. Act-first acts without looking: consecutive actions become one `then`
+/// chain judged by its last result, and a toggle that must end `on` uses `set`.
+fn script(steps: &[Step], act_first: bool) -> Vec<(&'static str, String, &'static str)> {
+    let mut turns: Vec<(&'static str, String, &'static str)> = Vec::new();
+    for step in steps {
+        match *step {
+            Read(command, expect) => turns.push(("android_read", command.into(), expect)),
+            Act(command, expect) => {
+                let (command, expect) = match command.strip_prefix("tap ").filter(|_| act_first && expect == "=on") {
+                    Some(label) => (format!("set {label} on"), "on."),
+                    None => (command.to_string(), expect),
+                };
+                match turns.last_mut() {
+                    Some(last) if act_first && last.0 == "android_act" => *last = (last.0, format!("{} then {command}", last.1), expect),
+                    _ => turns.push(("android_act", command, expect)),
+                }
+            }
+        }
+    }
+    turns
+}
+
+/// Absolute gates as (name, policy or all, metric, most allowed); see `metric`.
+const GATES: &[(&str, Option<&str>, &str, f64)] = &[
+    ("misses over 10 runs", Some("1.2"), "misses", 1.0),
+    ("late-loading Settings misses", Some("1.2"), "late_misses", 0.0),
+    ("calls per task", Some("1.2"), "calls", 2.40),
+    ("calls per task", Some("act-first"), "calls", 1.6),
+    ("failure percent", Some("act-first"), "failure_pct", 2.0),
+    ("tap p50 ms", None, "android_act tap p50", 600.0),
+    ("tap p95 ms", None, "android_act tap p95", 1500.0),
+    ("type p95 ms", None, "android_act type p95", 4000.0),
+];
+/// Open-app p95 has no absolute number: `gate` holds it to 20% of a baseline.
+const LATE: [&str; 3] = ["find_setting_scroll", "toggle_wifi", "settings_search"];
+
+fn metric(out: &Value, key: &str) -> Option<f64> {
+    let tasks = out["tasks"].as_array()?;
+    let sum = |field: &str, keep: &dyn Fn(&Value) -> bool| tasks.iter().filter(|t| keep(t)).filter_map(|t| t[field].as_f64()).sum::<f64>();
+    let (success, attempts) = (out["success"].as_f64()?, out["attempts"].as_f64()?);
+    match key {
+        "misses" => Some(attempts.max(130.0) - success),
+        "late_misses" => {
+            Some(sum("runs", &|t| LATE.contains(&t["task"].as_str().unwrap_or_default())) - sum("success", &|t| LATE.contains(&t["task"].as_str().unwrap_or_default())))
+        }
+        "failure_pct" => Some(100.0 * (attempts - success) / attempts.max(1.0)),
+        "calls" => Some(sum("calls", &|_| true) / tasks.len().max(1) as f64),
+        _ => key.rsplit_once(' ').and_then(|(name, q)| out["latency"][name][q].as_f64()),
+    }
+}
+
+/// One pass/fail line per gate that applies to `policy`; a metric with no samples fails.
+fn gates(out: &Value, policy: &str) -> Vec<(String, bool)> {
+    let applies = GATES.iter().filter(|g| g.1.is_none_or(|p| p == policy));
+    applies
+        .map(|&(name, _, key, max)| match metric(out, key) {
+            Some(value) => (format!("gate {name}: {value:.2} (max {max}) {}", if value <= max + 1e-9 { "pass" } else { "FAIL" }), value <= max + 1e-9),
+            None => (format!("gate {name}: no samples FAIL"), false),
+        })
+        .collect()
+}
+
 pub fn run(root: &Path) -> Result<(), String> {
     let exe = env::var_os("AU_BIN").map(PathBuf::from).unwrap_or_else(|| root.join("target/dist").join(if cfg!(windows) { "au.exe" } else { "au" }));
     if !exe.is_file() {
         return Err("build target/dist/au (cargo build --profile dist -p au) before running the live benchmark".into());
     }
     let runs: usize = env::var("BENCH_RUNS").ok().and_then(|value| value.parse().ok()).unwrap_or(3);
+    let policy = env::var("BENCH_POLICY").unwrap_or_else(|_| "1.2".into());
+    if policy != "1.2" && policy != "act-first" {
+        return Err(format!("BENCH_POLICY must be 1.2 or act-first, not {policy}"));
+    }
     let mcp = Mcp::start(&exe)?;
     let mut latency: BTreeMap<String, Vec<u128>> = BTreeMap::new();
     let mut report = Vec::new();
@@ -265,7 +329,7 @@ pub fn run(root: &Path) -> Result<(), String> {
     println!("fixed_tokens_per_turn={}", mcp.fixed_tokens);
     let page = serve_page();
     for task in TASKS.iter().filter(|task| page || task.name != "chrome_page") {
-        let results: Vec<Run> = (0..runs).map(|_| run_task(&exe, task, &mut latency)).collect::<Result<_, _>>()?;
+        let results: Vec<Run> = (0..runs).map(|_| run_task(&exe, task, policy == "act-first", &mut latency)).collect::<Result<_, _>>()?;
         let mean = |f: &dyn Fn(&Run) -> f64| results.iter().map(f).sum::<f64>() / results.len() as f64;
         let entry = json!({
             "task": task.name,
@@ -304,6 +368,11 @@ pub fn run(root: &Path) -> Result<(), String> {
     if let Some(trace) = env::var_os("BENCH_TRACE") {
         fs::write(trace, serde_json::to_vec(&traces).map_err(ioe)?).map_err(ioe)?;
     }
+    let lines = gates(&out, &policy);
+    lines.iter().for_each(|line| println!("{}", line.0));
+    if lines.iter().any(|line| !line.1) {
+        return Err(format!("{policy} policy missed an absolute gate"));
+    }
     if env::var("BENCH_GATE").is_ok_and(|value| value == "1") {
         gate(&out, env::var_os("BENCH_BASELINE").map(PathBuf::from).ok_or("BENCH_GATE=1 needs BENCH_BASELINE")?)?;
     }
@@ -325,4 +394,51 @@ fn gate(now: &Value, baseline: PathBuf) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn out(success: u64, attempts: u64, calls: f64, late_success: u64, tap: (u64, u64), kind: u64) -> Value {
+        let task = |name: &str, success: u64| json!({"task": name, "success": success, "runs": 10, "calls": calls});
+        json!({"success": success, "attempts": attempts, "tasks": [task("find_setting_scroll", late_success), task("toggle_switch", 10)],
+            "latency": {"android_act tap": {"p50": tap.0, "p95": tap.1}, "android_act type": {"p50": 1, "p95": kind}}})
+    }
+    fn failed(out: &Value, policy: &str) -> Vec<String> {
+        gates(out, policy).into_iter().filter(|g| !g.1).map(|g| g.0).collect()
+    }
+
+    #[test]
+    fn gates_pass_and_fail_each_limit() {
+        assert!(failed(&out(129, 130, 2.4, 10, (600, 1500), 4000), "1.2").is_empty());
+        assert!(failed(&out(128, 130, 2.4, 10, (600, 1500), 4000), "1.2")[0].contains("misses over"));
+        assert!(failed(&out(129, 130, 2.4, 9, (600, 1500), 4000), "1.2")[0].contains("late-loading"));
+        assert!(failed(&out(130, 130, 2.41, 10, (600, 1500), 4000), "1.2")[0].contains("calls per task"));
+        assert!(failed(&out(130, 130, 2.0, 10, (600, 1500), 4000), "act-first")[0].contains("calls per task"));
+        assert!(failed(&out(127, 130, 1.6, 10, (600, 1500), 4000), "act-first")[0].contains("failure percent"));
+        assert!(failed(&out(128, 130, 1.6, 10, (600, 1500), 4000), "act-first").is_empty());
+        assert!(failed(&out(130, 130, 1.6, 10, (601, 1500), 4000), "act-first")[0].contains("tap p50"));
+        assert!(failed(&out(130, 130, 1.6, 10, (600, 1501), 4000), "act-first")[0].contains("tap p95"));
+        assert!(failed(&out(130, 130, 1.6, 10, (600, 1500), 4001), "act-first")[0].contains("type p95"));
+    }
+
+    #[test]
+    fn short_run_and_missing_samples_fail() {
+        assert!(failed(&out(30, 30, 2.0, 10, (1, 1), 1), "1.2").iter().any(|g| g.contains("misses over")));
+        let mut no_tap = out(130, 130, 1.0, 10, (1, 1), 1);
+        no_tap["latency"] = json!({});
+        assert!(failed(&no_tap, "act-first").iter().all(|g| g.contains("no samples")));
+    }
+
+    #[test]
+    fn act_first_chains_actions_and_sets() {
+        let steps = [Act("open app \"A\"", "Done"), Act("tap \"Benchmark toggle\"", "=on"), Read("status", "Ready"), Act("tap \"B\"", "ok")];
+        let first = script(&steps, true);
+        assert_eq!(first.len(), 3);
+        assert_eq!((first[0].1.as_str(), first[0].2), ("open app \"A\" then set \"Benchmark toggle\" on", "on."));
+        assert_eq!(first[2].0, "android_act");
+        assert_eq!(script(&steps, false).len(), 4);
+        assert_eq!(script(&steps, false)[1].1, "tap \"Benchmark toggle\"");
+    }
 }

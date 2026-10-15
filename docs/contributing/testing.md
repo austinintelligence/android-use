@@ -20,6 +20,8 @@ Both run against one device or emulator that has the helper installed and enable
 
 **`cargo xtask benchmark-live`** drives `au serve --mcp` over thirteen tasks and reports calls, tokens, time, and success. Variables: `AU_BIN` (default `target/dist/au`), `BENCH_RUNS` (default 3), `BENCH_OUT`, `BENCH_BASELINE` with `BENCH_GATE=1` (fail on a lower success rate or a p95 more than 20% slower), `BENCH_TRACE`, `BENCH_VERBOSE`.
 
+`BENCH_POLICY` picks the scripted agent: `1.2` (default; reads on a miss, taps toggles) or `act-first` (no first read, chained actions, `set` for switches). The run ends by printing one pass/fail line per absolute gate (table `GATES` in `tools/src/live.rs`) and fails if any missed. With `BENCH_RUNS=10`: 1.2 allows one miss in 130 and none on `find_setting_scroll`, `toggle_wifi`, `settings_search`, at 2.40 calls per task or fewer; act-first needs 1.6 or fewer at 98% success or better. Both: tap p50 ≤ 600 ms and p95 ≤ 1,500 ms, type p95 ≤ 4,000 ms; open-app p95 stays under the 20% `BENCH_BASELINE` gate.
+
 **`cargo xtask emulator-e2e`** exercises the emulator workflow on one managed emulator: create, start, setup, read and act, a refused second serve, restart with enrollment intact, and a snapshot save and restore. The first run waits while you turn on Android-Use under Settings → Accessibility on the emulator (`E2E_WINDOW=1` shows it); later runs reuse that. Variables: `E2E_NAME` (default `au-e2e`), `E2E_WINDOW=1`, `E2E_DESTROY=1`. State is under `target/e2e-home`.
 
 ## Recording the README demo
