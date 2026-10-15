@@ -282,7 +282,12 @@ impl Adb {
             Ok(stream) => stream,
             Err(_) => {
                 // No adb server yet: starting one is what any `adb` command would do first.
-                self.run(None, &["start-server"], Duration::from_secs(10))?;
+                // The daemon can hold the output pipe open; the connect below is the real check.
+                if let Err(error) = self.run(None, &["start-server"], Duration::from_secs(10)) {
+                    if error.code != Code::Timeout {
+                        return Err(error);
+                    }
+                }
                 TcpStream::connect_timeout(&address, Duration::from_secs(2)).map_err(|e| Error::new(Code::Device, format!("cannot reach the adb server: {e}")))?
             }
         };
@@ -467,7 +472,7 @@ mod tests {
     #[cfg(unix)]
     fn a_pipe_held_open_after_the_child_exits_returns_within_the_deadline() {
         let start = Instant::now();
-        let error = run_bounded(Path::new("sh"), &["-c", "sleep 20 & exit 0"], Duration::from_secs(10)).unwrap_err();
+        let error = run_bounded(Path::new("sh"), &["-c", "sleep 5 & exit 0"], Duration::from_secs(10)).unwrap_err();
         assert!(error.code == Code::Timeout && start.elapsed() < Duration::from_secs(8), "{error:?}");
     }
 

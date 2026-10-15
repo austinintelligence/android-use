@@ -203,7 +203,7 @@ pub fn install() -> Result<Value> {
         .args(&wanted)
         .spawn()
         .map_err(|e| Error::new(Code::Device, format!("sdkmanager failed to start (it needs a JDK; set JAVA_HOME): {e}")))?;
-    let status = crate::device::wait_deadline(&mut child, Duration::from_secs(1800))?;
+    let status = crate::device::wait_deadline(&mut child, Duration::from_secs(4 * 3600))?;
     if !status.success() {
         return Err(Error::new(Code::Device, format!("sdkmanager exited with {status}; nothing more was installed")));
     }
@@ -284,7 +284,7 @@ fn is_ours_settled(adb: &Adb, dir: &Path, endpoint: &str) -> bool {
 fn require_target(l: &Layout, name: &str) -> Result<PathBuf> {
     let dir = l.target(name);
     let owned = read_json(&dir.join("target.json")).is_some_and(|t| t["kind"] == "emulator" && t["avd"] == name);
-    if valid_name(name) && owned && l.avd_home().join(format!("{name}.avd")).is_dir() {
+    if valid_name(name) && owned {
         Ok(dir)
     } else {
         Err(Error::new(Code::Args, format!("{name} is not an emulator created by au, so au will not touch it; see au emulator list")))
@@ -557,9 +557,10 @@ mod tests {
         // A foreign AVD sits in the SDK's home, not au's; a target without au's record is refused too.
         fs::create_dir_all(l.target("foreign")).unwrap();
         assert_eq!(require_target(&l, "foreign").unwrap_err().code, Code::Args);
-        fs::write(l.target("foreign").join("target.json"), json!({"kind":"emulator","avd":"foreign"}).to_string()).unwrap();
+        fs::write(l.target("foreign").join("target.json"), json!({"kind":"emulator","avd":"other"}).to_string()).unwrap();
         assert_eq!(require_target(&l, "foreign").unwrap_err().code, Code::Args);
-        fs::create_dir_all(l.avd_home().join("foreign.avd")).unwrap();
+        // A half-destroyed target (AVD already gone) can still be destroyed again.
+        fs::write(l.target("foreign").join("target.json"), json!({"kind":"emulator","avd":"foreign"}).to_string()).unwrap();
         assert!(require_target(&l, "foreign").is_ok());
         fs::remove_dir_all(base).unwrap();
     }
