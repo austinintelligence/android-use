@@ -18,7 +18,7 @@ After the PR merges, run the release workflow by hand on `main` (Actions → Rel
 git tag -a vX.Y.Z origin/main -m "android-use vX.Y.Z" && git push origin vX.Y.Z
 ```
 
-The helper's `versionCode` is computed from `VERSION` (major×1,000,000 + minor×1,000 + patch), so a release needs no manual bump; `cargo xtask version` checks the formula. Only the release build type signs with the pinned key, and only when `AUBRIDGE_SIGNING_PROPERTIES` is set (the workflow sets it).
+The helper's `versionCode` is computed from `VERSION` (major×1,000,000 + minor×1,000 + patch), so a release needs no manual bump; `cargo xtask version` checks the formula. Only the release build type signs with the pinned key, and only when `AUBRIDGE_SIGNING_PROPERTIES` is set (the workflow sets it). The pinned certificate hash in `device/release-signer.sha256` is compiled into `au`; rotating the key means changing that file in the same release. A newer `au` upgrades an older helper by itself on connect; going back to an older helper needs `au uninstall` first.
 
 The workflow validates, builds the six archives with the signed helper embedded, writes `SHA256SUMS` and `release-manifest.json`, attests the assets, and creates the GitHub release with notes generated from the changelog.
 

@@ -40,6 +40,7 @@ impl Bridge {
         if let Ok(bridge) = Self::handshake(&adb, &device) {
             return Ok(bridge);
         }
+        crate::install::upgrade_helper(&adb, &device)?;
         adb.start_helper(&device)?;
         let deadline = Instant::now() + Duration::from_secs(8);
         loop {

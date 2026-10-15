@@ -144,9 +144,9 @@ pub fn setup(apk: Option<&Path>, wait_for_approval: bool) -> Result<Value> {
     let paths = Paths::discover()?;
     let adb = Adb::discover()?;
     let (device, enrolled_now) = adb.resolve_or_enroll(&paths)?;
-    let apk = apk_to_install(apk, &paths)?;
+    let (apk, embedded) = apk_to_install(apk, &paths)?;
     adb.wait_boot_completed(&device.endpoint, std::time::Duration::from_secs(120))?;
-    adb.install(&device, &apk)?;
+    adb.install(&device, &apk, embedded)?;
     adb.start_helper(&device)?;
     let installed = adb.package_installed(&device, "dev.codex.aubridge")?;
     let mut accessibility = adb.accessibility_enabled(&device).unwrap_or(false);
@@ -298,14 +298,30 @@ pub fn uninstall() -> Result<Value> {
 }
 /// The helper APK to install: the path given, else `aubridge.apk` beside `au`, else the copy built
 /// into release binaries (written to private state first, after its hash is checked).
-fn apk_to_install(given: Option<&Path>, paths: &Paths) -> Result<PathBuf> {
+fn apk_to_install(given: Option<&Path>, paths: &Paths) -> Result<(PathBuf, bool)> {
     if let Some(path) = given.map(PathBuf::from).or_else(bundled_apk) {
-        return if path.is_file() { Ok(path) } else { Err(Error::new(Code::Args, "Android-Use helper APK was not found")) };
+        return if path.is_file() { Ok((path, false)) } else { Err(Error::new(Code::Args, "Android-Use helper APK was not found")) };
     }
     let bytes = embedded_apk().ok_or_else(|| Error::new(Code::Args, "pass the Android-Use helper APK path or place aubridge.apk beside au"))?;
     let path = paths.root.join("aubridge.apk");
     fs::write(&path, bytes)?;
-    Ok(path)
+    Ok((path, true))
+}
+
+/// The `versionCode` this `au` expects of the helper: major*1,000,000 + minor*1,000 + patch.
+fn expected_version_code() -> u64 {
+    [env!("CARGO_PKG_VERSION_MAJOR"), env!("CARGO_PKG_VERSION_MINOR"), env!("CARGO_PKG_VERSION_PATCH")].iter().fold(0, |a, p| a * 1000 + p.parse::<u64>().unwrap_or(0))
+}
+/// Installs the embedded helper over an older installed one. Never downgrades, and does nothing
+/// when this `au` embeds no helper or the helper is not installed.
+pub(crate) fn upgrade_helper(adb: &Adb, d: &crate::device::Device) -> Result<()> {
+    let Some(bytes) = embedded_apk() else { return Ok(()) };
+    if adb.helper_version_code(d)?.is_none_or(|installed| installed >= expected_version_code()) {
+        return Ok(());
+    }
+    let path = Paths::discover()?.root.join("aubridge.apk");
+    fs::write(&path, bytes)?;
+    adb.install(d, &path, true)
 }
 
 #[cfg(embedded_apk)]

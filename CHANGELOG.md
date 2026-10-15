@@ -6,8 +6,11 @@
 
 - Debug and example Android builds never use the release signing key; the helper's release build uses it only when `AUBRIDGE_SIGNING_PROPERTIES` names a signing file.
 
+- A release `au` installs only its embedded helper or an APK whose signer certificate matches the pinned release key (`device/release-signer.sha256`), checked on the host before `adb install`. It never passes `-d` (downgrade), and passes `-t` only in dev builds.
+
 ### Changed
 
+- au 1.3 upgrades the helper to 1.3 by itself on connect (it reads the installed helper's `versionCode`); going back to 1.2 needs `au uninstall` first.
 - The helper's `versionCode` is computed from `VERSION` (1.3.0 is 1,003,000), and `cargo xtask version` checks it.
 
 ### Fixed

@@ -54,6 +54,11 @@ Do not retry the whole command. Read the screen and work out what already happen
 
 `notifications` needs notification access: open the Android-Use app on the device and tap **Open notification access settings**. Notifications posted before access was granted are not listed.
 
+## The helper APK is refused or a newer helper is installed
+
+- *not signed by the Android Use release key*: a release `au` installs only its own helper or an APK signed with the pinned release key. Use the helper that came with `au`.
+- *a newer helper is installed*: `au` never downgrades. Run `au uninstall`, then `au setup`, to go back to an older helper.
+
 ## Optional capture is unavailable
 
 Run `au read capabilities`. Camera, microphone, and location need Android permission; screen recording needs approval in the Android-Use app for the current helper process.
