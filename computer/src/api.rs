@@ -29,6 +29,10 @@ pub enum Code {
     Permission,
     /// A label the agent asked for is not on the current screen or page.
     Missing,
+    /// Preflight: the phone is locked, its screen is off, or the helper is gone.
+    Locked,
+    ScreenOff,
+    HelperKilled,
 }
 impl Code {
     pub fn wire(self) -> &'static str {
@@ -51,6 +55,9 @@ impl Code {
             Self::Unsupported => "unsupported",
             Self::Permission => "permission",
             Self::Missing => "missing",
+            Self::Locked => "locked",
+            Self::ScreenOff => "screen_off",
+            Self::HelperKilled => "helper_killed",
         }
     }
 }

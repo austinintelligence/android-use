@@ -27,6 +27,10 @@ pub trait DeviceLink {
     fn device(&mut self) -> Result<Device>;
     fn helper(&mut self) -> Result<Bridge>;
     fn chrome(&mut self) -> Result<Browser>;
+    /// The phone's state as the helper reports it (`screen_on`, `locked`,
+    /// `battery_exempt`, `talkback`, ...). A helper that cannot answer is a
+    /// `HelperKilled` error; a device that cannot be reached keeps its own code.
+    fn env(&mut self) -> Result<serde_json::Value>;
     fn reset(&mut self);
 }
 
@@ -114,9 +118,23 @@ impl DeviceLink for AdbLink {
         Browser::connect(self.clone())
     }
 
+    fn env(&mut self) -> Result<serde_json::Value> {
+        self.resolved()?;
+        match self.helper().and_then(|mut bridge| bridge.query("env", serde_json::Value::Null)) {
+            // A helper from before 1.3 has no `env`; it is running, so let the act proceed.
+            Err(error) if error.code == Code::Unsupported => Ok(json!({})),
+            Err(_) => Err(helper_killed()),
+            ok => ok,
+        }
+    }
+
     fn reset(&mut self) {
         self.device = None;
     }
+}
+
+pub(crate) fn helper_killed() -> Error {
+    Error::plain(Code::HelperKilled, "The Android-Use helper is not running. Run `au setup`.")
 }
 
 #[cfg(test)]
@@ -134,6 +152,10 @@ mod fake {
     pub(crate) struct FakeLink {
         script: Rc<RefCell<Script>>,
         pub(crate) helper_connects: Rc<RefCell<u32>>,
+        /// What the phone reports about itself; tests set `screen_on`, `locked`, `stopped`.
+        pub(crate) phone: Rc<RefCell<Value>>,
+        /// The helper process is gone: `env` fails as `AdbLink` does when nothing answers.
+        pub(crate) killed: Rc<std::cell::Cell<bool>>,
     }
 
     struct Scripted {
@@ -144,7 +166,7 @@ mod fake {
 
     impl FakeLink {
         pub(crate) fn new(script: impl FnMut(&Value) -> Option<Value> + 'static) -> Self {
-            Self { script: Rc::new(RefCell::new(Box::new(script))), helper_connects: Rc::default() }
+            Self { script: Rc::new(RefCell::new(Box::new(script))), helper_connects: Rc::default(), phone: Rc::default(), killed: Rc::default() }
         }
     }
 
@@ -172,6 +194,12 @@ mod fake {
         }
         fn chrome(&mut self) -> Result<Browser> {
             Err(Error::new(Code::Device, "a FakeLink has no Chrome"))
+        }
+        fn env(&mut self) -> Result<Value> {
+            if self.killed.get() {
+                return Err(helper_killed());
+            }
+            Ok(self.phone.borrow().clone())
         }
         fn reset(&mut self) {}
     }

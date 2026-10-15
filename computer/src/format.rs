@@ -96,11 +96,24 @@ fn quoted(value: &str) -> String {
     format!("\"{}\"", display_n(value, 64))
 }
 
+/// Optional-setting warnings from a status or env object; empty when the helper did not report them.
+pub fn env_notes(value: &Value) -> Vec<&'static str> {
+    let mut notes = Vec::new();
+    if value.get("battery_exempt").and_then(Value::as_bool) == Some(false) {
+        notes.push("Battery optimization is on for Android-Use, so Android may stop the helper in the background. Exempt it under Settings → Battery.");
+    }
+    if value.get("talkback").and_then(Value::as_bool) == Some(true) {
+        notes.push("TalkBack is on and can change what the screen reports.");
+    }
+    notes
+}
+
 pub(crate) fn format_status(value: &Value) -> String {
     let connected = value.get("ok").and_then(Value::as_u64) == Some(1);
     let control = value.get("cap").and_then(Value::as_u64).unwrap_or(0) != 0;
+    let notes = env_notes(value).iter().fold(String::new(), |all, note| format!("{all} {note}"));
     match (connected, control) {
-        (true, true) => "Ready. Android Use is connected and can read and control the screen.".into(),
+        (true, true) => format!("Ready. Android Use is connected and can read and control the screen.{notes}"),
         (true, false) => "Not ready: the Android Use helper is running, but its Accessibility service is off. Ask the user to turn on Android-Use under Settings → Accessibility on the device, then retry.".into(),
         _ => "Android Use is not ready. Ask the user to run au doctor on the computer, then retry.".into(),
     }
@@ -636,7 +649,7 @@ pub(crate) fn plain_error_model(error: &Error) -> String {
     match error.code {
         Code::Args | Code::Bounds | Code::Unsupported if message.contains("Use ") => bounded_output(message, 320),
         Code::Args | Code::Bounds | Code::Unsupported => bounded_output(format!("The command needs a correction: {message}."), 320),
-        Code::Ambiguous | Code::Missing | Code::Partial => bounded_output(message, 480),
+        Code::Ambiguous | Code::Missing | Code::Partial | Code::Locked | Code::ScreenOff | Code::HelperKilled => bounded_output(message, 480),
         Code::Permission => "Android Use's Accessibility service is off or a required Android permission is missing. Ask the user to turn on Android-Use under Settings → Accessibility on the device (and grant any permission the task needs), then retry.".into(),
         Code::Artifact => bounded_output(format!("{message}. Capture the screen before using an image alias."), 320),
         Code::Stale => "The screen changed before anything ran, so nothing was done. Retry the same command.".into(),

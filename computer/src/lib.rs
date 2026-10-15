@@ -14,7 +14,7 @@ pub mod emulator;
 pub mod engine;
 mod format;
 pub mod link;
-pub use format::render_screen;
+pub use format::{env_notes, render_screen};
 pub mod install;
 mod journal;
 mod marks;

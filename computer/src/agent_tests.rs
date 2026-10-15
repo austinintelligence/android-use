@@ -150,6 +150,39 @@ mod flows {
     }
 
     #[test]
+    fn preflight_reports_locked_screen_off_and_helper_killed_with_one_step_each() {
+        let dir = tempfile::tempdir().unwrap();
+        let link = FakeLink::new(fake_helper(phone_screenshot()));
+        let (phone, killed, connects) = (link.phone.clone(), link.killed.clone(), link.helper_connects.clone());
+        let mut engine = Engine::with_link(crate::device::Paths::at(dir.path().to_path_buf()).unwrap(), Box::new(link)).unwrap();
+        let tap = |engine: &mut Engine| act(engine, r#"open app "Settings""#).map(|r| r.text).map_err(|e| (e.code.wire(), e.message));
+        let say = |code: &'static str, text: &str| Err((code, text.to_owned()));
+        *phone.borrow_mut() = json!({"screen_on": false, "locked": true});
+        assert_eq!(tap(&mut engine), say("screen_off", "The screen is off. Press the phone's power button, then resend."));
+        *phone.borrow_mut() = json!({"screen_on": true, "locked": true});
+        assert_eq!(tap(&mut engine), say("locked", "The phone is locked. Unlock it, then resend."));
+        assert_eq!(*connects.borrow(), 0, "nothing reached the helper while the phone was unusable");
+        killed.set(true);
+        assert_eq!(tap(&mut engine), say("helper_killed", "The Android-Use helper is not running. Run `au setup`."));
+        killed.set(false);
+        *phone.borrow_mut() = json!({"screen_on": true, "locked": false});
+        assert!(tap(&mut engine).unwrap().starts_with("Done"), "the same request runs once the phone is fixed");
+    }
+
+    #[test]
+    fn preflight_runs_on_the_first_act_and_after_a_failure_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let link = FakeLink::new(fake_helper(phone_screenshot()));
+        let phone = link.phone.clone();
+        let mut engine = Engine::with_link(crate::device::Paths::at(dir.path().to_path_buf()).unwrap(), Box::new(link)).unwrap();
+        act(&mut engine, r#"open app "Settings""#).unwrap();
+        *phone.borrow_mut() = json!({"locked": true});
+        assert!(act(&mut engine, r#"tap "Wi-Fi""#).is_ok(), "a healthy session is not re-checked on every act");
+        assert!(act(&mut engine, r#"tap "Nope""#).unwrap().text.contains("No item labeled"));
+        assert_eq!(act(&mut engine, r#"tap "Wi-Fi""#).err().map(|e| e.code), Some(Code::Locked), "a failure makes the next act check again");
+    }
+
+    #[test]
     fn chains_across_screens_and_reports_the_screen_it_led_to() {
         let (mut engine, _dir) = engine();
         let response = act(&mut engine, r#"open app "Settings" then tap "Wi-Fi""#).unwrap();

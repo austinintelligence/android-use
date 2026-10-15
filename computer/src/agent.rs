@@ -68,6 +68,8 @@ pub(crate) struct AgentState {
     pub(crate) mapping: Vec<String>,
     /// Whether the last target resolved by a containing label rather than an exact one.
     pub(crate) loose: bool,
+    /// Preflight passed and nothing has failed since; the next act skips it.
+    pub(crate) verified: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -128,7 +130,12 @@ impl Engine {
         if let Some((_, earlier)) = self.agent.replies.iter().find(|(seen, _)| key.as_ref() == Some(seen)) {
             return copy(earlier);
         }
+        // Not cached: after the user fixes the phone, the same request must run again.
+        if !self.agent.verified {
+            self.preflight()?;
+        }
         let result = self.run_command(actions, request_identity);
+        self.agent.verified = matches!(&result, Ok(response) if response.status == "done" && !response.failed);
         if let Some(key) = key {
             self.agent.replies.truncate(15);
             self.agent.replies.insert(0, (key, copy(&result)));

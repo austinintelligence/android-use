@@ -131,7 +131,15 @@ impl Engine {
                     std::thread::sleep(std::time::Duration::from_millis(600));
                     (g, cap) = self.bridge_read(|bridge| bridge.status())?;
                 }
-                Ok(json!({"ok":1,"g":g,"cap":cap}))
+                let mut status = json!({"ok":1,"g":g,"cap":cap});
+                if let Ok(env) = self.bridge_read(|bridge| bridge.query("env", Value::Null)) {
+                    for key in ["battery_exempt", "talkback"] {
+                        if let Some(flag) = env.get(key) {
+                            status[key] = flag.clone();
+                        }
+                    }
+                }
+                Ok(status)
             }
             Read::Browser { op } => self.browser_read(|browser| browser.read(op.clone())).and_then(|page| self.journal.reconcile(BROWSER).map(|_| page)),
             Read::Capabilities => self.bridge_read(|bridge| bridge.query("capabilities", Value::Null)),
@@ -152,6 +160,21 @@ impl Engine {
         };
         self.scene = Some(scene.clone());
         Ok(scene)
+    }
+
+    /// Asks the phone for its state before the first act of a session and after any failure, and
+    /// turns the states no act can work in into one typed result with one next step each.
+    pub(crate) fn preflight(&mut self) -> Result<()> {
+        let env = self.link.env()?;
+        let on = |key: &str, default: bool| env.get(key).and_then(Value::as_bool).unwrap_or(default);
+        let (code, message) = if !on("screen_on", true) {
+            (Code::ScreenOff, "The screen is off. Press the phone's power button, then resend.")
+        } else if on("locked", false) {
+            (Code::Locked, "The phone is locked. Unlock it, then resend.")
+        } else {
+            return Ok(());
+        };
+        Err(Error::plain(code, message))
     }
 
     pub(crate) fn read_page(&mut self) -> Result<Value> {
