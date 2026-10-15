@@ -102,7 +102,7 @@ impl DeviceLink for AdbLink {
         if let Ok(bridge) = Self::handshake(&adb, &device) {
             return Ok(bridge);
         }
-        adb.start_helper(&device)?;
+        adb.start_helper(&device, false)?;
         let deadline = Instant::now() + Duration::from_secs(8);
         loop {
             match Self::handshake(&adb, &device) {
@@ -131,6 +131,10 @@ impl DeviceLink for AdbLink {
     fn reset(&mut self) {
         self.device = None;
     }
+}
+
+pub(crate) fn stopped() -> Error {
+    Error::plain(Code::Stopped, "Android-Use was stopped from its notification on the phone. Run `au setup` to turn it on again, then resend.")
 }
 
 pub(crate) fn helper_killed() -> Error {

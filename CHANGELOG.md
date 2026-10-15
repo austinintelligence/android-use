@@ -6,6 +6,8 @@
 
 - Device preflight: before the first action of a session and after any failure, Android Use checks the phone and returns a typed `locked`, `screen_off`, or `helper_killed` result with one next step, instead of a timeout or a permission error. The helper has a new `env` operation. `au status` and `au doctor` report when battery optimization is on for Android-Use or TalkBack is enabled. `cargo xtask emulator-e2e` covers the three results.
 
+- The Android-Use app shows each grant (Accessibility, notification access, notification permission, battery exemption), the helper version, and the last contact from the computer. The foreground notification has a **Stop** action; afterwards `act` returns a typed `stopped` result until `au setup` runs. The launcher and notification icons are vector drawables.
+
 ### Fixed
 
 - `cargo xtask` gates fail closed: a missing release artifact fails the size gate instead of measuring 0 bytes, and the stale-version check flags only standalone versions such as `v2` or `v3.1`, not words that contain one (`dev2`).

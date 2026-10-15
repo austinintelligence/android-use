@@ -167,6 +167,9 @@ impl Engine {
     pub(crate) fn preflight(&mut self) -> Result<()> {
         let env = self.link.env()?;
         let on = |key: &str, default: bool| env.get(key).and_then(Value::as_bool).unwrap_or(default);
+        if on("stopped", false) {
+            return Err(crate::link::stopped());
+        }
         let (code, message) = if !on("screen_on", true) {
             (Code::ScreenOff, "The screen is off. Press the phone's power button, then resend.")
         } else if on("locked", false) {

@@ -22,7 +22,7 @@ A successful action says `Done.` (plus a note when a label was only a close matc
 | `Check failed` / `Waited …` | A verify or wait was false. | Read, then decide. |
 | `Partly done` | Some steps changed the device, then one failed. | Read and reconcile; never repeat the whole command. |
 | `uncertain` | `unknown`: it may have run. | Read before any other change. |
-| `locked`, `screen_off`, `helper_killed` | Nothing ran. | Do the step named, resend. |
+| `locked`, `screen_off`, `helper_killed`, `stopped` | Nothing ran. | Do the step named, resend. |
 | `missing the Android permission` | Android denied a capability. | Ask the user to grant it on the device. |
 
 ## Images and coordinates

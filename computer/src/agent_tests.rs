@@ -162,6 +162,8 @@ mod flows {
         *phone.borrow_mut() = json!({"screen_on": true, "locked": true});
         assert_eq!(tap(&mut engine), say("locked", "The phone is locked. Unlock it, then resend."));
         assert_eq!(*connects.borrow(), 0, "nothing reached the helper while the phone was unusable");
+        *phone.borrow_mut() = json!({"stopped": true});
+        assert_eq!(tap(&mut engine), say("stopped", "Android-Use was stopped from its notification on the phone. Run `au setup` to turn it on again, then resend."));
         killed.set(true);
         assert_eq!(tap(&mut engine), say("helper_killed", "The Android-Use helper is not running. Run `au setup`."));
         killed.set(false);

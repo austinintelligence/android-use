@@ -260,8 +260,14 @@ impl Adb {
     pub fn browser_installed(&self, d: &Device) -> Result<bool> {
         self.package_installed(d, "com.android.chrome")
     }
-    pub(crate) fn start_helper(&self, d: &Device) -> Result<()> {
-        self.run(Some(&d.endpoint), &["shell", "am", "start-foreground-service", "-n", "dev.codex.aubridge/.BridgeService"], Duration::from_secs(8))?;
+    /// `resume` turns a helper that was stopped from its notification back on; the host's
+    /// own reconnects pass false, so Stop is not undone behind the user's back.
+    pub(crate) fn start_helper(&self, d: &Device, resume: bool) -> Result<()> {
+        let mut args = vec!["shell", "am", "start-foreground-service", "-n", "dev.codex.aubridge/.BridgeService"];
+        if resume {
+            args.extend(["--ez", "resume", "true"]);
+        }
+        self.run(Some(&d.endpoint), &args, Duration::from_secs(8))?;
         Ok(())
     }
     /// Opens a stream to an abstract socket on the device by speaking to the adb server directly

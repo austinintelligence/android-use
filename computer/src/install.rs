@@ -147,7 +147,7 @@ pub fn setup(apk: Option<&Path>, wait_for_approval: bool) -> Result<Value> {
     let apk = apk_to_install(apk, &paths)?;
     adb.wait_boot_completed(&device.endpoint, std::time::Duration::from_secs(120))?;
     adb.install(&device, &apk)?;
-    adb.start_helper(&device)?;
+    adb.start_helper(&device, true)?;
     let installed = adb.package_installed(&device, "dev.codex.aubridge")?;
     let mut accessibility = adb.accessibility_enabled(&device).unwrap_or(false);
     let mut settings_opened = false;

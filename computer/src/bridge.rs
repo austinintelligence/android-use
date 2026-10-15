@@ -222,6 +222,7 @@ fn helper_error(a: &[Value]) -> Error {
         Some(5) => Code::Unsupported,
         Some(6) => Code::Bounds,
         Some(10) => Code::Permission,
+        Some(11) => return crate::link::stopped(),
         _ => Code::Helper,
     };
     Error::new(code, a.get(2).and_then(Value::as_str).unwrap_or("helper rejected request"))
@@ -236,6 +237,12 @@ fn u64v(v: &Value) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_stopped_helper_is_its_own_result() {
+        let error = helper_error(&[json!(3), json!(11)]);
+        assert_eq!((error.code, error.message.contains("au setup")), (Code::Stopped, true));
+    }
     #[test]
     fn rejects_oversize_header() {
         let l = (MAX_FRAME as u32 + 1).to_be_bytes();

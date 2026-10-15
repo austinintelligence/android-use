@@ -126,6 +126,11 @@ fn body(root: &Path, au: &str, name: &str, home: &Path) -> Result<Checks, String
     let (off, on_again): (&[&str], &[&str]) = (&["pm", "disable-user", "--user", "0", "dev.codex.aubridge"], &["pm", "enable", "dev.codex.aubridge"]);
     checks.push(("reports a helper that is not running", typed(&[off, &["am", "force-stop", "dev.codex.aubridge"]], &[on_again], "helper_killed")));
 
+    let service: &[&str] = &["am", "start-foreground-service", "-n", "dev.codex.aubridge/.BridgeService"];
+    let stop: Vec<&str> = [service, &["-a", "dev.codex.aubridge.action.STOP"]].concat();
+    let resume: Vec<&str> = [service, &["--ez", "resume", "true"]].concat();
+    checks.push(("reports a helper stopped from its notification", typed(&[&stop], &[&resume], "stopped")));
+
     // A second serve for the same target must be refused while the first holds the lock.
     let mut first = Command::new(au).args(["--target", name, "serve", "--mcp"]).env("AU_HOME", home).stdin(Stdio::piped()).stdout(Stdio::null()).spawn().map_err(ioe)?;
     thread::sleep(Duration::from_secs(3));

@@ -8,6 +8,7 @@ import android.net.Credentials;
 import android.net.LocalServerSocket;
 import android.net.LocalSocket;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.Base64;
 
@@ -48,6 +49,9 @@ final class Bridge implements AutoCloseable {
                         return t;
                     },
                     new ThreadPoolExecutor.AbortPolicy());
+    /** When the host last sent a request (uptime ms), for the app's status screen; 0 = never. */
+    static volatile long lastContact;
+
     private volatile boolean open = true;
     private LocalServerSocket bootstrap, command;
 
@@ -137,6 +141,9 @@ final class Bridge implements AutoCloseable {
         long seq = q.optLong(0);
         try {
             String name = q.getString(1);
+            lastContact = SystemClock.elapsedRealtime();
+            if (BridgeService.stopped(context) && !"env".equals(name) && !"status".equals(name))
+                return err(seq, 11);
             Ui ui = Ui.get();
             switch (name) {
                 case "status":
@@ -213,7 +220,8 @@ final class Bridge implements AutoCloseable {
                 .put(
                         "battery_exempt",
                         power.isIgnoringBatteryOptimizations(context.getPackageName()))
-                .put("talkback", on.contains("talkback"));
+                .put("talkback", on.contains("talkback"))
+                .put("stopped", BridgeService.stopped(context));
     }
 
     private static final long APPS_TTL_MS = 30_000;
