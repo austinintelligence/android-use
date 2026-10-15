@@ -389,7 +389,8 @@ mod handshake_tests {
         assert_eq!(log.borrow()[0], h["challenge"]);
         let reply = h["command_reply"].clone();
         let mut peer = Peer::new(move |_| Some(reply.clone()));
-        prove_command(&mut peer, &key, &challenge, "token", "nonce").unwrap();
+        let hello = h["command"].as_array().unwrap();
+        prove_command(&mut peer, &key, &challenge, hello[2].as_str().unwrap(), hello[3].as_str().unwrap()).unwrap();
         assert_eq!(peer.log.borrow()[0], h["command"]);
     }
 
