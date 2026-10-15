@@ -83,6 +83,19 @@ impl Engine {
         Ok(self.bridge.insert(bridge))
     }
 
+    /// Stop must also end Chrome control, which never touches the helper: ask it before every
+    /// Chrome read and plan. A helper that does not answer here is not "stopped".
+    fn not_stopped(&mut self) -> Result<()> {
+        match self.bridge().and_then(|bridge| bridge.query("env", Value::Null)) {
+            Ok(env) if env.get("stopped").and_then(Value::as_bool) == Some(true) => Err(crate::link::stopped()),
+            Ok(_) => Ok(()),
+            Err(_) => {
+                self.bridge = None;
+                Ok(())
+            }
+        }
+    }
+
     pub(crate) fn browser(&mut self) -> Result<&mut Browser> {
         let browser = match self.browser.take() {
             Some(browser) => browser,
@@ -110,6 +123,7 @@ impl Engine {
 
     /// Runs a read-only Chrome call, reconnecting once on transport failure.
     pub(crate) fn browser_read<T>(&mut self, mut f: impl FnMut(&mut Browser) -> Result<T>) -> Result<T> {
+        self.not_stopped()?;
         match self.browser().and_then(&mut f) {
             Err(error) if reconnectable(error.code) => {
                 self.reset_connections();
@@ -133,6 +147,9 @@ impl Engine {
                 }
                 let mut status = json!({"ok":1,"g":g,"cap":cap});
                 if let Ok(env) = self.bridge_read(|bridge| bridge.query("env", Value::Null)) {
+                    if env.get("stopped").and_then(Value::as_bool) == Some(true) {
+                        return Err(crate::link::stopped());
+                    }
                     for key in ["battery_exempt", "talkback"] {
                         if let Some(flag) = env.get(key) {
                             status[key] = flag.clone();
@@ -165,7 +182,16 @@ impl Engine {
     /// Asks the phone for its state before the first act of a session and after any failure, and
     /// turns the states no act can work in into one typed result with one next step each.
     pub(crate) fn preflight(&mut self) -> Result<()> {
-        let env = self.link.env()?;
+        // Over the cached connection, so the act that follows does not connect again.
+        let env = match self.bridge_read(|bridge| bridge.query("env", Value::Null)) {
+            Ok(env) => env,
+            // A helper from before 1.3 has no `env`; it is running, so let the act proceed.
+            Err(error) if error.code == Code::Unsupported => json!({}),
+            // Only a helper that does not answer is "not running". A missing device, a timeout or a
+            // failed authentication keeps its own code and next step.
+            Err(error) if matches!(error.code, Code::Device | Code::Identity | Code::Timeout | Code::Auth | Code::Permission) => return Err(error),
+            Err(_) => return Err(crate::link::helper_killed()),
+        };
         let on = |key: &str, default: bool| env.get(key).and_then(Value::as_bool).unwrap_or(default);
         if on("stopped", false) {
             return Err(crate::link::stopped());
@@ -225,6 +251,7 @@ impl Engine {
     /// against an observation taken moments ago, so the tab list is not
     /// re-synchronized before running them.
     pub(crate) fn run_browser_plan(&mut self, p: &BrowserPlan, prepared: bool) -> Result<Receipt> {
+        self.not_stopped()?;
         let digest = self.digest(&p.wire(0), true)?;
         self.browser()?;
         if let Some(prior) = self.journal.begin(&p.id, p.generation, &digest, BROWSER)? {

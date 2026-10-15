@@ -111,9 +111,8 @@ pub fn env_notes(value: &Value) -> Vec<&'static str> {
 pub(crate) fn format_status(value: &Value) -> String {
     let connected = value.get("ok").and_then(Value::as_u64) == Some(1);
     let control = value.get("cap").and_then(Value::as_u64).unwrap_or(0) != 0;
-    let notes = env_notes(value).iter().fold(String::new(), |all, note| format!("{all} {note}"));
     match (connected, control) {
-        (true, true) => format!("Ready. Android Use is connected and can read and control the screen.{notes}"),
+        (true, true) => "Ready. Android Use is connected and can read and control the screen.".into(),
         (true, false) => "Not ready: the Android Use helper is running, but its Accessibility service is off. Ask the user to turn on Android-Use under Settings → Accessibility on the device, then retry.".into(),
         _ => "Android Use is not ready. Ask the user to run au doctor on the computer, then retry.".into(),
     }

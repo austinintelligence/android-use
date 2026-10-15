@@ -113,6 +113,9 @@ impl Bridge {
     }
     pub fn act(&mut self, p: &Plan) -> Result<Receipt> {
         let a = self.call(|s| p.wire(s))?;
+        if a.get(1).and_then(Value::as_u64) == Some(11) {
+            return Err(crate::link::stopped());
+        }
         if a.len() < 4 {
             return Err(Error::new(Code::Protocol, "invalid run reply"));
         }
