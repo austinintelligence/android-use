@@ -301,7 +301,10 @@ impl Engine {
         let mut ops = ops;
         if ops.iter().any(Op::mutates) {
             let package = ops.iter().rev().find_map(|op| if let Op::Launch(package) = op { Some(package.clone()) } else { None });
-            self.agent.opened = package.is_some();
+            self.agent.opened = package.is_some() || ops.iter().any(|op| matches!(op, Op::Setting(..)));
+            if self.agent.opened {
+                self.agent.seen.clear();
+            }
             let typed = ops.iter().any(|op| matches!(op, Op::Text(..)));
             ops.push(Op::Settle {
                 quiet_ms: if typed { TYPED_QUIET_MS } else { QUIET_MS },
@@ -482,7 +485,9 @@ impl Engine {
     fn unseen_label_runs(&self, target: &Target, tier: u64, count: usize, labels: &[String]) -> bool {
         let needle = normalized(&target.label);
         let state = &self.agent;
-        if !state.strict || target.handle.is_some() || state.seen.iter().any(|row| row.contains(&needle)) {
+        // Shown means the exact label, or the one control a near match resolves to.
+        let shown = state.seen.contains(&needle) || (count == 1 && labels.first().is_some_and(|label| state.seen.contains(&normalized(label))));
+        if !state.strict || target.handle.is_some() || shown {
             return true;
         }
         state.opened && tier < 2 && count == 1 && target.ordinal.is_none() && !resolve::risky(&needle) && !labels.iter().any(|label| resolve::risky(label))
