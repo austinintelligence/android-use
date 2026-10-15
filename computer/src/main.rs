@@ -52,6 +52,9 @@ fn run(human: bool) -> Result<Value> {
         }
         a.drain(at..at + 2);
     }
+    if a.first().is_some_and(|command| command == "uninstall") {
+        reject_unknown_flags(&a, &["--dry-run"], "au uninstall")?;
+    }
     let out = match a.first().map(String::as_str).unwrap_or("help") {
         "emulator" => emulator(&a)?,
         "targets" => targets()?,
@@ -95,14 +98,21 @@ fn run(human: bool) -> Result<Value> {
         }
         "update" => install::update(a.get(1).map(Path::new), human)?,
         "doctor" => install::doctor()?,
-        "uninstall" => install::uninstall()?,
+        "uninstall" => install::uninstall(a.iter().any(|arg| arg == "--dry-run"))?,
         "version" | "--version" => serde_json::json!({"version":env!("CARGO_PKG_VERSION")}),
         "help" | "--help" | "-h" => {
-            serde_json::json!({"commands":["devices","setup [APK]","status","doctor","update [APK]","uninstall","enroll ENDPOINT","repair [APK]","serve --mcp","read COMMAND","act COMMAND","install [AGENT|all] [--dry-run] [--force]","uninstall AGENT","emulator doctor|install|images|create|start|stop|status|list|snapshot|destroy","targets","--target NAME (any command)"]})
+            serde_json::json!({"commands":["devices","setup [APK]","status","doctor","update [APK]","uninstall","enroll ENDPOINT","repair [APK]","serve --mcp","read COMMAND","act COMMAND","install [AGENT|all] [--dry-run] [--force]","uninstall [--dry-run]","uninstall AGENT [--dry-run]","emulator doctor|install|images|create|start|stop|status|list|snapshot|destroy","targets","--target NAME (any command)"]})
         }
         _ => return Err(Error::new(Code::Args, format!("unknown command: {}", a[0]))),
     };
     Ok(out)
+}
+/// Refuses any `--flag` that `command` does not take, so a misspelled flag never runs the default.
+fn reject_unknown_flags(args: &[String], valid: &[&str], command: &str) -> Result<()> {
+    match args.iter().find(|arg| arg.starts_with("--") && !valid.contains(&arg.as_str())) {
+        Some(flag) => Err(Error::new(Code::Args, format!("unknown flag {flag} for {command}; the valid flags are {}", valid.join(", ")))),
+        None => Ok(()),
+    }
 }
 /// `au emulator doctor|install|images|create|start|stop|status|list|snapshot|destroy`.
 fn emulator(a: &[String]) -> Result<Value> {
@@ -256,6 +266,10 @@ fn human_value(command: &str, value: &Value) -> String {
         "install" | "uninstall" if value.get("agents").is_some() => {
             let rows = value["agents"].as_array().map(|rows| rows.iter().map(|row| format!("{} {}: {}{}", if row["action"] == "error" || row["action"] == "manual" { "!" } else { "✓" }, row["client"].as_str().unwrap_or(""), row["action"].as_str().unwrap_or(""), row["detail"].as_str().filter(|d| !d.is_empty()).map(|d| format!(" ({d})")).unwrap_or_default())).collect::<Vec<_>>()).unwrap_or_default();
             if rows.is_empty() { "No supported agent found. Name one: au install claude|codex|cursor|gemini|vscode|claude-desktop|opencode".into() } else { rows.join("\n") }
+        }
+        "uninstall" if value.get("dry_run").is_some() => {
+            let items: Vec<String> = value["would_remove"].as_array().into_iter().flatten().filter_map(Value::as_str).map(|item| format!("  {item}")).collect();
+            format!("Dry run: nothing was changed. Uninstall would remove:\n{}", items.join("\n"))
         }
         "uninstall" => "Android Use was removed from the enrolled device.\n\nLocal Android Use state was removed too.".into(),
         _ => serde_json::to_string_pretty(value).unwrap_or_else(|_| "Android Use returned an unreadable result.".into()),

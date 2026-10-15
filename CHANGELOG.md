@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- `au uninstall` flags now work as named: `--dry-run` only reports, unknown flags are errors, and uninstall refuses while `au serve` is running.
 - `cargo xtask` gates fail closed: a missing release artifact fails the size gate instead of measuring 0 bytes, and the stale-version check flags only standalone versions such as `v2` or `v3.1`, not words that contain one (`dev2`).
 - `cargo xtask golden-capture NAME` needs `--reviewed`, confirming the screen shows nothing personal, and refuses a screen with what looks like an email address, phone number, or card number.
 

@@ -285,8 +285,17 @@ pub fn update(apk: Option<&Path>, wait_for_approval: bool) -> Result<Value> {
     value["updated"] = json!(1);
     Ok(value)
 }
-pub fn uninstall() -> Result<Value> {
+/// `au uninstall [--dry-run]`. A dry run only lists what would go. A real uninstall refuses while
+/// `au serve` holds the state lock, and holds that lock itself so no server starts mid-removal.
+pub fn uninstall(dry_run: bool) -> Result<Value> {
     let paths = Paths::discover()?;
+    if dry_run {
+        return uninstall_plan(&paths);
+    }
+    let _lock = paths.lock_for_serving().map_err(|e| match e.code {
+        Code::Device => Error::new(Code::Device, "au serve is running for this target; stop it first, then run au uninstall again"),
+        _ => e,
+    })?;
     let adb = Adb::discover()?;
     let device = adb.resolve(&paths)?;
     adb.uninstall_helper(&device)?;
@@ -295,6 +304,20 @@ pub fn uninstall() -> Result<Value> {
     let _ = fs::remove_file(paths.root.join("screen-space.json"));
     let _ = fs::remove_dir_all(&paths.artifacts);
     Ok(json!({"ok":1,"uninstalled":1,"local_state_removed":1}))
+}
+/// The `--dry-run` report: the helper on the enrolled device and each local item that exists.
+fn uninstall_plan(paths: &Paths) -> Result<Value> {
+    let adb = Adb::discover()?;
+    let device = adb.resolve(paths)?;
+    let mut would_remove = vec![format!("helper app dev.codex.aubridge on {}", device.endpoint)];
+    for (label, path) in
+        [("device binding", &paths.device), ("operation journal", &paths.journal), ("screen space", &paths.root.join("screen-space.json")), ("artifacts", &paths.artifacts)]
+    {
+        if path.exists() {
+            would_remove.push(format!("{label}: {}", path.display()));
+        }
+    }
+    Ok(json!({"ok":1,"dry_run":1,"would_remove":would_remove}))
 }
 /// The helper APK to install: the path given, else `aubridge.apk` beside `au`, else the copy built
 /// into release binaries (written to private state first, after its hash is checked).

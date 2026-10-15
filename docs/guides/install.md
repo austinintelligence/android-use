@@ -56,4 +56,4 @@ Camera, microphone, notifications, location, and screen recording are optional; 
 
 ## Update and remove
 
-`au update` refreshes the helper after you upgrade `au`. `au uninstall` removes the helper from the device and Android Use's local state.
+`au update` refreshes the helper after you upgrade `au`. `au uninstall` removes the helper from the device and Android Use's local state. Run `au uninstall --dry-run` first to see what would go; nothing is changed. Stop any running `au serve` before uninstalling, because uninstall refuses while it holds the state.
