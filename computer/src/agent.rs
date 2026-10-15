@@ -382,7 +382,10 @@ impl Engine {
             A::ScreenRecord(seconds) => Op::Capture(Capture::ScreenRecord(*seconds)),
             A::NotificationOpen(target) => Op::NotificationOpen(self.notification_key(target)?),
             A::NotificationDismiss(target) => Op::NotificationDismiss(self.notification_key(target)?),
-            A::NotificationAction(target) => Op::NotificationAction(self.notification_key(target)?),
+            A::NotificationAction(target, label) => {
+                let (key, label) = resolve::notification_action(&self.read(Read::Notifications)?, target, label.as_deref())?;
+                Op::NotificationAction(key, label)
+            }
             A::PointTap { x, y } => {
                 let (x, y) = self.map_point(*x, *y)?;
                 Op::PointTap { x, y }
@@ -631,7 +634,7 @@ fn target_label(action: &AndroidAction) -> String {
 /// Whether an action can bring up a different screen than the one it was compiled against.
 fn navigates(action: &AndroidAction) -> bool {
     use AndroidAction as A;
-    matches!(action, A::OpenApp(_) | A::OpenSetting(_) | A::OpenLink(_) | A::Key(_) | A::NotificationOpen(_) | A::NotificationAction(_))
+    matches!(action, A::OpenApp(_) | A::OpenSetting(_) | A::OpenLink(_) | A::Key(_) | A::NotificationOpen(_) | A::NotificationAction(..))
 }
 
 fn is_media(action: &Action) -> bool {

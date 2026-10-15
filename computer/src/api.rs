@@ -202,7 +202,7 @@ pub enum Op {
     Capture(Capture),
     NotificationOpen(Box<str>),
     NotificationDismiss(Box<str>),
-    NotificationAction(Box<str>),
+    NotificationAction(Box<str>, Option<Box<str>>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -264,7 +264,7 @@ impl Op {
                 | Self::Capture(Capture::Camera { .. } | Capture::Microphone(..) | Capture::ScreenRecord(..))
                 | Self::NotificationOpen(_)
                 | Self::NotificationDismiss(_)
-                | Self::NotificationAction(_)
+                | Self::NotificationAction(..)
         )
     }
     pub fn wire(&self) -> Value {
@@ -293,7 +293,8 @@ impl Op {
             Self::Capture(Capture::ScreenRecord(seconds)) => json!(["screen_record", seconds]),
             Self::NotificationOpen(id) => json!(["notification_open", id]),
             Self::NotificationDismiss(id) => json!(["notification_dismiss", id]),
-            Self::NotificationAction(id) => json!(["notification_action", id]),
+            Self::NotificationAction(id, None) => json!(["notification_action", id]),
+            Self::NotificationAction(id, Some(label)) => json!(["notification_action", id, label]),
         }
     }
 }
