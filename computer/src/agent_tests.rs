@@ -229,7 +229,7 @@ mod flows {
         assert!(unsafe_guess.contains("closest label is \"Save and delete all\", which was not tapped"), "{unsafe_guess}");
         // Two containing labels are ambiguous, never guessed.
         let two = act(&mut engine, r#"tap "Save""#).unwrap_err_or_text();
-        assert!(two.contains("matches 2 items"), "{two}");
+        assert!(two.contains("matches 2 items") && two.contains("1 = Save draft after \"Flaky\"; 2 = Save and delete all after \"Save draft\"."), "{two}");
     }
 
     #[test]
@@ -271,6 +271,22 @@ mod flows {
         assert!(numbered.contains("which was not tapped"), "a number does not skip the risky check: {numbered}");
         assert!(act(&mut engine, r#"tap "Save #2""#).unwrap().text.starts_with("No item labeled"), "text with a space before # is a label");
         assert!(act(&mut engine, r#"tap "sw Missing=on""#).unwrap().text.starts_with("No item labeled \"sw Missing=on\""), "a miss reports what was asked");
+    }
+
+    #[test]
+    fn a_miss_names_near_labels_and_one_safe_fix() {
+        let (mut engine, _dir) = engine();
+        act(&mut engine, r#"open app "Settings""#).unwrap();
+        let miss = act(&mut engine, r#"tap "Blue tooth""#).unwrap().text;
+        assert!(miss.contains("\nNear: \"Bluetooth\"\nfix: tap \"Bluetooth\"\nOn screen now:"), "{miss}");
+        let typed = act(&mut engine, r#"type "x" in "Wifi""#).unwrap().text;
+        assert!(typed.contains("fix: type \"x\" in \"Wi-Fi\""), "{typed}");
+        // Risky labels are named as near but never offered in a fix.
+        let risky = act(&mut engine, r#"tap "Save and delete everything""#).unwrap().text;
+        assert!(risky.contains("Near: \"Save and delete all\"") && !risky.contains("fix:"), "{risky}");
+        let long = act(&mut engine, &format!(r#"type "{}" in "Wifi""#, "x".repeat(100))).unwrap().text;
+        assert!(long.contains("Near:") && !long.contains("fix:"), "a long text is not repeated in a fix");
+        assert!(!act(&mut engine, r#"tap "Zebra""#).unwrap().text.contains("Near:"));
     }
 
     #[test]

@@ -143,7 +143,7 @@ fn short_value(value: &str) -> bool {
 /// the order the resolver counts in. Headings are never targets, and plain text is skipped when a
 /// control carries the same words (the resolver prefers the control), so a listed number is always
 /// one the resolver accepts.
-fn duplicate_numbers(rows: &[SemanticRow]) -> Vec<Option<usize>> {
+pub(crate) fn duplicate_numbers(rows: &[SemanticRow]) -> Vec<Option<usize>> {
     let counted = |row: &SemanticRow, controls_exist: bool| row.kind != "heading" && !row.label.is_empty() && (!controls_exist || !row.kind.is_empty());
     let mut controls: HashMap<String, bool> = HashMap::new();
     for row in rows.iter().filter(|row| !row.kind.is_empty() && row.kind != "heading") {
