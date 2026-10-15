@@ -49,7 +49,8 @@ pub(crate) fn check(text: &str) -> Vec<String> {
         }
         let line = &line.to_lowercase();
         let mut bad = |why: &str| out.push(format!("line {}: {why}", i + 1));
-        if let Some(target) = line.split("uses:").nth(1).map(str::trim).filter(|t| !t.starts_with("./")) {
+        let step = line.trim_start();
+        if let Some(target) = step.strip_prefix("- ").unwrap_or(step).trim_start().strip_prefix("uses:").map(str::trim).filter(|t| !t.starts_with("./")) {
             let sha = target.split('@').nth(1).unwrap_or("");
             if sha.len() != 40 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
                 bad(&format!("`uses: {target}` is not pinned to a full commit SHA"));
@@ -201,6 +202,8 @@ mod tests {
     #[test]
     fn a_compliant_workflow_passes() {
         assert_eq!(check(FIXED), Vec::<String>::new());
+        let statuses = FIXED.replace("steps:", "permissions:\n      statuses: write\n    steps:");
+        assert_eq!(check(&statuses), Vec::<String>::new(), "`statuses: write` is not a `uses:` key");
     }
 
     #[test]
