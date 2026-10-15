@@ -6,7 +6,8 @@ use serde::Deserialize;
 /// Status capability bit for the `tree` op.
 pub const CAP_TREE: u32 = 8;
 pub const MAX_NODES: usize = 2048;
-const MAX_DEPTH: usize = 65;
+/// Matches the helper. Each node level is two JSON levels and serde_json stops at 128.
+const MAX_DEPTH: usize = 48;
 
 pub const CLICKABLE: u16 = 1;
 pub const CHECKABLE: u16 = 2;
@@ -21,7 +22,8 @@ pub const PASSWORD: u16 = 256;
 
 #[derive(Debug, Deserialize)]
 pub struct Tree {
-    /// True when a cap cut the reply short; `seen` then counts what was left out, up to a bound.
+    /// True when a cap or the time budget cut the reply short. `seen` counts every node the helper
+    /// visited, left-out ones included, up to a bound.
     pub truncated: bool,
     pub nodes: usize,
     pub seen: usize,
@@ -113,6 +115,19 @@ mod tests {
         assert!(fields[1].has(PASSWORD) && fields[1].text.is_empty());
         assert!(fields[2].has(CLICKABLE) && fields[2].has(ENABLED));
         assert_eq!(tree.windows[1].kind, 3);
+    }
+
+    #[test]
+    fn a_tree_at_the_depth_cap_survives_the_frame_parser() {
+        let mut node = json!({"c": "v", "b": [0, 0, 1, 1], "f": 0});
+        for _ in 0..MAX_DEPTH {
+            node = json!({"c": "v", "b": [0, 0, 1, 1], "f": 0, "k": [node]});
+        }
+        let window = json!({"type": 1, "layer": 0, "display": 0, "bounds": [0, 0, 1, 1], "title": "", "pkg": "p", "active": true, "focused": true, "root": node});
+        let body = json!({"truncated": true, "nodes": MAX_DEPTH + 1, "seen": MAX_DEPTH + 1, "windows": [window]});
+        let frame = serde_json::to_vec(&json!([3, 0, body])).unwrap();
+        let reply: Vec<Value> = serde_json::from_slice(&frame).unwrap();
+        assert_eq!(parse(&reply, CAP_TREE).unwrap().nodes, MAX_DEPTH + 1);
     }
 
     #[test]

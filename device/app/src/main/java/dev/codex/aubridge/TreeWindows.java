@@ -36,9 +36,11 @@ final class TreeWindows {
 
     private static final class Window implements TreeDump.Win {
         private final AccessibilityWindowInfo window;
+        private final AccessibilityNodeInfo root;
 
         Window(AccessibilityWindowInfo window) {
             this.window = window;
+            this.root = window.getRoot();
         }
 
         public int type() {
@@ -58,12 +60,9 @@ final class TreeWindows {
             return title == null ? "" : title.toString();
         }
 
-        @SuppressWarnings("deprecation")
         public String pkg() {
-            AccessibilityNodeInfo root = window.getRoot();
             if (root == null) return "";
             CharSequence name = root.getPackageName();
-            root.recycle();
             return name == null ? "" : name.toString();
         }
 
@@ -85,7 +84,6 @@ final class TreeWindows {
         }
 
         public TreeDump.Src root() {
-            AccessibilityNodeInfo root = window.getRoot();
             return root == null ? null : new Node(root);
         }
     }

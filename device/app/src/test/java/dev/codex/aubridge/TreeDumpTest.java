@@ -157,6 +157,27 @@ public final class TreeDumpTest {
         throw new java.io.FileNotFoundException("protocol-golden.json");
     }
 
+    /** Structural equality; android.jar's org.json has no similar() and orders keys differently. */
+    private static void assertSame(Object expected, Object actual) throws Exception {
+        if (expected instanceof JSONObject && actual instanceof JSONObject) {
+            JSONObject a = (JSONObject) expected, b = (JSONObject) actual;
+            assertEquals(a.length(), b.length());
+            for (java.util.Iterator<String> keys = a.keys(); keys.hasNext(); ) {
+                String key = keys.next();
+                assertTrue("missing " + key, b.has(key));
+                assertSame(a.get(key), b.get(key));
+            }
+        } else if (expected instanceof JSONArray && actual instanceof JSONArray) {
+            JSONArray a = (JSONArray) expected, b = (JSONArray) actual;
+            assertEquals(a.length(), b.length());
+            for (int i = 0; i < a.length(); i++) assertSame(a.get(i), b.get(i));
+        } else if (expected instanceof Number && actual instanceof Number) {
+            assertEquals(((Number) expected).longValue(), ((Number) actual).longValue());
+        } else {
+            assertEquals(expected, actual);
+        }
+    }
+
     private static List<Window> signIn() {
         Fake name = new Fake("android.widget.EditText", "Ada", 8 | 16 | 64).box(48, 300, 1032, 420);
         name.id = "com.example.app:id/name";
@@ -181,7 +202,7 @@ public final class TreeDumpTest {
     @Test
     public void replyMatchesTheGoldenTheHostParses() throws Exception {
         JSONObject reply = TreeDump.dump(signIn());
-        assertTrue(reply.similar(goldenTree()));
+        assertSame(goldenTree(), reply);
     }
 
     @Test
@@ -252,6 +273,17 @@ public final class TreeDumpTest {
         assertTrue(deep.getBoolean("truncated"));
         assertEquals(TreeDump.MAX_DEPTH + 1, deep.getInt("nodes"));
         assertNotNull(deep.getJSONArray("windows").getJSONObject(0).optJSONObject("root"));
+    }
+
+    @Test
+    public void aSpentTimeBudgetTruncates() throws Exception {
+        Fake root =
+                new Fake("android.view.View", null, 0).add(new Fake("android.view.View", "a", 0));
+        JSONObject reply =
+                TreeDump.dump(
+                        Collections.singletonList(new Window(1, 0, "", "pkg", true, root)), -1);
+        assertTrue(reply.getBoolean("truncated"));
+        assertEquals(0, reply.getInt("nodes"));
     }
 
     @Test

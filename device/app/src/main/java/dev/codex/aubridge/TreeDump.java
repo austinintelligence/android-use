@@ -17,10 +17,11 @@ final class TreeDump {
     static final int MAX_NODES = 2048;
     static final int MAX_BYTES = 900_000;
     static final int MAX_SEEN = 2 * MAX_NODES;
-    static final int MAX_DEPTH = 64;
+    static final int MAX_DEPTH = 48;
+    static final long MAX_MILLIS = 3000;
     static final int MAX_TEXT = 512;
     private static final int NODE_OVERHEAD = 8;
-    private static final int WINDOW_OVERHEAD = 256;
+    private static final int WINDOW_OVERHEAD = 2048;
 
     interface Src {
         String className();
@@ -71,12 +72,22 @@ final class TreeDump {
         Src root();
     }
 
+    private final long deadline;
     private int nodes, seen;
     private long bytes;
     private boolean truncated;
 
+    private TreeDump(long millis) {
+        deadline = System.nanoTime() + millis * 1_000_000;
+    }
+
     static JSONObject dump(Iterable<? extends Win> windows) throws JSONException {
-        TreeDump d = new TreeDump();
+        return dump(windows, MAX_MILLIS);
+    }
+
+    /** Stops walking after {@code millis}; what was cut is reported as truncated. */
+    static JSONObject dump(Iterable<? extends Win> windows, long millis) throws JSONException {
+        TreeDump d = new TreeDump(millis);
         JSONArray out = new JSONArray();
         for (Win w : windows) {
             if (d.bytes + WINDOW_OVERHEAD > MAX_BYTES) {
@@ -119,7 +130,7 @@ final class TreeDump {
 
     private JSONObject node(Src s, int depth) throws JSONException {
         try {
-            if (nodes >= MAX_NODES || depth > MAX_DEPTH) return skip(s);
+            if (nodes >= MAX_NODES || depth > MAX_DEPTH || late()) return skip(s);
             JSONObject o = own(s);
             long cost = o.toString().getBytes(StandardCharsets.UTF_8).length + NODE_OVERHEAD;
             if (bytes + cost > MAX_BYTES) return skip(s);
@@ -140,10 +151,14 @@ final class TreeDump {
         }
     }
 
+    private boolean late() {
+        return System.nanoTime() - deadline > 0;
+    }
+
     /** Counts what is left out, up to {@link #MAX_SEEN}, and marks the reply truncated. */
     private JSONObject skip(Src s) {
         truncated = true;
-        if (seen >= MAX_SEEN) return null;
+        if (seen >= MAX_SEEN || late()) return null;
         seen++;
         for (int i = 0, n = s.childCount(); i < n && seen < MAX_SEEN; i++) {
             Src c = s.child(i);
