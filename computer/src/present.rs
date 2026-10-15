@@ -8,7 +8,7 @@ use crate::{
     engine::Engine,
     format::*,
     marks::{self, Mark},
-    visual,
+    resolve, visual,
 };
 use serde_json::{json, Value};
 use std::{sync::Arc, thread, time::Duration};
@@ -97,7 +97,13 @@ impl Engine {
         if replace || self.agent.seen.len() > 512 {
             self.agent.seen.clear();
         }
-        self.agent.seen.extend(rows.iter().filter(|row| !row.label.is_empty() && shown.contains(&display_n(&row.label, 96))).map(|row| normalized(&row.label)));
+        // Whole rendered lines only: a label inside another row's text was not itself shown.
+        let mut lines = std::collections::HashSet::new();
+        for line in shown.lines().map(|line| line.trim_start_matches(['+', '~', '-']).trim()) {
+            lines.insert(normalized(line));
+            lines.insert(normalized(&resolve::from_row(line).map_or_else(|| line.to_owned(), |(name, _)| name)));
+        }
+        self.agent.seen.extend(rows.iter().filter(|row| lines.contains(&normalized(&row.label))).map(|row| normalized(&row.label)));
     }
 
     pub(crate) fn semantic_rows(&mut self, focus: &str) -> Result<Vec<SemanticRow>> {
