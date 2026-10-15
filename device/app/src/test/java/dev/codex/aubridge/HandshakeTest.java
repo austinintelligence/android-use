@@ -5,6 +5,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Test;
 
@@ -59,6 +60,28 @@ public final class HandshakeTest {
         String proof = golden.getJSONArray("reply").getString(4);
         assertEquals(
                 proof, Base64.getUrlEncoder().encodeToString(HelperKey.respond(key, challenge)));
+    }
+
+    @Test
+    public void commandResponderMatchesTheGoldenAndIsBoundToTheToken() throws Exception {
+        JSONObject golden = WireTest.golden().getJSONObject("handshake");
+        byte[] key = Base64.getDecoder().decode(golden.getString("key"));
+        JSONArray hello = golden.getJSONArray("command");
+        byte[] challenge = Base64.getUrlDecoder().decode(hello.getString(4));
+        String proof = golden.getJSONArray("command_reply").getString(2);
+        assertEquals(
+                proof,
+                Base64.getUrlEncoder()
+                        .encodeToString(
+                                HelperKey.respondCommand(key, challenge, hello.getString(2))));
+        assertFalse(
+                java.util.Arrays.equals(
+                        Base64.getUrlDecoder().decode(proof),
+                        HelperKey.respondCommand(key, challenge, "other")));
+        assertFalse(
+                java.util.Arrays.equals(
+                        HelperKey.respond(key, challenge),
+                        HelperKey.respondCommand(key, challenge, "")));
     }
 
     @Test

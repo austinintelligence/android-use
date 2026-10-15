@@ -111,11 +111,20 @@ final class Bridge implements AutoCloseable {
                 return;
             }
             JSONArray hello = read(in);
-            if (!auth(hello)) {
+            byte[] challenge = auth(hello);
+            if (challenge == null) {
                 write(out, new JSONArray().put(0).put(7));
                 return;
             }
-            write(out, new JSONArray().put(0).put(0));
+            write(
+                    out,
+                    new JSONArray()
+                            .put(0)
+                            .put(0)
+                            .put(
+                                    b64(
+                                            HelperKey.respondCommand(
+                                                    HelperKey.key(), challenge, b64(token)))));
             long seq = 0;
             while (open) {
                 JSONArray q;
@@ -136,11 +145,17 @@ final class Bridge implements AutoCloseable {
         }
     }
 
-    private boolean auth(JSONArray q) {
-        if (q.length() != 4 || q.optLong(0, -1) != 0 || !"hello".equals(q.optString(1)))
-            return false;
-        return MessageDigest.isEqual(token, unb64(q.optString(2)))
-                && MessageDigest.isEqual(nonce, unb64(q.optString(3)));
+    /** The host's challenge if the hello carries this process's token and nonce, else null. */
+    private byte[] auth(JSONArray q) {
+        if (q.length() != 5 || q.optLong(0, -1) != 0 || !"hello".equals(q.optString(1)))
+            return null;
+        byte[] challenge = unb64(q.optString(4));
+        boolean ok =
+                MessageDigest.isEqual(token, unb64(q.optString(2)))
+                        & MessageDigest.isEqual(nonce, unb64(q.optString(3)))
+                        & challenge.length >= 16
+                        & challenge.length <= 64;
+        return ok ? challenge : null;
     }
 
     private JSONArray dispatch(JSONArray q) {
