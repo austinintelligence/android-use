@@ -44,7 +44,7 @@ Install or update Google Chrome on Android and open it once. Android Use uses Ch
 
 ## The agent reports `locked`, `screen_off`, `helper_killed`, or `stopped`
 
-Before its first action, and after any failure, Android Use checks the phone. Unlock it (`locked`) or press the power button (`screen_off`), then resend the same command: nothing ran. `helper_killed` means the Android-Use helper does not answer, even after Android Use tries to start it (Android ended it, or it was uninstalled); run `au setup`. `stopped` means someone pressed **Stop** on the Android-Use notification; run `au setup` to turn it back on. If Android keeps ending it, exempt Android-Use from battery optimization under Settings → Battery: `au status` and `au doctor` warn when it is not exempt, and when TalkBack is on, because TalkBack changes what the screen reports.
+Before its first action, and after any failure, Android Use checks the phone. Unlock it (`locked`) or press the power button (`screen_off`), then resend the same command: nothing ran. `helper_killed` means the Android-Use helper does not answer (Android ended it, the phone restarted, or it was uninstalled). Android Use does not restart it behind your back; run `au setup`. `stopped` means someone pressed **Stop** on the Android-Use notification; run `au setup` to turn it back on. If Android keeps ending it, exempt Android-Use from battery optimization under Settings → Battery: `au status` and `au doctor` warn when it is not exempt, and when TalkBack is on, because TalkBack changes what the screen reports.
 
 ## What the Android-Use app shows
 

@@ -184,19 +184,38 @@ impl Engine {
         Ok(scene)
     }
 
+    /// The phone's `env` over the cached connection, or a new one to a helper that is already
+    /// running. Never starts a helper: one that is not there is `helper_killed`. A missing device,
+    /// a timeout or a failed authentication keeps its own code and next step.
+    fn helper_env(&mut self) -> Result<Value> {
+        let unreachable =
+            |error: Error| if matches!(error.code, Code::Device | Code::Identity | Code::Timeout | Code::Auth | Code::Permission) { error } else { crate::link::helper_killed() };
+        let mut last = crate::link::helper_killed();
+        for fresh in [false, true] {
+            let mut bridge = match self.bridge.take() {
+                Some(cached) if !fresh => cached,
+                _ => self.link.attach().map_err(unreachable)?,
+            };
+            match bridge.query("env", Value::Null) {
+                Ok(env) => {
+                    self.bridge = Some(bridge);
+                    return Ok(env);
+                }
+                // A helper from before 1.3 has no `env`; it is running, so let the act proceed.
+                Err(error) if error.code == Code::Unsupported => {
+                    self.bridge = Some(bridge);
+                    return Ok(json!({}));
+                }
+                Err(error) => last = unreachable(error),
+            }
+        }
+        Err(last)
+    }
+
     /// Asks the phone for its state before the first act of a session and after any failure, and
     /// turns the states no act can work in into one typed result with one next step each.
     pub(crate) fn preflight(&mut self) -> Result<()> {
-        // Over the cached connection, so the act that follows does not connect again.
-        let env = match self.bridge_read(|bridge| bridge.query("env", Value::Null)) {
-            Ok(env) => env,
-            // A helper from before 1.3 has no `env`; it is running, so let the act proceed.
-            Err(error) if error.code == Code::Unsupported => json!({}),
-            // Only a helper that does not answer is "not running". A missing device, a timeout or a
-            // failed authentication keeps its own code and next step.
-            Err(error) if matches!(error.code, Code::Device | Code::Identity | Code::Timeout | Code::Auth | Code::Permission) => return Err(error),
-            Err(_) => return Err(crate::link::helper_killed()),
-        };
+        let env = self.helper_env()?;
         let on = |key: &str, default: bool| env.get(key).and_then(Value::as_bool).unwrap_or(default);
         self.stopped = on("stopped", false);
         if self.stopped {
