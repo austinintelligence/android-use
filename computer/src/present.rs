@@ -87,9 +87,7 @@ impl Engine {
                         break;
                     }
                     thread::sleep(Duration::from_millis(POLL_MS));
-                    let polled = self.bridge_read(|bridge| bridge.status());
-                    eprintln!("DBG t={:?} seen={seen} acted={} polled={:?} rows={}", begun.elapsed(), self.agent.acted_from, polled.as_ref().map(|p| p.0).map_err(|e| e.message.to_string()), rows.len());
-                    if let Ok((generation, _)) = polled {
+                    if let Ok((generation, _)) = self.bridge_read(|bridge| bridge.status()) {
                         if generation != seen {
                             (seen, rows) = (generation, self.semantic_rows("").ok()?);
                         }
