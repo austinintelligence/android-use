@@ -100,9 +100,11 @@ fn personal_text(text: &str) -> Option<&'static str> {
     }
     let mut chars: Vec<char> = text.chars().collect();
     // Dates and times sit next to other numbers on ordinary screens; blank them so they never
-    // join a digit run.
+    // join a digit run. Only standalone ones: `4111-11-11-1111...` is a card, not a date.
+    let joined = |c: Option<&char>| c.is_some_and(|c| c.is_ascii_digit() || "-/.".contains(*c));
     for at in 0..chars.len() {
-        if let Some(len) = ["dddd-dd-dd", "dd-dd-dddd", "dd:dd", "d:dd"].iter().find(|shape| shaped(&chars[at..], shape)).map(|shape| shape.len()) {
+        let shape = ["dddd-dd-dd", "dd-dd-dddd", "dd:dd", "d:dd"].into_iter().find(|shape| shaped(&chars[at..], shape));
+        if let Some(len) = shape.map(str::len).filter(|&len| !joined(at.checked_sub(1).and_then(|i| chars.get(i))) && !joined(chars.get(at + len))) {
             chars[at..at + len].fill('x');
         }
     }
@@ -155,7 +157,9 @@ mod tests {
         assert_eq!(personal_data(&json!([["Signed in as ada@example.com", "", "text"]])), Some("an email address"));
         assert_eq!(personal_data(&json!([["Sent to ada@example.com.", "", "text"]])), Some("an email address"));
         assert_eq!(personal_data(&json!([["Call +1 (650) 555-0134", "", "button"]])), Some("a phone number"));
-        assert_eq!(personal_data(&json!({"rows": [["4111 1111 1111 1111"]]})), Some("a card number"));
+        for card in ["4111 1111 1111 1111", "4111-1111-1111-1111", "4111111111111111", "4111-11-11-11111111"] {
+            assert_eq!(personal_data(&json!({"rows": [[card]]})), Some("a card number"), "{card}");
+        }
         assert_eq!(personal_data(&json!([["2026-10-15 650 555 0134"]])), Some("a phone number"));
         let ordinary = json!([
             ["Wi-Fi", "on", "switch"],
