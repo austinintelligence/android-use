@@ -91,10 +91,12 @@ impl Engine {
         Ok(self.browser.insert(browser))
     }
 
-    fn reset_connections(&mut self) {
+    pub(crate) fn reset_connections(&mut self) {
         self.bridge = None;
         self.browser = None;
         self.link.reset();
+        // Nothing resolves against a screen from before the reconnect.
+        self.scene = None;
     }
 
     /// Runs a read-only helper call, reconnecting once on transport failure.
@@ -145,9 +147,15 @@ impl Engine {
     pub(crate) fn ensure_scene(&mut self) -> Result<Scene> {
         let base = self.scene.as_ref().map(|scene| scene.observation.clone());
         let scene = match self.bridge_read(|bridge| bridge.observe(base.as_deref(), 0))? {
-            Observation::Unchanged(generation) => {
-                self.scene.clone().filter(|scene| scene.generation == generation).ok_or_else(|| Error::new(Code::Stale, "the Android scene changed; retry the command"))?
-            }
+            Observation::Unchanged(generation) => match self.scene.clone().filter(|scene| scene.generation == generation) {
+                Some(scene) => scene,
+                // A reconnect inside the call dropped the cache: fetch the screen afresh.
+                None if self.scene.is_none() => match self.bridge_read(|bridge| bridge.observe(None, 0))? {
+                    Observation::Scene(scene) => scene,
+                    Observation::Unchanged(_) => return Err(Error::new(Code::Stale, "the Android scene changed; retry the command")),
+                },
+                None => return Err(Error::new(Code::Stale, "the Android scene changed; retry the command")),
+            },
             Observation::Scene(scene) => scene,
         };
         self.scene = Some(scene.clone());

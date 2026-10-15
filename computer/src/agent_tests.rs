@@ -43,7 +43,9 @@ mod flows {
     use base64::{engine::general_purpose::STANDARD, Engine as _};
 
     fn labels(screen: &str) -> &'static [&'static str] {
-        if screen == "settings" {
+        if screen == "dupes" {
+            &["Save", "Cancel", "Save"]
+        } else if screen == "settings" {
             &["Wi-Fi", "Bluetooth", "Flaky", "Save draft", "Save and delete all"]
         } else if screen == "switches" {
             &["Dark mode", "Sticky", "Alarm", "Alarm"]
@@ -75,7 +77,7 @@ mod flows {
             let reply = match q[1].as_str().unwrap() {
                 "status" => json!([seq, 0, generation, 7]),
                 "observe" if q[2].as_str() == Some(generation.to_string().as_str()) => json!([seq, 0, generation]),
-                "observe" => json!([seq, 0, generation, "fixture", names.iter().enumerate().map(|(i, l)| json!([i, l, 98, 3])).collect::<Vec<_>>()]),
+                "observe" => json!([seq, 0, generation, screen, names.iter().enumerate().map(|(i, l)| json!([i, l, 98, 3])).collect::<Vec<_>>()]),
                 // "Dark mode" flips when tapped; "Sticky" is a switch whose tap changes nothing.
                 "semantic" if screen == "switches" => {
                     json!([
@@ -115,7 +117,7 @@ mod flows {
                 }
                 "run" if q[2].as_u64() != Some(generation) => json!([seq, 1, generation, 0]),
                 // "Flaky" changes the screen every time it is tapped, so the plan is always stale.
-                "run" if q[6].as_array().unwrap().iter().any(|op| op[0] == "tap" && op[1] == 2) => {
+                "run" if screen == "settings" && q[6].as_array().unwrap().iter().any(|op| op[0] == "tap" && op[1] == 2) => {
                     generation += 1;
                     json!([seq, 1, generation, 0])
                 }
@@ -130,7 +132,19 @@ mod flows {
                                     ("loading", generation + 1, changes + 1, Some((std::time::Instant::now() + std::time::Duration::from_secs(3600), "settings")), true)
                             }
                             "launch" if op[1] == "com.slow.late" => (screen, generation, changes) = ("late", generation + 1, changes + 1),
-                            "launch" => (screen, generation, changes) = (if op[1] == "com.example.switches" { "switches" } else { "settings" }, generation + 1, changes + 1),
+                            "launch" => {
+                                (screen, generation, changes) = (
+                                    if op[1] == "com.example.switches" {
+                                        "switches"
+                                    } else if op[1] == "com.dupes" {
+                                        "dupes"
+                                    } else {
+                                        "settings"
+                                    },
+                                    generation + 1,
+                                    changes + 1,
+                                )
+                            }
                             // The tap lands but the screen only reacts 400 ms later.
                             "tap" if screen == "late" => (changes, later) = (changes + 1, Some((std::time::Instant::now() + std::time::Duration::from_millis(400), "settings"))),
                             "tap" | "tap_point" => {
@@ -141,7 +155,10 @@ mod flows {
                             "settle" => {}
                             "wait" => generation += 1, // The screen changes by itself.
                             "assert" => {
-                                let present = labels(screen).contains(&op[1][1][1].as_str().unwrap());
+                                let present = match op[1][1].as_u64() {
+                                    Some(handle) => (handle as usize) < labels(screen).len(),
+                                    None => labels(screen).contains(&op[1][1][1].as_str().unwrap()),
+                                };
                                 if present != (op[1][0] == "exists") {
                                     failed = Some(at);
                                     break;
@@ -354,8 +371,59 @@ mod flows {
         let (mut engine, _dir) = engine();
         act(&mut engine, r#"open app "Settings""#).unwrap();
         assert_eq!(act(&mut engine, "tap e0").unwrap().status, "done");
+        engine.model_read(CommandRead::Screen { full: false, matching: None, delta: false }).unwrap();
         let gone = act(&mut engine, "tap e40").unwrap_err_or_text();
         assert!(gone.contains("e40 is not on the current screen"), "{gone}");
+    }
+
+    #[test]
+    fn verify_a_handle_checks_that_element_and_wait_for_a_handle_is_rejected() {
+        let (mut engine, _dir) = engine();
+        act(&mut engine, r#"open app "com.dupes""#).unwrap();
+        // "e1" is the Cancel control; a label search for "e1" would find nothing.
+        assert_eq!(act(&mut engine, "verify e1 exists").unwrap().text, "Done.");
+        assert!(act(&mut engine, "verify e9 exists").unwrap_err_or_text().contains("e9 is not on the current screen"));
+        let waited = parse_act_command("wait for e3 up to 2 seconds").unwrap_err();
+        assert!(waited.message.contains("wait for takes a label, not a handle"), "{}", waited.message);
+        let gone = act(&mut engine, "verify e1 is gone").unwrap_err_or_text();
+        assert!(gone.contains("verify gone takes a plain label"), "{gone}");
+    }
+
+    #[test]
+    fn a_number_picks_the_nth_duplicate_and_is_never_dropped() {
+        let (mut engine, _dir) = engine();
+        act(&mut engine, r#"open app "com.dupes""#).unwrap();
+        assert!(act(&mut engine, r#"tap "Save""#).unwrap_err_or_text().contains("matches 2 items"));
+        assert_eq!(act(&mut engine, r#"tap "Save" number 2"#).unwrap().status, "done");
+        assert!(act(&mut engine, r#"tap "Save" number 3"#).unwrap_err_or_text().contains("matches 2 items"));
+        assert!(act(&mut engine, r#"verify "Save" number 2 is gone"#).unwrap_err_or_text().contains("plain label"));
+    }
+
+    #[test]
+    fn a_reconnect_drops_the_cached_scene() {
+        let (mut engine, _dir) = engine();
+        engine.ensure_scene().unwrap();
+        assert!(engine.scene.is_some());
+        engine.reset_connections();
+        assert!(engine.scene.is_none());
+        assert_eq!(engine.ensure_scene().unwrap().nodes.len(), 1, "the screen is fetched again, not read from the cache");
+    }
+
+    #[test]
+    fn a_handle_from_an_earlier_listing_is_refused_every_time_and_a_fresh_one_works() {
+        let (mut engine, _dir) = engine();
+        assert!(act(&mut engine, "tap e0").unwrap_err_or_text().contains("none was read"));
+        engine.model_read(CommandRead::Screen { full: false, matching: None, delta: false }).unwrap();
+        // The screen moved on after the listing the handle came from.
+        engine.agent.marked_in.as_mut().unwrap().1 -= 1;
+        for _ in 0..2 {
+            let old = act(&mut engine, "tap e0").unwrap_err_or_text();
+            assert!(old.contains("e0 is from an earlier screen"), "{old}");
+        }
+        engine.model_read(CommandRead::Screen { full: false, matching: None, delta: false }).unwrap();
+        assert_eq!(act(&mut engine, "tap e0").unwrap().status, "done");
+        // That tap led to an unchanged-screen diff, which does not show the helper's numbering.
+        assert!(act(&mut engine, "tap e0").unwrap_err_or_text().contains("none was read"));
     }
 
     #[test]

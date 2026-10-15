@@ -78,6 +78,8 @@ pub(crate) struct AgentState {
     pub(crate) mapping: Vec<String>,
     /// Whether the last target resolved by a containing label rather than an exact one.
     pub(crate) loose: bool,
+    /// The package and scene generation of the last listing or numbered image; its `eN` handles die with that screen.
+    pub(crate) marked_in: Option<(Box<str>, u64)>,
     /// A served session limits labels the agent was never shown (see `unseen_label_runs`).
     pub(crate) strict: bool,
     /// Normalized labels of every row shown to the agent this session.
@@ -465,8 +467,11 @@ impl Engine {
             A::WaitTarget { target, seconds } => Op::Wait(Predicate::Exists(Match::Label(target.label.clone())), seconds.saturating_mul(1000)),
             A::WaitText { text, seconds } => Op::Wait(Predicate::Text(text.clone()), seconds.saturating_mul(1000)),
             A::WaitScreenChange { seconds } => Op::Wait(Predicate::GenerationAfter(scene.generation), seconds.saturating_mul(1000)),
-            A::VerifyExists(target) if target.ordinal.is_some() => Op::Assert(Predicate::Exists(Match::Ref(self.resolve_target(scene, target)?))),
+            A::VerifyExists(target) if target.ordinal.is_some() || target.handle.is_some() => Op::Assert(Predicate::Exists(Match::Ref(self.resolve_target(scene, target)?))),
             A::VerifyExists(target) => Op::Assert(Predicate::Exists(Match::Label(target.label.clone()))),
+            A::VerifyGone(target) if target.ordinal.is_some() || target.handle.is_some() => {
+                return Err(Error::new(Code::Args, "verify gone takes a plain label; a number or eN handle cannot name an element that is no longer there"));
+            }
             // A gone target cannot be resolved to a ref; check the label instead.
             A::VerifyGone(target) => Op::Assert(Predicate::Missing(Match::Label(target.label.clone()))),
             A::VerifyText(text) => Op::Assert(Predicate::Text(text.clone())),
@@ -503,6 +508,11 @@ impl Engine {
     /// `want` is `"edit"` when the step needs a text field and `"scroll"` when it needs a scrollable
     /// area, so a heading or a control with the same words is not a candidate.
     fn resolve_target_as(&mut self, scene: &Scene, target: &Target, want: &str) -> Result<u16> {
+        if let Some(handle) =
+            target.handle.filter(|_| self.agent.marked_in.as_ref().is_none_or(|(package, generation)| (&**package, *generation) != (&*scene.package, scene.generation)))
+        {
+            return Err(Error::plain(Code::Missing, format!("e{handle} is from an earlier screen or none was read; read the screen again for current handles")));
+        }
         let first = self.resolve_exact_as(scene, target, want);
         // A whole row copied from `screen` (`sw Wi-Fi=on`, `Save#2`) names its control when its
         // text is not itself a label.

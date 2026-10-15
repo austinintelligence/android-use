@@ -29,7 +29,10 @@ impl Engine {
         let previous = if focus.is_empty() { self.agent.snapshot.replace(rows.clone()) } else { None };
         let previous_was_shown = previous.is_some();
         let mut text = match (delta, previous) {
-            (true, Some(previous)) => format_semantic_delta(&semantic_delta(&previous, &rows)),
+            (true, Some(previous)) => {
+                self.agent.marked_in = None; // A diff does not show the new numbering.
+                format_semantic_delta(&semantic_delta(&previous, &rows))
+            }
             _ => format_semantic_rows(&rows, full, focus),
         };
         self.note_seen(&rows, &text, focus.is_empty() && !(delta && previous_was_shown));
@@ -103,7 +106,11 @@ impl Engine {
                 let changes = self.agent.snapshot.as_deref().and_then(|before| screen_changes(before, &rows));
                 let whole = changes.is_none();
                 let text = match changes {
-                    Some(changes) => format!("Changed:\n{changes}"),
+                    Some(changes) => {
+                        // A diff does not show the numbering the re-read just gave the helper.
+                        self.agent.marked_in = None;
+                        format!("Changed:\n{changes}")
+                    }
                     None => format!("Now on screen:\n{}", format_semantic_rows(&rows, false, "")),
                 };
                 self.note_seen(&rows, &text, whole);
@@ -152,8 +159,18 @@ impl Engine {
     }
 
     pub(crate) fn semantic_rows(&mut self, focus: &str) -> Result<Vec<SemanticRow>> {
+        let before = self.scene_id();
         let value = self.bridge_read(|bridge| bridge.query("semantic", Value::String(focus.to_owned())))?;
-        parse_semantic_rows(&value)
+        let rows = parse_semantic_rows(&value)?;
+        // Each listing renumbers the helper's handles, so `eN` is good only for this screen;
+        // a screen that moved during the read leaves no handle valid.
+        self.agent.marked_in = before.filter(|before| Some(before) == self.scene_id().as_ref());
+        Ok(rows)
+    }
+
+    /// Which screen the helper is showing now: the identity `eN` handles are stamped with.
+    fn scene_id(&mut self) -> Option<(Box<str>, u64)> {
+        self.ensure_scene().ok().map(|scene| (scene.package, scene.generation))
     }
 
     pub(crate) fn capture_screen_for_model(&mut self) -> Option<(ModelImage, String)> {
@@ -173,6 +190,7 @@ impl Engine {
     /// The capture with a numbered box over each control (set-of-marks), or `None` when the helper
     /// reports none. Best effort: the plain image is always a fine fallback.
     fn marked(&mut self, bytes: &[u8]) -> Option<Vec<u8>> {
+        let before = self.scene_id();
         let rows = self.bridge_read(|bridge| bridge.query("marks", Value::Null)).ok()?;
         let marks: Vec<Mark> = rows
             .as_array()?
@@ -186,9 +204,12 @@ impl Engine {
         if marks.is_empty() {
             return None;
         }
+        let still = before.filter(|before| Some(before) == self.scene_id().as_ref());
         let mut image = visual::decode(bytes).ok()?;
         marks::draw(&mut image, &marks);
-        visual::encode(image.w, image.h, &image.pixels, usize::MAX).ok()
+        let marked = visual::encode(image.w, image.h, &image.pixels, usize::MAX).ok()?;
+        self.agent.marked_in = still;
+        Some(marked)
     }
 
     /// Compresses a screen capture for the model and remembers how its
@@ -198,6 +219,10 @@ impl Engine {
         let marked = self.marked(&bytes);
         let Ok(compressed) = compress::for_model(marked.as_deref().unwrap_or(&bytes), &Policy::from_env()) else {
             // Sent unchanged, so the image is full resolution and its pixels are device pixels.
+            // It carries no numbers, so what the marks just renumbered was never shown.
+            if marked.is_some() {
+                self.agent.marked_in = None;
+            }
             self.agent.space = visual::decode(&bytes).ok().map(|image| ImageSpace { device: (image.w, image.h), image: (image.w, image.h) });
             self.agent.originals.insert("screen".into(), bytes.clone().into());
             let mime_type = mime_type(&bytes);
