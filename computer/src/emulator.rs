@@ -317,6 +317,7 @@ pub fn start(name: &str, window: bool) -> Result<Value> {
     let mut taken = claimed_ports(&l);
     taken.extend(adb.devices_all()?.iter().filter_map(|d| d.endpoint.strip_prefix("emulator-").and_then(|p| p.parse::<u16>().ok())));
     let console = free_ports(&taken).ok_or_else(|| Error::new(Code::Bounds, "no free emulator ports (limit: 16 instances)"))?;
+    crate::device::private_dir(&dir)?;
     let log = crate::device::private_file().write(true).create(true).truncate(true).open(dir.join("emulator.log"))?;
     let mut command = Command::new(&emulator);
     command.args(launch_args(name, console, window)).env("ANDROID_AVD_HOME", l.avd_home()).stdin(Stdio::null()).stdout(log.try_clone()?).stderr(log);

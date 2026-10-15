@@ -40,9 +40,9 @@ impl Paths {
     /// else the base folder itself, so nothing moves for anyone not using targets.
     pub fn discover() -> Result<Self> {
         let base = Self::base()?;
-        private_dir(&base)?;
         match env::var("AU_TARGET").ok().filter(|name| !name.is_empty()) {
             Some(name) if crate::emulator::valid_name(&name) => {
+                private_dir(&base)?;
                 private_dir(&base.join("targets"))?;
                 Self::at(base.join("targets").join(name))
             }
@@ -398,7 +398,9 @@ pub(crate) fn private_file() -> fs::OpenOptions {
     options
 }
 
-/// Creates `path` and any missing parents with mode 0700, then tightens it and its files.
+/// Creates `path` and any missing parents with mode 0700, then tightens it and the files au
+/// keeps in it (all of them in `artifacts/`). Other entries are never touched: `AU_HOME` is a
+/// folder the user chose and may hold their own files.
 pub(crate) fn private_dir(path: &Path) -> Result<()> {
     let mut builder = fs::DirBuilder::new();
     builder.recursive(true);
@@ -409,12 +411,22 @@ pub(crate) fn private_dir(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Makes a folder 0700 and its files 0600 when this user owns them. Anything owned by someone
-/// else is left alone with a warning, so a shared `AU_HOME` is never chmod-ed out from under them.
+/// The files au writes into a state folder.
+fn ours(name: &str) -> bool {
+    name.starts_with("operations.")
+        || ["device.json", "lock", "screen-space.json", "aubridge.apk", "target.json", "instance", "emulator.json", "emulator.log", "ports.lock"].contains(&name)
+}
+
+/// Makes a folder 0700 and its au-written files 0600 when this user owns them. Anything owned by
+/// someone else is left alone with a warning, so a shared `AU_HOME` is never chmod-ed out from
+/// under them. Ownership is learned from a file created inside the folder itself.
 #[cfg(unix)]
 fn tighten(dir: &Path) {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
-    let me = current_uid();
+    let probe = dir.join(format!(".au-uid-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()));
+    let me = private_file().write(true).create_new(true).open(&probe).and_then(|file| file.metadata()).map(|meta| meta.uid()).ok();
+    let _ = fs::remove_file(probe);
+    let all = dir.file_name().is_some_and(|name| name == "artifacts");
     let fix = |path: &Path, mode: u32| {
         let Ok(meta) = fs::symlink_metadata(path) else { return };
         if meta.file_type().is_symlink() || meta.mode() & 0o077 == 0 {
@@ -427,23 +439,13 @@ fn tighten(dir: &Path) {
     };
     fix(dir, 0o700);
     for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
-        if entry.file_type().is_ok_and(|kind| kind.is_file()) {
+        if entry.file_type().is_ok_and(|kind| kind.is_file()) && (all || entry.file_name().to_str().is_some_and(ours)) {
             fix(&entry.path(), 0o600);
         }
     }
 }
 #[cfg(not(unix))]
 fn tighten(_: &Path) {}
-
-/// The user id of this process, learned from a file it creates (safe code has no `geteuid`).
-#[cfg(unix)]
-fn current_uid() -> Option<u32> {
-    use std::os::unix::fs::MetadataExt;
-    let probe = env::temp_dir().join(format!("au-uid-{}", std::process::id()));
-    let uid = private_file().write(true).create_new(true).open(&probe).and_then(|file| file.metadata()).map(|meta| meta.uid()).ok();
-    let _ = fs::remove_file(probe);
-    uid
-}
 
 /// Deletes regular files in `dir` last modified longer ago than `ttl`.
 pub(crate) fn expire(dir: &Path, ttl: Duration) {
@@ -555,11 +557,14 @@ mod private_state_tests {
         fs::write(&old, "x").unwrap();
         fs::write(&fresh, "x").unwrap();
         fs::write(root.join("device.json"), "{}").unwrap();
+        fs::write(root.join("gradlew"), "#!/bin/sh").unwrap();
+        fs::set_permissions(root.join("gradlew"), fs::Permissions::from_mode(0o755)).unwrap();
         fs::File::options().write(true).open(&old).unwrap().set_modified(std::time::SystemTime::now() - ARTIFACT_TTL - Duration::from_secs(60)).unwrap();
 
         let paths = Paths::at(root.clone()).unwrap();
         assert_eq!((mode(&root), mode(&paths.artifacts), mode(&root.join("device.json")), mode(&fresh)), (0o700, 0o700, 0o600, 0o600));
         assert!(!old.exists() && fresh.exists());
+        assert_eq!(mode(&root.join("gradlew")), 0o755, "files au did not write are left alone");
 
         atomic(&root.join("new.json"), b"{}").unwrap();
         paths.lock_for_serving().unwrap();
