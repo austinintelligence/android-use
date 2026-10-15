@@ -10,9 +10,11 @@ import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
+import android.util.Log;
 
 public final class BridgeService extends Service {
     static final String STOP = "dev.codex.aubridge.action.STOP";
+    private static final Safety.Held HELD = new Safety.Held();
     private static volatile BridgeService instance;
     private Bridge bridge;
 
@@ -48,8 +50,20 @@ public final class BridgeService extends Service {
             startForeground(31, note);
         }
         instance = this;
-        bridge = new Bridge(this);
+        bridge = new Bridge(this, this::bindFailed);
         bridge.start();
+    }
+
+    private void bindFailed() {
+        Log.e("AndroidUse", "cannot listen: another process holds the helper socket");
+        getSystemService(NotificationManager.class)
+                .notify(
+                        32,
+                        new Notification.Builder(this, "bridge")
+                                .setSmallIcon(android.R.drawable.stat_sys_warning)
+                                .setContentTitle("Android-Use cannot start")
+                                .setContentText("Another process holds the helper socket")
+                                .build());
     }
 
     @Override
@@ -87,17 +101,41 @@ public final class BridgeService extends Service {
         return null;
     }
 
-    static void projectionStarted() {
+    static void begin(int type) {
+        update(type, true);
+    }
+
+    static void end(int type) {
+        update(type, false);
+    }
+
+    /** Keeps the union of the types in use, so one capture ending cannot drop another's. */
+    private static synchronized void update(int type, boolean on) {
         BridgeService service = instance;
         if (service == null || Build.VERSION.SDK_INT < 29) return;
+        // Before Android 14 the service claims every manifest type; narrowing it would drop
+        // camera, microphone and location until it restarts. Only the notification changes.
+        boolean modern = Build.VERSION.SDK_INT >= 34;
+        if (!modern && type != ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION) return;
+        int mask = on ? HELD.add(type) : HELD.remove(type);
         Notification note =
                 new Notification.Builder(service, "bridge")
                         .setSmallIcon(R.drawable.ic_notification)
                         .setContentTitle("Android-Use")
-                        .setContentText("Screen recording is active")
+                        .setContentText(
+                                mask == 0
+                                        ? "Authenticated local Android control"
+                                        : "Capture is active")
                         .build();
-        int type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION;
-        if (Build.VERSION.SDK_INT >= 34) type |= ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE;
-        service.startForeground(31, note, type);
+        try {
+            service.startForeground(
+                    31,
+                    note,
+                    modern
+                            ? mask | ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                            : ServiceInfo.FOREGROUND_SERVICE_TYPE_MANIFEST);
+        } catch (RuntimeException e) {
+            // The capture reports its own permission or background failure.
+        }
     }
 }

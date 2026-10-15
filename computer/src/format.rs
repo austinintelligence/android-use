@@ -54,7 +54,13 @@ pub(crate) fn parse_semantic_rows(value: &Value) -> Result<Vec<SemanticRow>> {
 }
 
 pub(crate) fn display(value: &str) -> String {
-    let out: String = value.chars().filter(|&c| !matches!(c, '{' | '}' | '[' | ']' | '\0') && (!c.is_control() || matches!(c, '\n' | '\r' | '\t'))).collect();
+    // Line breaks, tabs and bidi controls would fake rows or reorder text, so they become spaces.
+    let spaced = |c: char| matches!(c, '\n' | '\r' | '\t' | '\u{200E}' | '\u{200F}' | '\u{061C}' | '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}');
+    let out: String = value
+        .chars()
+        .filter(|&c| !matches!(c, '{' | '}' | '[' | ']') && (spaced(c) || !(c.is_control() || crate::api::invisible(c))))
+        .map(|c| if spaced(c) { ' ' } else { c })
+        .collect();
     out.trim().to_owned()
 }
 
@@ -149,7 +155,7 @@ fn short_value(value: &str) -> bool {
 /// the order the resolver counts in. Headings are never targets, and plain text is skipped when a
 /// control carries the same words (the resolver prefers the control), so a listed number is always
 /// one the resolver accepts.
-fn duplicate_numbers(rows: &[SemanticRow]) -> Vec<Option<usize>> {
+pub(crate) fn duplicate_numbers(rows: &[SemanticRow]) -> Vec<Option<usize>> {
     let counted = |row: &SemanticRow, controls_exist: bool| row.kind != "heading" && !row.label.is_empty() && (!controls_exist || !row.kind.is_empty());
     let mut controls: HashMap<String, bool> = HashMap::new();
     for row in rows.iter().filter(|row| !row.kind.is_empty() && row.kind != "heading") {
@@ -458,6 +464,7 @@ pub(crate) fn describe_action(action: &Action) -> String {
         Action::Android(action) => match action {
             A::Tap(t) => format!("tap {}", quoted(&t.label)),
             A::Toggle(t) => format!("toggle {}", quoted(&t.label)),
+            A::Set { target, on } => format!("set {} {}", quoted(&target.label), if *on { "on" } else { "off" }),
             A::Hold(t) => format!("hold {}", quoted(&t.label)),
             A::Type { target, .. } => format!("type into {}", quoted(&target.label)),
             A::Scroll { direction, target } => format!("scroll {} in {}", format!("{direction:?}").to_lowercase(), quoted(&target.label)),
@@ -479,7 +486,7 @@ pub(crate) fn describe_action(action: &Action) -> String {
             A::ScreenRecord(_) => "record the screen".into(),
             A::NotificationOpen(t) => format!("open notification {}", quoted(&t.label)),
             A::NotificationDismiss(t) => format!("dismiss notification {}", quoted(&t.label)),
-            A::NotificationAction(t) => format!("run notification action {}", quoted(&t.label)),
+            A::NotificationAction(t, _) => format!("run notification action {}", quoted(&t.label)),
             A::PointTap { x, y } => format!("tap point {x} {y}"),
             A::Swipe { .. } => "swipe".into(),
         },
@@ -513,6 +520,7 @@ fn done_phrase(action: &Action) -> String {
     match action {
         Action::Android(A::Tap(t)) => format!("tapped {}", short(&t.label)),
         Action::Android(A::Toggle(t)) => format!("toggled {}", short(&t.label)),
+        Action::Android(A::Set { target, on }) => format!("set {} {}", short(&target.label), if *on { "on" } else { "off" }),
         Action::Android(A::Hold(t)) => format!("held {}", short(&t.label)),
         Action::Android(A::Type { text, target }) | Action::Browser(B::Type { text, target }) => format!("typed {} in {}", short(text), short(&target.label)),
         Action::Android(A::VerifyExists(t)) => format!("verified {} exists", short(&t.label)),
@@ -530,7 +538,7 @@ fn done_phrase(action: &Action) -> String {
         Action::Android(A::ScreenRecord(_)) => "recorded the screen".into(),
         Action::Android(A::NotificationOpen(t)) => format!("opened the {} notification", short(&t.label)),
         Action::Android(A::NotificationDismiss(t)) => format!("dismissed the {} notification", short(&t.label)),
-        Action::Android(A::NotificationAction(t)) => format!("ran the {} notification action", short(&t.label)),
+        Action::Android(A::NotificationAction(t, _)) => format!("ran the {} notification action", short(&t.label)),
         Action::Android(A::PointTap { x, y }) => format!("tapped point {x} {y}"),
         Action::Android(A::Swipe { .. }) => "swiped".into(),
         Action::Android(A::WaitTarget { .. } | A::WaitText { .. } | A::WaitScreenChange { .. }) | Action::Browser(B::WaitText { .. } | B::WaitCss { .. }) => {
@@ -705,6 +713,14 @@ mod tests {
             Action::Android(AndroidAction::VerifyText("Submitted".into())),
         ];
         assert_eq!(success_text(&actions), "Done. Typed Sample text in Name, tapped Save, and verified that Submitted appeared.");
+    }
+
+    #[test]
+    fn newlines_and_bidi_overrides_in_labels_render_on_one_line() {
+        let line = semantic_line(&row("Pay\nSend all\t\u{202E}evil\u{2066}x", "button", "", ""), None, false);
+        assert_eq!(line, "btn Pay Send all  evil x".replace("btn ", kind_tag("button")));
+        assert!(!line.contains(['\n', '\u{202E}', '\u{2066}']));
+        assert_eq!(display("a\u{200B}b\u{FEFF}c\u{E0041}"), "abc", "invisible characters are dropped");
     }
 
     #[test]
