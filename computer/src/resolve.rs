@@ -50,8 +50,8 @@ pub(crate) fn pick_safe<T: Clone + PartialEq>(target: &Target, candidates: &[Can
 /// Accepts the one loose match that is not risky; anything else is a miss listing what was near.
 pub(crate) fn loose<T: Clone + PartialEq>(target: &Target, near: Vec<(T, impl AsRef<str>)>, surface: &str) -> Result<T> {
     let needle = normalized(&target.label);
-    if let [(value, label)] = near.as_slice() {
-        if !risky_extra(&needle, label.as_ref()) {
+    if let ([(value, label)], None) = (near.as_slice(), target.ordinal) {
+        if near_miss(&needle, label.as_ref()) {
             return Ok(value.clone());
         }
     }
@@ -63,9 +63,9 @@ pub(crate) fn loose<T: Clone + PartialEq>(target: &Target, near: Vec<(T, impl As
     Err(miss)
 }
 
-/// Whether `label` adds a risky word beyond the words of `wanted`.
-fn risky_extra(wanted: &str, label: &str) -> bool {
-    normalized(label).split(' ').any(|word| RISKY.contains(&word) && !wanted.split(' ').any(|w| w == word))
+/// A risky word, or an inflection of one ("payments", "delete-all", "removed").
+fn risky_word(word: &str) -> bool {
+    RISKY.contains(&word) || ["pay", "delet", "remov", "transfer", "eras", "reset"].iter().any(|stem| word.starts_with(stem))
 }
 
 /// Applies the ordinal/ambiguity rule to an already-ordered match list.
@@ -211,8 +211,8 @@ const RISKY: [&str; 21] = [
 pub(crate) fn near_miss(wanted: &str, actual: &str) -> bool {
     let (wanted, actual) = (normalized(wanted), normalized(actual));
     let aligned = actual.starts_with(&format!("{wanted} ")) || actual.ends_with(&format!(" {wanted}"));
-    let extra: Vec<&str> = actual.split(' ').filter(|word| !wanted.split(' ').any(|w| w == *word)).collect();
-    aligned && extra.len() <= 2 && !extra.iter().any(|word| RISKY.contains(word))
+    let extra: Vec<&str> = actual.split([' ', '-']).filter(|word| !wanted.split([' ', '-']).any(|w| w == *word)).collect();
+    aligned && extra.len() <= 2 && !extra.iter().any(|word| risky_word(word))
 }
 
 /// A label missing from the Android screen (not a page, app, or
@@ -307,6 +307,10 @@ mod tests {
     fn open_app_refuses_a_risky_extra_word_candidate() {
         let rows = json!([["com.bank.transfer", "Bank Transfer"], ["com.bank.app", "Bank Notes"]]);
         assert_eq!(app(&rows, "Bank").unwrap_err().code, Code::Missing);
+        for (name, query) in [("Bank Transfers", "Bank"), ("Center Payments", "Center"), ("Cleaner Delete-all", "Cleaner")] {
+            assert_eq!(app(&json!([["x", name]]), query).unwrap_err().code, Code::Missing, "{name}");
+        }
+        assert_eq!(app(&json!([["x", "Your verification code"]]), "on").unwrap_err().code, Code::Missing, "inside a word");
         assert_eq!(app(&rows, "Bank Transfer").unwrap(), "com.bank.transfer", "exact names still open");
         assert_eq!(app(&json!([["com.bank.transfer", "Bank Transfer"]]), "Bank").unwrap_err().code, Code::Missing);
     }
@@ -319,5 +323,6 @@ mod tests {
         assert_eq!(notification(&value, &target("Photos", None)).unwrap_err().code, Code::Missing);
         let value = json!({"enabled":true,"items":[{"id":"k-ok","title":"Calendar event","text":""}]});
         assert_eq!(notification(&value, &target("Calendar", None)).unwrap().as_ref(), "k-ok");
+        assert_eq!(notification(&value, &target("Calendar", Some(2))).unwrap_err().code, Code::Missing, "number never applies to a loose match");
     }
 }

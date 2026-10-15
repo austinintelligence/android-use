@@ -4,7 +4,7 @@
 
 ### Security
 
-- Loose matches are safe near misses. A notification, tab, or app whose name only contains or starts with your words is used only when it is the single such item and adds no risky word (`pay`, `delete`, `transfer`, ...); otherwise the command reports a miss that lists the candidates. `open app "Bank"` no longer opens "Bank Transfer".
+- Loose matches are safe near misses. A notification, tab, or app whose name only contains or starts with your words is used only when it is the single such item, lines up with your words at a word boundary, adds at most two other words, and none is risky (`pay`, `delete`, `transfer`, and forms like `payments` or `delete-all`); otherwise the command reports a miss that lists the candidates. `open app "Bank"` no longer opens "Bank Transfer".
 
 ### Changed
 

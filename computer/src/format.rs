@@ -55,7 +55,7 @@ pub(crate) fn parse_semantic_rows(value: &Value) -> Result<Vec<SemanticRow>> {
 
 pub(crate) fn display(value: &str) -> String {
     // Line breaks, tabs and bidi controls would fake rows or reorder text, so they become spaces.
-    let spaced = |c: char| matches!(c, '\n' | '\r' | '\t' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}');
+    let spaced = |c: char| matches!(c, '\n' | '\r' | '\t' | '\u{200E}' | '\u{200F}' | '\u{061C}' | '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}');
     let out: String = value.chars().filter(|&c| !matches!(c, '{' | '}' | '[' | ']') && (spaced(c) || !c.is_control())).map(|c| if spaced(c) { ' ' } else { c }).collect();
     out.trim().to_owned()
 }
