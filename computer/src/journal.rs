@@ -212,27 +212,23 @@ impl Journal {
         if !valid(id) || digest.len() != 64 {
             return;
         }
+        let state = match kind {
+            "p" => a.get(3).and_then(Value::as_u64).map(|generation| {
+                let text = |i: usize| a.get(i).and_then(Value::as_str).unwrap_or_default().into();
+                State::Pending { digest: digest.into(), generation, owner: text(4), surface: text(5) }
+            }),
+            "d" => a.get(3).cloned().and_then(|v| serde_json::from_value::<Receipt>(v).ok()).map(|receipt| State::Done { digest: digest.into(), receipt }),
+            _ => None,
+        };
+        // A rejected record leaves both the state and its place in `order` alone.
+        let Some(state) = state else { return };
         if self.states.contains_key(id) {
             if let Some(pos) = self.order.iter().rposition(|v| v.as_ref() == id) {
                 self.order.remove(pos);
             }
         }
-        match kind {
-            "p" => {
-                if let Some(g) = a.get(3).and_then(Value::as_u64) {
-                    let text = |i: usize| a.get(i).and_then(Value::as_str).unwrap_or_default().into();
-                    self.order.push_back(id.into());
-                    self.states.insert(id.into(), State::Pending { digest: digest.into(), generation: g, owner: text(4), surface: text(5) });
-                }
-            }
-            "d" => {
-                if let Some(r) = a.get(3).cloned().and_then(|v| serde_json::from_value::<Receipt>(v).ok()) {
-                    self.order.push_back(id.into());
-                    self.states.insert(id.into(), State::Done { digest: digest.into(), receipt: r });
-                }
-            }
-            _ => {}
-        }
+        self.order.push_back(id.into());
+        self.states.insert(id.into(), state);
     }
 
     /// Appends one record in a single write. If the write fails, the partial
@@ -458,6 +454,20 @@ mod tests {
         let count = u64::from_le_bytes(fs::read(&lock).unwrap()[..8].try_into().unwrap());
         fs::write(&lock, (count + 1).to_le_bytes()).unwrap();
         assert!(first.begin("cd", 1, A, ANDROID).unwrap().is_some(), "the rewritten journal is reloaded");
+    }
+
+    #[test]
+    fn a_rejected_record_for_a_pending_id_keeps_its_fence_through_compaction() {
+        let d = tempfile::tempdir().unwrap();
+        let mut j = open(&d);
+        assert!(j.begin("ab", 1, A, ANDROID).unwrap().is_none());
+        j.apply(&json!(["ab", "p", A, "x"]));
+        j.apply(&json!(["ab", "z", A]));
+        assert_eq!(j.order.iter().map(|id| &**id).collect::<Vec<_>>(), ["ab"]);
+        j.compact().unwrap();
+        drop(j);
+        let mut reopened = open(&d);
+        assert_eq!(reopened.begin("ab", 1, A, ANDROID).unwrap().unwrap().e.as_deref(), Some("unknown"), "the pending record survives");
     }
 
     #[test]
