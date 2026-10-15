@@ -27,6 +27,9 @@ pub trait DeviceLink {
     fn device(&mut self) -> Result<Device>;
     fn helper(&mut self) -> Result<Bridge>;
     fn chrome(&mut self) -> Result<Browser>;
+    /// Connects to a helper that is already running. Unlike `helper`, it never starts one, so
+    /// preflight can report a helper that Android ended instead of quietly restarting it.
+    fn attach(&mut self) -> Result<Bridge>;
     fn reset(&mut self);
 }
 
@@ -109,6 +112,11 @@ impl DeviceLink for AdbLink {
         }
     }
 
+    fn attach(&mut self) -> Result<Bridge> {
+        let (adb, device) = self.resolved()?;
+        Self::handshake(&adb, &device)
+    }
+
     fn chrome(&mut self) -> Result<Browser> {
         self.resolved()?;
         Browser::connect(self.clone())
@@ -140,6 +148,8 @@ mod fake {
         pub(crate) helper_connects: Rc<RefCell<u32>>,
         /// What the phone reports about itself; tests set `screen_on`, `locked`, `stopped`.
         pub(crate) phone: Rc<RefCell<Value>>,
+        /// How often `helper` tried to start a dead helper.
+        pub(crate) starts: Rc<RefCell<u32>>,
         /// The helper process is gone: connecting fails.
         pub(crate) killed: Rc<std::cell::Cell<bool>>,
     }
@@ -158,7 +168,7 @@ mod fake {
 
     impl FakeLink {
         pub(crate) fn new(script: impl FnMut(&Value) -> Option<Value> + 'static) -> Self {
-            Self { script: Rc::new(RefCell::new(Box::new(script))), helper_connects: Rc::default(), phone: Rc::default(), killed: Rc::default() }
+            Self { script: Rc::new(RefCell::new(Box::new(script))), helper_connects: Rc::default(), phone: Rc::default(), starts: Rc::default(), killed: Rc::default() }
         }
     }
 
@@ -186,8 +196,17 @@ mod fake {
         fn device(&mut self) -> Result<Device> {
             Ok(Device { endpoint: "fake".into(), hardware: "fake-serial".into() })
         }
+        fn attach(&mut self) -> Result<Bridge> {
+            if self.killed.get() {
+                return Err(Error::new(Code::Helper, "adb refused the helper socket"));
+            }
+            *self.helper_connects.borrow_mut() += 1;
+            Ok(Bridge::new(Box::new(Scripted { script: self.script.clone(), phone: self.phone.clone(), killed: self.killed.clone(), reply: None, open: true })))
+        }
         fn helper(&mut self) -> Result<Bridge> {
             if self.killed.get() {
+                // `helper` would start the service here; a test can see that it was asked to.
+                *self.starts.borrow_mut() += 1;
                 return Err(Error::new(Code::Io, "the fake helper process is gone"));
             }
             *self.helper_connects.borrow_mut() += 1;
