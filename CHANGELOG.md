@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Security
+
+- Host state is private and artifacts expire after 7 days; a shared AU_HOME on CI must become per user. On macOS and Linux the state folder, `device.json`, journal, locks, logs, artifacts, and `screen-space.json` are created 0700/0600, existing ones owned by you are tightened at startup, and artifacts older than 7 days are deleted.
+
 ### Fixed
 
 - `cargo xtask` gates fail closed: a missing release artifact fails the size gate instead of measuring 0 bytes, and the stale-version check flags only standalone versions such as `v2` or `v3.1`, not words that contain one (`dev2`).

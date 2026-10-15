@@ -15,7 +15,7 @@
 use crate::{
     api::{Code, Error, Receipt, Result},
     artifact::valid,
-    device::{atomic, recover, Paths},
+    device::{atomic, private_file, recover, Paths},
     engine::session_id,
 };
 use serde_json::{json, Value};
@@ -101,7 +101,7 @@ impl Journal {
             // The pending record must reach the disk before dispatch: it is what
             // turns a crash mid-operation into `unknown` instead of a replay.
             if journal.held.is_none() {
-                let held = OpenOptions::new().create(true).truncate(false).write(true).open(journal.path.with_extension(format!("owner-{}", journal.owner)))?;
+                let held = private_file().create(true).truncate(false).write(true).open(journal.path.with_extension(format!("owner-{}", journal.owner)))?;
                 held.lock()?;
                 journal.held = Some(held);
             }
@@ -133,7 +133,7 @@ impl Journal {
     /// Runs `f` under the journal lock with the file reloaded, so every decision
     /// is made on what other processes have already written.
     fn locked<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
-        let lock = OpenOptions::new().create(true).truncate(false).write(true).open(&self.lock_path)?;
+        let lock = private_file().create(true).truncate(false).write(true).open(&self.lock_path)?;
         lock.lock()?;
         let result = self.reload().and_then(|()| f(self));
         drop(lock);
@@ -214,7 +214,7 @@ impl Journal {
             return Err(Error::new(Code::Bounds, "journal record exceeds limit"));
         }
         line.push(b'\n');
-        let mut file = OpenOptions::new().create(true).append(true).open(&self.path)?;
+        let mut file = private_file().create(true).append(true).open(&self.path)?;
         let before = file.metadata()?.len();
         let written = file.write_all(&line).and_then(|()| if durable { file.sync_all() } else { Ok(()) });
         if let Err(error) = written {

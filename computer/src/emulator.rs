@@ -247,7 +247,7 @@ pub fn create(name: &str, image: Option<&str>, profile: Profile) -> Result<Value
     fs::create_dir_all(&avd)?;
     fs::write(l.avd_home().join(format!("{name}.ini")), ini)?;
     fs::write(avd.join("config.ini"), config)?;
-    fs::create_dir_all(l.target(name))?;
+    crate::device::private_dir(&l.target(name))?;
     fs::write(l.target(name).join("target.json"), json!({"schema":1,"name":name,"kind":"emulator","avd":name,"image":image.id}).to_string())?;
     Ok(json!({"ok":1,"name":name,"image":image.id,"next":format!("au emulator start {name}")}))
 }
@@ -311,13 +311,13 @@ pub fn start(name: &str, window: bool) -> Result<Value> {
     }
     let emulator = emulator_binary(&sdk_root()?)?;
     // Port choice and the spawn happen under one lock, so two starts at once cannot pick one pair.
-    fs::create_dir_all(l.base.join("emulators"))?;
-    let lock = fs::OpenOptions::new().create(true).truncate(false).write(true).open(l.base.join("emulators/ports.lock"))?;
+    crate::device::private_dir(&l.base.join("emulators"))?;
+    let lock = crate::device::private_file().create(true).truncate(false).write(true).open(l.base.join("emulators/ports.lock"))?;
     lock.lock()?;
     let mut taken = claimed_ports(&l);
     taken.extend(adb.devices_all()?.iter().filter_map(|d| d.endpoint.strip_prefix("emulator-").and_then(|p| p.parse::<u16>().ok())));
     let console = free_ports(&taken).ok_or_else(|| Error::new(Code::Bounds, "no free emulator ports (limit: 16 instances)"))?;
-    let log = fs::File::create(dir.join("emulator.log"))?;
+    let log = crate::device::private_file().write(true).create(true).truncate(true).open(dir.join("emulator.log"))?;
     let mut command = Command::new(&emulator);
     command.args(launch_args(name, console, window)).env("ANDROID_AVD_HOME", l.avd_home()).stdin(Stdio::null()).stdout(log.try_clone()?).stderr(log);
     #[cfg(unix)]
@@ -334,11 +334,14 @@ pub fn start(name: &str, window: bool) -> Result<Value> {
             let mut bytes = [0u8; 8];
             getrandom::fill(&mut bytes).map_err(|_| Error::new(Code::Io, "no random bytes"))?;
             let fresh = bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
-            fs::write(dir.join("instance"), &fresh)?;
+            crate::device::atomic(&dir.join("instance"), fresh.as_bytes())?;
             fresh
         }
     };
-    fs::write(dir.join("emulator.json"), json!({"endpoint":endpoint,"console":console,"adb":console + 1,"pid":child.id(),"instance":instance}).to_string())?;
+    crate::device::atomic(
+        &dir.join("emulator.json"),
+        json!({"endpoint":endpoint,"console":console,"adb":console + 1,"pid":child.id(),"instance":instance}).to_string().as_bytes(),
+    )?;
     let appeared = Instant::now() + Duration::from_secs(90);
     while adb_state(&adb, &endpoint).as_deref() != Some("device") {
         if child.try_wait()?.is_some() || Instant::now() > appeared {
