@@ -280,12 +280,14 @@ fn pin_mismatch(text: &str, version: &str) -> Option<String> {
     if let Some(bare) = ["android-use setup", "android-use serve"].into_iter().find(|launch| text.contains(launch)) {
         return Some(bare.to_owned());
     }
-    ["android-use@", "android-use/v"].into_iter().find_map(|marker| {
+    ["android-use@", "android-use/v", "ANDROID_USE_VERSION="].into_iter().find_map(|marker| {
         text.match_indices(marker).find_map(|(at, _)| {
-            let rest = &text[at + marker.len()..];
-            let end = rest.find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '-'))).unwrap_or(rest.len());
-            let pin = rest[..end].trim_end_matches('.');
-            (pin != version).then(|| text[at..at + marker.len() + pin.len()].to_owned())
+            // A PowerShell value is quoted (`ANDROID_USE_VERSION='1.2.0'`), so skip quotes before the version.
+            let start = at + marker.len();
+            let value = text[start..].trim_start_matches(['\'', '"']);
+            let end = value.find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '-'))).unwrap_or(value.len());
+            let pin = value[..end].trim_end_matches('.');
+            (pin != version).then(|| text[at..text.len() - value.len() + pin.len()].to_owned())
         })
     })
 }
@@ -731,10 +733,13 @@ mod tests {
         assert_eq!(pin_mismatch("| sh && au setup", "1.2.0"), None);
         assert_eq!(pin_mismatch("curl .../android-use/v1.2.0/install/install.sh", "1.2.0"), None);
         assert_eq!(pin_mismatch("npx -y android-use@1.2.0. setup", "1.2.0"), None, "a sentence-final period is not part of the pin");
+        assert_eq!(pin_mismatch("$env:ANDROID_USE_VERSION='1.2.0'; irm", "1.2.0"), None);
         for (text, pin) in [
             ("\"android-use@1\"", "android-use@1"),
             ("npx -y android-use@latest setup", "android-use@latest"),
             ("android-use/v1.1.2/install", "android-use/v1.1.2"),
+            ("ANDROID_USE_VERSION=1.1.2 sh", "ANDROID_USE_VERSION=1.1.2"),
+            ("$env:ANDROID_USE_VERSION='1.1.2'", "ANDROID_USE_VERSION='1.1.2"),
             ("npx -y android-use setup", "android-use setup"),
             ("npx android-use serve --mcp", "android-use serve"),
         ] {
