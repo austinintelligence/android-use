@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Security
+
+- The npm launcher fails closed: `android-use` and each `@androiduse/<platform>` package ship a `manifest.json` with SHA-256 digests, and a missing manifest, a missing entry for your platform, or a checksum mismatch exits 1 instead of running an unchecked binary. `AU_BIN` still overrides the binary but warns on stderr every time. The launcher forwards SIGINT, SIGTERM, and SIGHUP to `au` and exits with its code. A binary swapped between the check and the launch is not defended against: anyone who can write `node_modules` can rewrite the launcher itself.
+- `au setup` run through `npx` registers `npx -y android-use@X.Y.Z serve --mcp` (pinned to its own version) with agent clients instead of a path inside the npx cache, which disappears when the cache is pruned.
+
 ### Fixed
 
 - `cargo xtask` gates fail closed: a missing release artifact fails the size gate instead of measuring 0 bytes, and the stale-version check flags only standalone versions such as `v2` or `v3.1`, not words that contain one (`dev2`).
