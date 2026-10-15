@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Security
+
+- The helper now proves itself before `au` sends anything. The helper keeps a random per-process key that only the ADB shell user can read; `au` sends a random challenge and continues only if the answer is the right HMAC-SHA256, so an app that binds the helper socket first can no longer impersonate the helper. A wrong or missing answer fails with "the process on the helper socket is not the Android-Use helper".
+- The helper retries a socket bind that fails, tells you in a notification if it still cannot listen, and keeps accepting connections when one connection fails.
+
 ### Fixed
 
 - `cargo xtask` gates fail closed: a missing release artifact fails the size gate instead of measuring 0 bytes, and the stale-version check flags only standalone versions such as `v2` or `v3.1`, not words that contain one (`dev2`).

@@ -1,4 +1,5 @@
 use crate::api::{Code, Error, Result};
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use std::{
     env, fs,
@@ -264,6 +265,12 @@ impl Adb {
         self.run(Some(&d.endpoint), &["shell", "am", "start-foreground-service", "-n", "dev.codex.aubridge/.BridgeService"], Duration::from_secs(8))?;
         Ok(())
     }
+    /// The helper's per-process key. Only the shell user can read it, so `au` can check that
+    /// whatever answers on the helper socket is the helper (see `link::prove`).
+    pub(crate) fn helper_key(&self, d: &Device) -> Result<Vec<u8>> {
+        let out = self.run(Some(&d.endpoint), &["shell", "content", "query", "--uri", "content://dev.codex.aubridge.key"], Duration::from_secs(8))?;
+        parse_key(&String::from_utf8_lossy(&out))
+    }
     /// Opens a stream to an abstract socket on the device by speaking to the adb server directly
     /// (`host:transport:SERIAL`, then `localabstract:NAME`), the protocol `adb` itself uses. No
     /// `adb` process is spawned and no port forward exists to clean up.
@@ -308,6 +315,17 @@ impl Adb {
         self.run(Some(&d.endpoint), &["uninstall", "dev.codex.aubridge"], Duration::from_secs(30))?;
         Ok(())
     }
+}
+
+/// Reads `Row: 0 key=BASE64` from `content query`.
+fn parse_key(output: &str) -> Result<Vec<u8>> {
+    let fail = || Error::new(Code::Helper, "cannot read the helper key; update the helper with `au update`");
+    let value = output.lines().find_map(|line| line.split_once("key=")).map(|(_, v)| v.trim()).ok_or_else(fail)?;
+    let key = base64::engine::general_purpose::STANDARD.decode(value).map_err(|_| fail())?;
+    if key.len() < 16 {
+        return Err(fail());
+    }
+    Ok(key)
 }
 
 fn run_bounded(program: &Path, args: &[&str], timeout: Duration) -> Result<Vec<u8>> {
@@ -428,6 +446,14 @@ mod tests {
 
     fn binding() -> Binding {
         Binding { hardware: "SER1".into(), endpoint: "emulator-5554".into() }
+    }
+
+    #[test]
+    fn the_helper_key_is_parsed_from_content_query_output() {
+        assert_eq!(parse_key("Row: 0 key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n").unwrap().len(), 32);
+        for bad in ["No result found.\n", "", "Row: 0 key=!!!\n", "Row: 0 key=AAAA\n"] {
+            assert!(parse_key(bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

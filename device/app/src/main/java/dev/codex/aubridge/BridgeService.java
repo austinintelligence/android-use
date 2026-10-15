@@ -8,6 +8,7 @@ import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
+import android.util.Log;
 
 public final class BridgeService extends Service {
     private static volatile BridgeService instance;
@@ -34,8 +35,20 @@ public final class BridgeService extends Service {
             startForeground(31, note);
         }
         instance = this;
-        bridge = new Bridge(this);
+        bridge = new Bridge(this, this::bindFailed);
         bridge.start();
+    }
+
+    private void bindFailed() {
+        Log.e("AndroidUse", "cannot listen: another process holds the helper socket");
+        getSystemService(NotificationManager.class)
+                .notify(
+                        32,
+                        new Notification.Builder(this, "bridge")
+                                .setSmallIcon(android.R.drawable.stat_sys_warning)
+                                .setContentTitle("Android-Use cannot start")
+                                .setContentText("Another process holds the helper socket")
+                                .build());
     }
 
     @Override
