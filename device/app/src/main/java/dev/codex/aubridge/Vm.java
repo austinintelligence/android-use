@@ -97,9 +97,9 @@ final class Vm {
                 at = i;
                 if (SystemClock.elapsedRealtime() > end) throw new Fail(i, true);
                 boolean ok;
-                if (p.mutates && !guarded && p.name.equals("scroll_until")) {
-                    // A long loop must not hold the guard: it blocks the very events that tell
-                    // it the screen has scrolled.
+                if (p.mutates && !guarded && p.unguarded()) {
+                    // A long step must not hold the guard: it would block other workers' observe
+                    // and semantic reads, and a capture would block taps, for its whole duration.
                     synchronized (ui.guard()) {
                         if (ui.snapshot().generation != expected) throw new Stale();
                     }
@@ -365,9 +365,14 @@ final class Vm {
                     return new P(n, null, "screen_record", duration, null, null, true);
                 case "notification_open":
                 case "notification_dismiss":
-                case "notification_action":
                     exact(a, 2);
                     return new P(n, null, bounded(a.getString(1), 256), 0, null, null, true);
+                case "notification_action":
+                    if (a.length() != 2) exact(a, 3);
+                    // Key and optional action label travel together, split by Notify.action.
+                    String key = bounded(a.getString(1), 256);
+                    if (a.length() == 3) key += "\u0001" + bounded(a.getString(2), 256);
+                    return new P(n, null, key, 0, null, null, true);
                 default:
                     throw new Unsupported();
             }
@@ -508,6 +513,13 @@ final class Vm {
                 default:
                     return false;
             }
+        }
+
+        private boolean unguarded() {
+            return name.equals("scroll_until")
+                    || name.equals("camera")
+                    || name.equals("microphone")
+                    || name.equals("screen_record");
         }
 
         @Override
