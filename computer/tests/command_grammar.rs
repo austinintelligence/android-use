@@ -99,7 +99,7 @@ fn parses_every_canonical_action_family() {
         r#"open notification "Message""#,
         r#"dismiss notification "Message""#,
         r#"run notification action "Message""#,
-        r#"run notification action "Reply" on "Message""#,
+        r#"run notification action "Archive" on "Message""#,
         r#"page open "https://example.com""#,
         r#"page click "Submit""#,
         r#"page focus "Email""#,

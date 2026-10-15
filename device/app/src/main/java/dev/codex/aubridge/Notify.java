@@ -54,7 +54,7 @@ public final class Notify extends NotificationListenerService {
             JSONArray actions = new JSONArray();
             if (n != null && n.actions != null)
                 for (Notification.Action a : n.actions)
-                    if (a != null && a.actionIntent != null && a.title != null)
+                    if (runnable(a))
                         actions.put(cut(a.title.toString(), 80));
             item.put("actions", actions);
             synchronized (recent) {
@@ -107,9 +107,9 @@ public final class Notify extends NotificationListenerService {
     static boolean action(String request) {
         Notify n = instance;
         if (n == null) return false;
-        int split = request.indexOf('\u0001');
+        int split = request.lastIndexOf('\u0001');
         String key = split < 0 ? request : request.substring(0, split);
-        String label = split < 0 ? null : request.substring(split + 1);
+        String label = split < 0 ? null : cut(request.substring(split + 1), 80);
         try {
             StatusBarNotification sbn;
             synchronized (n.recent) {
@@ -119,11 +119,11 @@ public final class Notify extends NotificationListenerService {
             Notification.Action chosen = null;
             int runnable = 0;
             for (Notification.Action action : sbn.getNotification().actions) {
-                if (action == null || action.actionIntent == null) continue;
+                if (!runnable(action)) continue;
                 runnable++;
                 if (label == null
                         ? chosen == null
-                        : action.title != null && label.equalsIgnoreCase(action.title.toString()))
+                        : label.equalsIgnoreCase(cut(action.title.toString(), 80)))
                     chosen = action;
             }
             if (chosen == null || (label == null && runnable > 1)) return false;
@@ -152,6 +152,14 @@ public final class Notify extends NotificationListenerService {
                 .put("active", instance != null)
                 .put("items", out)
                 .put("truncated", out.length() >= 32);
+    }
+
+    /** Actions that need typed input (Reply) cannot be run from here, so they are not offered. */
+    private static boolean runnable(Notification.Action a) {
+        return a != null
+                && a.actionIntent != null
+                && a.title != null
+                && a.getRemoteInputs() == null;
     }
 
     private static String cut(String s, int max) {

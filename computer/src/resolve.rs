@@ -133,12 +133,18 @@ pub(crate) fn notification_label(item: &Value) -> String {
 /// notification with several actions needs the label; nothing runs without it.
 pub(crate) fn notification_action(value: &Value, target: &Target, label: Option<&str>) -> Result<(Box<str>, Option<Box<str>>)> {
     let key = notification(value, target)?;
-    let actions: Vec<&str> = notification_items(value)
-        .into_iter()
-        .find(|item| item.get("id").and_then(Value::as_str) == Some(&*key))
-        .and_then(|item| item.get("actions")?.as_array())
-        .map(|list| list.iter().filter_map(Value::as_str).collect())
-        .unwrap_or_default();
+    let listed_actions = notification_items(value).into_iter().find(|item| item.get("id").and_then(Value::as_str) == Some(&*key)).and_then(|item| item.get("actions")?.as_array());
+    // A helper that predates action labels lists none: it can only run the first action.
+    let Some(list) = listed_actions else {
+        return match label {
+            None => Ok((key, None)),
+            Some(_) => Err(Error::plain(
+                Code::Unsupported,
+                "The helper on the phone is too old to run a named notification action. Update the helper, or run the action without a label. Nothing ran.",
+            )),
+        };
+    };
+    let actions: Vec<&str> = list.iter().filter_map(Value::as_str).collect();
     let listed = || actions.iter().map(|a| format!("\"{a}\"")).collect::<Vec<_>>().join(", ");
     let title = display(&target.label);
     match (label, actions.len()) {
@@ -244,7 +250,8 @@ mod tests {
         let value = json!({"enabled":true,"items":[
             {"id":"k-one","title":"Backup","actions":["Open"]},
             {"id":"k-many","title":"Messages","actions":["Reply","Mark read"]},
-            {"id":"k-none","title":"Calendar"}]});
+            {"id":"k-none","title":"Calendar","actions":[]},
+            {"id":"k-old","title":"Legacy"}]});
         let run = |title: &str, label: Option<&str>| notification_action(&value, &target(title, None), label);
         assert_eq!(run("Backup", None).unwrap(), ("k-one".into(), None), "one action runs without a label");
         assert_eq!(run("Messages", Some("mark read")).unwrap(), ("k-many".into(), Some("Mark read".into())));
@@ -253,6 +260,8 @@ mod tests {
         assert!(error.message.contains("\"Reply\", \"Mark read\"") && error.message.contains("Nothing ran"));
         assert_eq!(run("Messages", Some("Archive")).unwrap_err().code, Code::Missing);
         assert_eq!(run("Calendar", None).unwrap_err().code, Code::Missing);
+        assert_eq!(run("Legacy", None).unwrap(), ("k-old".into(), None), "a helper without action lists runs its first action");
+        assert_eq!(run("Legacy", Some("Reply")).unwrap_err().code, Code::Unsupported);
     }
 
     #[test]

@@ -8,15 +8,14 @@ import android.text.InputType;
 import org.junit.Test;
 
 public class SecretTest {
+    private static final int TEXT = InputType.TYPE_CLASS_TEXT;
+
     @Test
-    public void everyPasswordVariationIsDetected() {
-        assertTrue(Secret.password(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD));
+    public void textWebAndNumberPasswordsAreDetected() {
+        assertTrue(Secret.password(TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD));
         assertTrue(
                 Secret.password(
-                        InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD));
-        assertTrue(
-                Secret.password(
-                        InputType.TYPE_CLASS_TEXT
+                        TEXT
                                 | InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD
                                 | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS));
         assertTrue(
@@ -25,12 +24,11 @@ public class SecretTest {
     }
 
     @Test
-    public void ordinaryFieldsAreNotSecrets() {
+    public void ordinaryAndVisiblePasswordFieldsAreNotRedacted() {
         assertFalse(Secret.password(0));
-        assertFalse(Secret.password(InputType.TYPE_CLASS_TEXT));
-        assertFalse(
-                Secret.password(
-                        InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS));
+        assertFalse(Secret.password(TEXT));
+        assertFalse(Secret.password(TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD));
+        assertFalse(Secret.password(TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS));
         assertFalse(Secret.password(InputType.TYPE_CLASS_NUMBER));
         assertFalse(Secret.password(InputType.TYPE_CLASS_PHONE));
     }
