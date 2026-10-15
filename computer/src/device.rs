@@ -319,7 +319,7 @@ impl Adb {
     }
 }
 
-fn run_bounded(program: &Path, args: &[&str], timeout: Duration) -> Result<Vec<u8>> {
+pub(crate) fn run_bounded(program: &Path, args: &[&str], timeout: Duration) -> Result<Vec<u8>> {
     let mut child = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
@@ -345,8 +345,7 @@ fn run_bounded(program: &Path, args: &[&str], timeout: Duration) -> Result<Vec<u
         if start.elapsed() >= timeout {
             let _ = child.kill();
             let _ = child.wait();
-            let _ = out.join();
-            let _ = err.join();
+            // The readers end when the pipes close; a grandchild holding them must not hold us.
             return Err(Error::new(Code::Timeout, "adb command timed out"));
         }
         thread::sleep(Duration::from_millis(10));

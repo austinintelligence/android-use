@@ -10,14 +10,17 @@
 //! commas) is not edited: the snippet to paste is returned instead.
 use crate::{
     api::{Code, Error, Result},
-    device::atomic,
+    device::{atomic, run_bounded},
 };
 use serde_json::{json, Value};
 use std::{
     env, fs,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    time::Duration,
 };
+
+/// How long an agent's own CLI may run before it is killed.
+const CLI_TIMEOUT: Duration = Duration::from_secs(30);
 
 const NAME: &str = "android-use";
 const SKILL_FILES: [(&str, &str); 4] = [
@@ -212,7 +215,7 @@ enum Edit {
 
 /// Adds, updates, or removes `android-use` in a JSON config. `entry` of `None` removes.
 fn edit_json(path: &Path, keys: &[&str], entry: Option<&Value>, o: Options) -> Result<Edit> {
-    let text = fs::read_to_string(path).unwrap_or_default();
+    let text = read_config(path)?;
     let manual =
         |entry: &Value| Edit::Manual(format!("{} has comments or is not strict JSON, so it was not edited. Add under {}: \"{NAME}\": {entry}", path.display(), keys.join(".")));
     let mut root: Value = if text.trim().is_empty() {
@@ -258,17 +261,15 @@ fn edit_json(path: &Path, keys: &[&str], entry: Option<&Value>, o: Options) -> R
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
         }
-        if !text.is_empty() {
-            let _ = fs::copy(&target, format!("{}.au-backup", target.display()));
-        }
-        atomic(&target, render(&root, &indent_of(&text))?.as_bytes())?;
+        backup(&target, &text)?;
+        write_config(&target, render(&root, &indent_of(&text))?.as_bytes())?;
     }
     Ok(Edit::Done(outcome))
 }
 
 /// Codex keeps servers in `[mcp_servers.android-use]` tables; replace or append exactly that table.
 fn edit_toml(path: &Path, command: Option<&str>, o: Options) -> Result<Edit> {
-    let text = fs::read_to_string(path).unwrap_or_default();
+    let text = read_config(path)?;
     let header = format!("[mcp_servers.{NAME}]");
     let lines: Vec<&str> = text.lines().collect();
     let start = lines.iter().position(|line| line.trim() == header);
@@ -295,17 +296,54 @@ fn edit_toml(path: &Path, command: Option<&str>, o: Options) -> Result<Edit> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        if !text.is_empty() {
-            let _ = fs::copy(path, format!("{}.au-backup", path.display()));
-        }
-        atomic(&fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()), (kept.join("\n").trim_end().to_owned() + "\n").as_bytes())?;
+        let target = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        backup(&target, &text)?;
+        write_config(&target, (kept.join("\n").trim_end().to_owned() + "\n").as_bytes())?;
     }
     Ok(Edit::Done(outcome))
 }
 
-/// Runs the agent's own CLI; true when it succeeded.
-fn run_cli(program: &str, args: &[String]) -> bool {
-    which(program).is_some_and(|path| Command::new(path).args(args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|status| status.success()))
+/// Reads a config file. Only a missing file is an empty config; any other error aborts the edit.
+fn read_config(path: &Path) -> Result<String> {
+    match fs::read_to_string(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        other => other.map_err(|e| Error::new(Code::Io, format!("could not read {}: {e}", path.display()))),
+    }
+}
+
+/// Saves the previous file as `<file>.au-backup`; without the backup the write does not happen.
+fn backup(target: &Path, text: &str) -> Result<()> {
+    if text.is_empty() {
+        return Ok(());
+    }
+    fs::copy(target, format!("{}.au-backup", target.display()))
+        .map(drop)
+        .map_err(|e| Error::new(Code::Io, format!("could not back up {}, so it was not changed: {e}", target.display())))
+}
+
+/// Replaces a config atomically, keeping the file's existing mode (new files stay private).
+fn write_config(target: &Path, bytes: &[u8]) -> Result<()> {
+    let permissions = fs::metadata(target).ok().map(|meta| meta.permissions());
+    atomic(target, bytes)?;
+    Ok(permissions.map_or(Ok(()), |permissions| fs::set_permissions(target, permissions))?)
+}
+
+/// Runs the agent's own CLI, killed after `timeout`; true when it succeeded.
+fn run_cli(program: &Path, args: &[String], timeout: Duration) -> bool {
+    run_bounded(program, &args.iter().map(String::as_str).collect::<Vec<_>>(), timeout).is_ok()
+}
+
+/// Replaces the entry through the agent's CLI (remove the old one, add the new). When the add
+/// fails the old entry is put back, so a failed update never leaves the agent without au.
+fn replace_entry(client: Client, d: &Dirs, cli: &Path, command: &str, timeout: Duration) -> bool {
+    let file = client.config_file(d);
+    let before = fs::read(&file).ok().filter(|bytes| String::from_utf8_lossy(bytes).contains(NAME));
+    let _ = run_cli(cli, &cli_args(client, None), timeout);
+    let added = run_cli(cli, &cli_args(client, Some(command)), timeout);
+    if let (false, Some(old)) = (added, before) {
+        let _ = write_config(&file, &old);
+    }
+    added
 }
 
 fn already_registered(client: Client, d: &Dirs, command: &str) -> Option<bool> {
@@ -392,9 +430,7 @@ pub fn install(client: Client, d: &Dirs, o: Options) -> Result<Report> {
         Some(_) if already_registered(client, d, &command) == Some(true) => ("unchanged".to_owned(), "via the agent's own CLI".to_owned()),
         Some(_) if o.dry_run => ("would_install".to_owned(), "via the agent's own CLI".to_owned()),
         Some(cli) => {
-            // An older entry is replaced: remove it first (nothing to remove is fine), then add.
-            let _ = run_cli(cli, &cli_args(client, None));
-            if !run_cli(cli, &cli_args(client, Some(&command))) {
+            if !replace_entry(client, d, &which(cli).unwrap_or_default(), &command, CLI_TIMEOUT) {
                 return Err(Error::new(Code::Device, format!("{cli} mcp add failed; run it yourself: {cli} {}", cli_args(client, Some(&command)).join(" "))));
             }
             ("installed".to_owned(), "via the agent's own CLI".to_owned())
@@ -412,7 +448,7 @@ pub fn install(client: Client, d: &Dirs, o: Options) -> Result<Report> {
 pub fn uninstall(client: Client, d: &Dirs, o: Options) -> Result<Report> {
     let cli = client.cli().filter(|cli| which(cli).is_some());
     let (action, mut detail) = match cli {
-        Some(cli) if !o.dry_run && run_cli(cli, &cli_args(client, None)) => ("removed".to_owned(), String::new()),
+        Some(cli) if !o.dry_run && run_cli(&which(cli).unwrap_or_default(), &cli_args(client, None), CLI_TIMEOUT) => ("removed".to_owned(), String::new()),
         _ => outcome(file_edit(client, d, None, o)?, o),
     };
     if let Some(dir) = client.skill_dir(d).filter(|dir| dir.join(".au-installed").exists()) {
@@ -527,5 +563,60 @@ mod tests {
                 Edit::Manual(snippet) => panic!("{snippet}"),
             }
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod safe_write_tests {
+    use super::*;
+    use std::{os::unix::fs::PermissionsExt, time::Instant};
+
+    fn fake_cli(dir: &Path, body: &str) -> PathBuf {
+        let path = dir.join("fake-cli");
+        fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    fn cursor(dir: &tempfile::TempDir) -> (Dirs, PathBuf) {
+        let d = Dirs { home: dir.path().to_path_buf(), config: dir.path().join(".config"), app_data: dir.path().join("Library") };
+        let path = Client::Cursor.config_file(&d);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        (d, path)
+    }
+
+    #[test]
+    fn unreadable_config_and_failed_backup_abort_without_writing_and_mode_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let (d, path) = cursor(&dir);
+        fs::write(&path, [0xff, 0xfe, 0x00]).unwrap();
+        assert!(install(Client::Cursor, &d, Options::default()).is_err());
+        assert_eq!(fs::read(&path).unwrap(), [0xff, 0xfe, 0x00]);
+
+        fs::write(&path, "{\"theme\":\"x\"}").unwrap();
+        fs::create_dir(format!("{}.au-backup", path.display())).unwrap();
+        assert!(install(Client::Cursor, &d, Options::default()).unwrap_err().message.contains("back up"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{\"theme\":\"x\"}");
+        fs::remove_dir(format!("{}.au-backup", path.display())).unwrap();
+
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+        install(Client::Cursor, &d, Options::default()).unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o640);
+    }
+
+    #[test]
+    fn a_hung_agent_cli_is_killed_and_a_failed_re_add_restores_the_old_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let (d, _) = cursor(&dir);
+        let file = Client::Claude.config_file(&d);
+        let started = Instant::now();
+        assert!(!replace_entry(Client::Claude, &d, &fake_cli(dir.path(), "exec sleep 30"), "au", Duration::from_millis(300)));
+        assert!(started.elapsed() < Duration::from_secs(10));
+
+        let old = "{\"mcpServers\":{\"android-use\":{\"command\":\"au\"}}}";
+        fs::write(&file, old).unwrap();
+        let cli = fake_cli(dir.path(), &format!("[ \"$2\" = remove ] && {{ echo '{{}}' > '{}'; exit 0; }}; exit 1", file.display()));
+        assert!(!replace_entry(Client::Claude, &d, &cli, "au", CLI_TIMEOUT));
+        assert_eq!(fs::read_to_string(&file).unwrap(), old);
     }
 }
