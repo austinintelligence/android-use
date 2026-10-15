@@ -5,7 +5,7 @@
 ### Changed
 
 - Agents act first: the instructions, `AGENTS.md`, and the skill no longer ask for a first read of the screen. In a served session, a label the agent was never shown runs only on an exact, unique, non-risky match inside the app it just opened; anything else is a miss that shows the screen. A label the agent never saw no longer runs if it is risky. (`au act` from a shell has no session and is unchanged.)
-- Lenient targets: a row copied from `screen` (`sw Wi-Fi=on`, `Save#2`) names its control when its text is not itself a label, curly quotes work as straight ones, and `click`, `turn on|off "LABEL"` (taps only if the switch is not already so) and `go back` are accepted. Every 1.x command parses as before; `computer/tests/command_corpus.rs` checks that against the commands in the docs, recorded from 1.2.0.
+- Lenient targets: a row copied from `screen` (`sw Wi-Fi=on`, `Save#2`) names its control when its text is not itself a label, curly quotes work as straight ones, and `click`, `turn on|off "LABEL"` (taps only a switch or checkbox that is not already so, and refuses anything else) and `go back` are accepted. Every 1.x command parses as before; `computer/tests/command_corpus.rs` checks that against the commands in the docs, recorded from 1.2.0.
 
 ### Fixed
 

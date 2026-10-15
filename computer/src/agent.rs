@@ -367,9 +367,10 @@ impl Engine {
         Ok(match action {
             A::Tap(target) | A::Toggle(target) => Op::Tap(self.resolve_target(scene, target)?),
             A::Turn { target, on } => {
-                let at = self.resolve_target(scene, target)?;
+                let (target, state) = self.switch_state(target)?;
+                let at = self.resolve_target(scene, &target)?;
                 // Already in the wanted state: a check that changes nothing, not a tap that would undo it.
-                if target.ordinal.is_none() && self.switch_is(&target.label, *on) {
+                if state == *on {
                     Op::Assert(Predicate::Exists(Match::Ref(at)))
                 } else {
                     Op::Tap(at)
@@ -422,10 +423,25 @@ impl Engine {
         self.resolve_target_as(scene, target, "")
     }
 
-    fn switch_is(&mut self, label: &str, on: bool) -> bool {
-        let wanted = normalized(label);
-        let rows = self.semantic_rows("").unwrap_or_default();
-        rows.iter().any(|row| row.kind == "switch" && normalized(&row.label) == wanted && matches!(row.state.as_str(), "checked" | "on") == on)
+    /// The switch or checkbox a `turn on|off` names (a screen row such as `sw Wi-Fi=on` included)
+    /// and whether it is on. Anything unclear is an error, never a tap.
+    fn switch_state(&mut self, target: &Target) -> Result<(Target, bool)> {
+        let rows = self.semantic_rows("")?;
+        let find = |label: &str, ordinal: Option<u16>| {
+            let wanted = normalized(label);
+            rows.iter().filter(|row| row.kind != "heading" && normalized(&row.label) == wanted).nth(usize::from(ordinal.unwrap_or(1)) - 1)
+        };
+        let (label, ordinal) = match (find(&target.label, target.ordinal), resolve::from_row(&target.label)) {
+            (None, Some((label, ordinal))) => (label, target.ordinal.or(ordinal)),
+            _ => (target.label.to_string(), target.ordinal),
+        };
+        match find(&label, ordinal) {
+            Some(row) if matches!(row.kind.as_str(), "switch" | "checkbox") => {
+                Ok((Target { label: label.into(), ordinal, handle: None }, matches!(row.state.as_str(), "checked" | "on")))
+            }
+            Some(_) => Err(Error::plain(Code::Args, format!("\"{}\" is not a switch or checkbox. Nothing was run.", display(&label)))),
+            None => Err(resolve::missing(&target.label, "screen")),
+        }
     }
 
     /// `want` is `"edit"` when the step needs a text field and `"scroll"` when it needs a scrollable
@@ -456,15 +472,18 @@ impl Engine {
                 }
                 // A single control whose label only contains the request is acted on when it is
                 // plainly what was meant, and the result names it; otherwise it counts as missing.
-                if tier >= 2 && refs.len() == 1 && target.ordinal.is_none() {
-                    let actual = labels.first().map(String::as_str).unwrap_or_default();
+                // A number does not excuse the check: `Save number 2` may not reach "Save and delete all".
+                if tier >= 2 && (refs.len() == 1 || target.ordinal.is_some()) {
+                    let actual = labels.get(target.ordinal.map_or(0, |n| usize::from(n) - 1)).map(String::as_str).unwrap_or_default();
                     if !resolve::near_miss(&target.label, actual) {
                         return Err(Error::plain(
                             Code::Missing,
                             format!("{}; the closest label is \"{}\", which was not tapped", resolve::missing(&target.label, "screen").message, display(actual)),
                         ));
                     }
-                    self.agent.mapping.push(format!("\"{}\" is the closest label to \"{}\"", display(actual), display(&target.label)));
+                    if target.ordinal.is_none() {
+                        self.agent.mapping.push(format!("\"{}\" is the closest label to \"{}\"", display(actual), display(&target.label)));
+                    }
                 }
                 self.agent.loose = tier >= 2 && !refs.is_empty();
                 resolve::choose(target, refs, "screen")
