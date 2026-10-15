@@ -9,6 +9,7 @@ use std::{
     time::Instant,
 };
 
+mod bench_model;
 mod emulator_e2e;
 mod live;
 mod policy;
@@ -47,6 +48,8 @@ fn run() -> Result<(), String> {
         "verify" => verify(&root),
         "benchmark" => benchmark(&root),
         "benchmark-live" => live::run(&root),
+        "bench-model" => bench_model::run(&root),
+        "bench-shim" => bench_model::shim(&env::args().skip(2).collect::<Vec<_>>()),
         "emulator-e2e" => emulator_e2e::run(&root),
         "size" => size(&root).map(|_| ()),
         "docs" => docs(&root, env::args().nth(2).as_deref() == Some("--write")),
@@ -57,7 +60,7 @@ fn run() -> Result<(), String> {
         }
         _ => {
             println!(
-                "cargo xtask check|test|android|package|release|version|release-manifest DIR|release-notes|manifest|verify|workflow-policy|benchmark|benchmark-live|emulator-e2e|size|docs [--write]|golden-capture NAME --reviewed"
+                "cargo xtask check|test|android|package|release|version|release-manifest DIR|release-notes|manifest|verify|workflow-policy|benchmark|benchmark-live|bench-model|emulator-e2e|size|docs [--write]|golden-capture NAME --reviewed"
             );
             Ok(())
         }

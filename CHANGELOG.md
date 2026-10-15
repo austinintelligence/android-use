@@ -4,6 +4,7 @@
 
 ### Added
 
+- `cargo xtask bench-model` (contributor tooling): drives a real agent CLI through fifteen device goals, verifies success from device state, and compares two `au` builds with calls, input tokens, and wall time as means with 95% confidence intervals. It has a spend guard (`--max-runs`, `--max-cost`).
 - Device preflight: before the first action of a session and after any failure, Android Use checks the phone and returns a typed `locked`, `screen_off`, or `helper_killed` result with one next step, instead of a timeout or a permission error. The helper has a new `env` operation. `au status` and `au doctor` report when battery optimization is on for Android-Use or TalkBack is enabled. `cargo xtask emulator-e2e` covers the three results.
 
 - The Android-Use app shows each grant (Accessibility, notification access, notification permission, battery exemption), the helper version, and the last contact from the computer. The foreground notification has a **Stop** action; afterwards `act` returns a typed `stopped` result until `au setup` runs. The launcher and notification icons are vector drawables.
