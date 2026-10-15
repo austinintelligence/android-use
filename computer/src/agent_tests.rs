@@ -234,9 +234,18 @@ mod flows {
     fn rows_curly_quotes_and_verb_aliases_name_the_same_control() {
         let (mut engine, _dir) = engine();
         act(&mut engine, r#"open app "Settings""#).unwrap();
-        for command in [r#"tap "sw Wi-Fi=on""#, r#"click “Wi-Fi”"#, r#"turn on "btn Wi-Fi""#, r#"tap "Wi-Fi#1""#] {
+        for command in [r#"tap "sw Wi-Fi=on""#, r#"click “Wi-Fi”"#, r#"tap "Wi-Fi#1""#] {
             assert!(act(&mut engine, command).unwrap().text.starts_with("Done."), "{command}");
         }
+        for turn in [r#"turn on "Wi-Fi""#, r#"turn off "sw Wi-Fi=on""#, r#"turn on "Wi-Fi#1""#] {
+            assert!(
+                act(&mut engine, turn).unwrap_err_or_text().contains("is not a switch or checkbox. Nothing was run"),
+                "{turn}: turn never taps what it cannot read as a switch"
+            );
+        }
+        let numbered = act(&mut engine, r#"tap "Save" number 2"#).unwrap_err_or_text();
+        assert!(numbered.contains("which was not tapped"), "a number does not skip the risky check: {numbered}");
+        assert!(act(&mut engine, r#"tap "Save #2""#).unwrap().text.starts_with("No item labeled"), "text with a space before # is a label");
         assert!(act(&mut engine, r#"tap "sw Missing=on""#).unwrap().text.starts_with("No item labeled \"sw Missing=on\""), "a miss reports what was asked");
     }
 
@@ -251,6 +260,8 @@ mod flows {
         // Risky labels are named as near but never offered in a fix.
         let risky = act(&mut engine, r#"tap "Save and delete everything""#).unwrap().text;
         assert!(risky.contains("Near: \"Save and delete all\"") && !risky.contains("fix:"), "{risky}");
+        let long = act(&mut engine, &format!(r#"type "{}" in "Wifi""#, "x".repeat(100))).unwrap().text;
+        assert!(long.contains("Near:") && !long.contains("fix:"), "a long text is not repeated in a fix");
         assert!(!act(&mut engine, r#"tap "Zebra""#).unwrap().text.contains("Near:"));
     }
 

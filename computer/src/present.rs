@@ -105,14 +105,8 @@ impl Engine {
             let dup = labels.iter().filter(|other| same(other)).count() > 1;
             let at = rows.iter().zip(&numbers).position(|(row, number)| same(&row.label) && (!dup || *number == Some(nth)));
             let Some(at) = at else { continue };
-            let before = rows[..at]
-                .iter()
-                .rev()
-                .find(|row| row.kind == "heading")
-                .or(at.checked_sub(1).map(|i| &rows[i]))
-                .map(|row| display_n(&row.label, 32))
-                .filter(|name| !name.is_empty());
-            lines.push(format!("{} = {}{}", index + 1, semantic_line(&rows[at], None, false), before.map(|name| format!(" after \"{name}\"")).unwrap_or_default()));
+            let before = at.checked_sub(1).map(|i| display_n(&rows[i].label, 32)).filter(|name| !name.is_empty());
+            lines.push(format!("{} = {}{}", index + 1, semantic_line(&rows[at], numbers[at], false), before.map(|name| format!(" after \"{name}\"")).unwrap_or_default()));
         }
         if lines.is_empty() {
             return error;
@@ -268,7 +262,9 @@ fn suggestions(error: &Error, rows: &[SemanticRow], failing: Option<&AndroidActi
     let quote = |value: &str| format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""));
     let fix = near
         .first()
-        .filter(|label| label.len() <= 96 && !resolve::risky(label) && labels.clone().filter(|other| normalized(other) == normalized(label)).count() == 1)
+        .filter(|label| {
+            label.len() <= 96 && !resolve::risky(label) && !resolve::confirms(label) && labels.clone().filter(|other| normalized(other) == normalized(label)).count() == 1
+        })
         .and_then(|label| {
             use AndroidAction as A;
             match failing? {
@@ -276,7 +272,7 @@ fn suggestions(error: &Error, rows: &[SemanticRow], failing: Option<&AndroidActi
                 A::Hold(_) => Some(format!("hold {}", quote(label))),
                 A::Toggle(_) => Some(format!("toggle {}", quote(label))),
                 A::Turn { on, .. } => Some(format!("turn {} {}", if *on { "on" } else { "off" }, quote(label))),
-                A::Type { text, .. } => Some(format!("type {} in {}", quote(text), quote(label))),
+                A::Type { text, .. } if text.len() <= 80 && !text.contains('\n') => Some(format!("type {} in {}", quote(text), quote(label))),
                 _ => None,
             }
         });

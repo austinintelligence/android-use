@@ -158,7 +158,9 @@ pub(crate) fn from_row(text: &str) -> Option<(String, Option<u16>)> {
     row = row.split_once("=\"").map_or(row, |(name, _)| name);
     row = row.strip_suffix("=on").or_else(|| row.strip_suffix("=off")).unwrap_or(row);
     let (name, number) = match row.rsplit_once('#') {
-        Some((name, digits)) if (1..=2).contains(&digits.len()) && digits.bytes().all(|b| b.is_ascii_digit()) => (name, digits.parse().ok().filter(|n| (1..=16).contains(n))),
+        Some((name, digits)) if !name.ends_with(char::is_whitespace) && (1..=2).contains(&digits.len()) && digits.bytes().all(|b| b.is_ascii_digit()) => {
+            (name, digits.parse().ok().filter(|n| (1..=16).contains(n)))
+        }
         _ => (row, None),
     };
     (!name.trim().is_empty() && (name != text || number.is_some())).then(|| (name.trim().to_owned(), number))
@@ -189,6 +191,11 @@ const RISKY: [&str; 20] = [
     "factory",
 ];
 
+/// Whether a label answers a prompt (confirm, allow, agree): never offered as a suggested fix.
+pub(crate) fn confirms(label: &str) -> bool {
+    normalized(label).split(' ').any(|word| ["ok", "allow", "accept", "agree", "yes", "continue", "forget", "call", "grant", "done", "proceed"].contains(&word))
+}
+
 /// Whether any word of a label is one that makes acting on a guess unsafe.
 pub(crate) fn risky(label: &str) -> bool {
     normalized(label).split(' ').any(|word| RISKY.contains(&word))
@@ -218,7 +225,9 @@ pub(crate) fn near_labels<'a>(wanted: &str, labels: impl IntoIterator<Item = &'a
     let closeness = |label: &str| {
         let (a, b) = (pairs(&wanted), pairs(label));
         let common = a.iter().filter(|pair| b.contains(pair)).count();
-        if label.contains(&wanted) || wanted.contains(label) {
+        if label == wanted {
+            1.0
+        } else if label.contains(&wanted) {
             0.9
         } else {
             (2 * common) as f32 / (a.len() + b.len()).max(1) as f32
@@ -286,6 +295,8 @@ mod tests {
         assert_eq!(near_labels("WiFi", screen), vec!["Wi-Fi", "Wi-Fi settings", "wifi calling"]);
         assert_eq!(near_labels("Save", screen), vec!["Save draft"]);
         assert!(near_labels("Zebra", screen).is_empty());
+        assert!(near_labels("Bookmarks", ["OK", "Cancel"]).is_empty(), "a short label inside the request is not close to it");
+        assert!(confirms("Allow only while using the app") && confirms("OK") && !confirms("Bluetooth"));
         let miss = missing("Say \"hi\"", "screen");
         assert_eq!(missed_label(&miss), Some("Say \"hi\""));
     }
@@ -297,6 +308,7 @@ mod tests {
         assert_eq!(from_row("edit Email=\"a@b.c\" [disabled]"), Some(("Email".into(), None)));
         assert_eq!(from_row("Network: T-Mobile"), Some(("Network".into(), None)));
         assert_eq!(from_row("Wi-Fi"), None, "a plain label stays itself");
+        assert_eq!(from_row("Order #3"), None, "a number after a space is part of the label");
     }
 
     #[test]
