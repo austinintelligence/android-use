@@ -3,9 +3,11 @@ package dev.codex.aubridge;
 import android.Manifest;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.content.pm.ServiceInfo;
 import android.location.LocationListener;
 import android.location.LocationManager;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Looper;
 
 import org.json.JSONObject;
@@ -29,6 +31,7 @@ final class Location {
         LocationManager manager = context.getSystemService(LocationManager.class);
         if (manager == null) return out.put("available", false);
         List<String> providers = manager.getProviders(true);
+        Safety.Providers live = new Safety.Providers(providers.size());
         AtomicReference<android.location.Location> fresh = new AtomicReference<>();
         CountDownLatch done = new CountDownLatch(1);
         LocationListener listener =
@@ -40,7 +43,20 @@ final class Location {
                             done.countDown();
                         }
                     }
+
+                    // Abstract before API 30: a missing one crashes the read.
+                    @Override
+                    public void onProviderEnabled(String provider) {}
+
+                    @Override
+                    public void onProviderDisabled(String provider) {
+                        if (live.lost()) done.countDown();
+                    }
+
+                    @Override
+                    public void onStatusChanged(String provider, int status, Bundle extras) {}
                 };
+        BridgeService.begin(ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
         try {
             for (String provider : providers) {
                 try {
@@ -50,16 +66,18 @@ final class Location {
                     else
                         manager.requestLocationUpdates(
                                 provider, 0L, 0f, listener, Looper.getMainLooper());
-                } catch (SecurityException ignored) {
+                } catch (SecurityException | IllegalArgumentException e) {
+                    live.lost();
                 }
             }
-            done.await(5, TimeUnit.SECONDS);
+            if (!live.none()) done.await(5, TimeUnit.SECONDS);
         } catch (SecurityException ignored) {
         } finally {
             try {
                 manager.removeUpdates(listener);
             } catch (SecurityException ignored) {
             }
+            BridgeService.end(ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
         }
         android.location.Location best = fresh.get();
         if (best == null)

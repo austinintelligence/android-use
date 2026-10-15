@@ -97,9 +97,9 @@ final class Vm {
                 at = i;
                 if (SystemClock.elapsedRealtime() > end) throw new Fail(i, true);
                 boolean ok;
-                if (p.mutates && !guarded && p.name.equals("scroll_until")) {
-                    // A long loop must not hold the guard: it blocks the very events that tell
-                    // it the screen has scrolled.
+                if (p.mutates && !guarded && p.unguarded()) {
+                    // A long step must not hold the guard: scrolling needs the events it blocks,
+                    // and a capture would block taps and reads for its whole duration.
                     synchronized (ui.guard()) {
                         if (ui.snapshot().generation != expected) throw new Stale();
                     }
@@ -513,6 +513,13 @@ final class Vm {
                 default:
                     return false;
             }
+        }
+
+        private boolean unguarded() {
+            return name.equals("scroll_until")
+                    || name.equals("camera")
+                    || name.equals("microphone")
+                    || name.equals("screen_record");
         }
 
         @Override
