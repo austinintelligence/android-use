@@ -6,6 +6,7 @@ use std::{
     net::{SocketAddr, TcpStream},
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
@@ -277,7 +278,12 @@ impl Adb {
             Ok(stream) => stream,
             Err(_) => {
                 // No adb server yet: starting one is what any `adb` command would do first.
-                self.run(None, &["start-server"], Duration::from_secs(10))?;
+                // The daemon can hold the output pipe open; the connect below is the real check.
+                if let Err(error) = self.run(None, &["start-server"], Duration::from_secs(10)) {
+                    if error.code != Code::Timeout {
+                        return Err(error);
+                    }
+                }
                 TcpStream::connect_timeout(&address, Duration::from_secs(2)).map_err(|e| Error::new(Code::Device, format!("cannot reach the adb server: {e}")))?
             }
         };
@@ -310,6 +316,42 @@ impl Adb {
     }
 }
 
+const READER_GRACE: Duration = Duration::from_secs(2);
+
+/// Reads a child pipe on its own thread; the reader is abandoned if the pipe never closes.
+fn read_pipe(pipe: impl Read + Send + 'static) -> mpsc::Receiver<std::io::Result<Vec<u8>>> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut b = Vec::new();
+        let _ = tx.send(pipe.take(MAX_ADB_OUTPUT + 1).read_to_end(&mut b).map(|_| b));
+    });
+    rx
+}
+
+fn reader_result(rx: &mpsc::Receiver<std::io::Result<Vec<u8>>>, name: &str) -> Result<Vec<u8>> {
+    match rx.recv_timeout(READER_GRACE) {
+        Ok(read) => Ok(read?),
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(Error::new(Code::Timeout, format!("adb {name} stayed open after the command ended; the command was abandoned"))),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(Error::new(Code::Io, format!("adb {name} reader failed"))),
+    }
+}
+
+/// Waits for a child that inherits the terminal; past `timeout` it is killed.
+pub fn wait_deadline(child: &mut std::process::Child, timeout: Duration) -> Result<std::process::ExitStatus> {
+    let end = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        if Instant::now() >= end {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(Error::new(Code::Timeout, "the command did not finish in time and was stopped"));
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
 fn run_bounded(program: &Path, args: &[&str], timeout: Duration) -> Result<Vec<u8>> {
     let mut child = Command::new(program)
         .args(args)
@@ -320,14 +362,7 @@ fn run_bounded(program: &Path, args: &[&str], timeout: Duration) -> Result<Vec<u
         .map_err(|e| Error::new(Code::Device, format!("failed to start adb: {e}")))?;
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
-    let out = thread::spawn(move || {
-        let mut b = Vec::new();
-        stdout.take(MAX_ADB_OUTPUT + 1).read_to_end(&mut b).map(|_| b)
-    });
-    let err = thread::spawn(move || {
-        let mut b = Vec::new();
-        stderr.take(MAX_ADB_OUTPUT + 1).read_to_end(&mut b).map(|_| b)
-    });
+    let (out, err) = (read_pipe(stdout), read_pipe(stderr));
     let start = Instant::now();
     let status = loop {
         if let Some(s) = child.try_wait()? {
@@ -336,14 +371,13 @@ fn run_bounded(program: &Path, args: &[&str], timeout: Duration) -> Result<Vec<u
         if start.elapsed() >= timeout {
             let _ = child.kill();
             let _ = child.wait();
-            let _ = out.join();
-            let _ = err.join();
             return Err(Error::new(Code::Timeout, "adb command timed out"));
         }
         thread::sleep(Duration::from_millis(10));
     };
-    let stdout = out.join().map_err(|_| Error::new(Code::Io, "adb stdout reader failed"))??;
-    let stderr = err.join().map_err(|_| Error::new(Code::Io, "adb stderr reader failed"))??;
+    // A grandchild (the adb server) can keep a pipe open after the client exits.
+    let stdout = reader_result(&out, "stdout")?;
+    let stderr = reader_result(&err, "stderr")?;
     if stdout.len() as u64 > MAX_ADB_OUTPUT || stderr.len() as u64 > MAX_ADB_OUTPUT {
         return Err(Error::new(Code::Bounds, "adb output exceeded 256 KiB"));
     }
@@ -428,6 +462,14 @@ mod tests {
 
     fn binding() -> Binding {
         Binding { hardware: "SER1".into(), endpoint: "emulator-5554".into() }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_pipe_held_open_after_the_child_exits_returns_within_the_deadline() {
+        let start = Instant::now();
+        let error = run_bounded(Path::new("sh"), &["-c", "sleep 5 & exit 0"], Duration::from_secs(10)).unwrap_err();
+        assert!(error.code == Code::Timeout && start.elapsed() < Duration::from_secs(8), "{error:?}");
     }
 
     #[test]
