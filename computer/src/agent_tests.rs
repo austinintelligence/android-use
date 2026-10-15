@@ -71,9 +71,15 @@ mod flows {
         let (mut screen, mut generation) = ("home", 1u64);
         // A screen that replaces the current one by itself at a given time.
         let mut later: Option<(std::time::Instant, &str)> = None;
+        // The loading screen starts its 120 ms when it is first read, whatever the host did before.
+        let mut unread = false;
         while let Some(q) = frame_in(stream) {
             if let Some((_, next)) = later.filter(|(at, _)| *at <= std::time::Instant::now()) {
                 (screen, generation, later) = (next, generation + 1, None);
+            }
+            if unread && q[1] == "semantic" {
+                unread = false;
+                later = later.map(|(_, next)| (std::time::Instant::now() + std::time::Duration::from_millis(120), next));
             }
             let seq = q[0].clone();
             let names = labels(screen);
@@ -81,7 +87,8 @@ mod flows {
                 "status" => json!([seq, 0, generation, 7]),
                 "observe" if q[2].as_str() == Some(generation.to_string().as_str()) => json!([seq, 0, generation]),
                 "observe" => json!([seq, 0, generation, "fixture", names.iter().enumerate().map(|(i, l)| json!([i, l, 98, 3])).collect::<Vec<_>>()]),
-                "semantic" => json!([seq, 0, names.iter().map(|l| json!([l, "", "button", "", true, false])).collect::<Vec<_>>()]),
+                // Loading text is plain text (empty kind), as the helper reports it.
+                "semantic" => json!([seq, 0, names.iter().map(|l| json!([l, "", if *l == "Loading" { "" } else { "button" }, "", true, false])).collect::<Vec<_>>()]),
                 "resolve" if q[2]["handle"].as_i64().is_some_and(|handle| handle >= 0) => {
                     let handle = q[2]["handle"].as_u64().unwrap() as usize;
                     json!([seq, 0, {"r": (handle < names.len()).then_some(handle).into_iter().collect::<Vec<_>>(), "t": 0, "l": []}])
@@ -117,8 +124,8 @@ mod flows {
                     for (at, op) in q[6].as_array().unwrap().iter().enumerate() {
                         match op[0].as_str().unwrap() {
                             "launch" if op[1] == "com.slow.loading" => {
-                                (screen, generation, changes, later) =
-                                    ("loading", generation + 1, changes + 1, Some((std::time::Instant::now() + std::time::Duration::from_millis(120), "settings")))
+                                (screen, generation, changes, later, unread) =
+                                    ("loading", generation + 1, changes + 1, Some((std::time::Instant::now() + std::time::Duration::from_secs(3600), "settings")), true)
                             }
                             "launch" if op[1] == "com.slow.late" => (screen, generation, changes) = ("late", generation + 1, changes + 1),
                             "launch" => (screen, generation, changes) = ("settings", generation + 1, changes + 1),
@@ -233,7 +240,7 @@ mod flows {
         let response = act(&mut engine, r#"open app "com.slow.loading""#).unwrap();
         let took = begun.elapsed();
         assert!(response.text.contains("Now on screen:\nWi-Fi"), "{}", response.text);
-        assert!(took >= std::time::Duration::from_millis(120) && took < std::time::Duration::from_millis(400), "{took:?}");
+        assert!(took >= std::time::Duration::from_millis(120) && took < std::time::Duration::from_millis(450), "{took:?}");
     }
 
     #[test]
