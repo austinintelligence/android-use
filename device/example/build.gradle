@@ -2,12 +2,6 @@ plugins {
     id "com.android.application"
 }
 
-def signingPropertiesFile = file(System.getenv("LOCALAPPDATA") + "/Codex/android-use/signing.properties")
-def signingProperties = new Properties()
-if (signingPropertiesFile.exists()) {
-    signingPropertiesFile.withInputStream { signingProperties.load(it) }
-}
-
 android {
     namespace = "dev.codex.aubench"
     compileSdk = 36
@@ -21,30 +15,11 @@ android {
         versionName = "1.0.0"
     }
 
-    signingConfigs {
-        persistent {
-            if (signingPropertiesFile.exists()) {
-                storeFile = file(signingProperties.getProperty("storeFile"))
-                storePassword = signingProperties.getProperty("storePassword")
-                keyAlias = signingProperties.getProperty("keyAlias")
-                keyPassword = signingProperties.getProperty("keyPassword")
-            }
-        }
-    }
-
     buildTypes {
-        debug {
-            if (signingPropertiesFile.exists()) {
-                signingConfig = signingConfigs.persistent
-            }
-        }
         release {
             minifyEnabled = true
             shrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            if (signingPropertiesFile.exists()) {
-                signingConfig = signingConfigs.persistent
-            }
         }
     }
 

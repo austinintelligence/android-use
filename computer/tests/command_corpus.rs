@@ -7,9 +7,12 @@ use serde_json::{json, Value};
 use std::{collections::BTreeSet, fs, path::Path};
 
 const FIXTURE: &str = "tests/fixtures/command-corpus-1.2.0.json";
-/// Commands whose result is intentionally different from 1.2.0. Empty: every difference so far is
-/// a command that used to be rejected and now works, which the test allows on its own.
-const INTENDED: &[&str] = &[];
+/// Commands whose result is intentionally different from 1.2.0. A command that used to be rejected
+/// and now works is allowed on its own and is not listed.
+const INTENDED: &[&str] = &[
+    // 1.3.0 adds an optional action label; without one, a notification with several actions runs nothing.
+    r#"run notification action "Messages""#,
+];
 const VERBS: &[&str] = &[
     "tap",
     "toggle",

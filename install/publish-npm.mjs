@@ -5,11 +5,11 @@
 // (a browser link or a one-time code), so run it in a terminal you are watching. Archives are checked against the
 // release's SHA256SUMS before anything is staged.
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseSums, sha256, writeManifest } from "./manifest.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const [tag, ...flags] = process.argv.slice(2);
@@ -28,7 +28,7 @@ const run = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, stdio: "inherit" 
 const work = mkdtempSync(join(tmpdir(), "au-npm-"));
 run("gh", ["release", "download", tag, "--dir", work, "-p", "*.tar.gz", "-p", "*.zip", "-p", "SHA256SUMS"]);
 
-const sums = new Map(readFileSync(join(work, "SHA256SUMS"), "utf8").trim().split("\n").map((l) => l.trim().split(/\s+/).reverse()));
+const sums = parseSums(readFileSync(join(work, "SHA256SUMS"), "utf8"));
 const platforms = JSON.parse(readFileSync(join(here, "platforms.json"), "utf8")).map((p) => [p.npm, `android-use-${tag}-${p.asset}.${p.archive}`, p.binary]);
 const published = (name) => {
   try {
@@ -46,8 +46,7 @@ const publish = (dir, name) => {
 
 for (const [key, archive, binary] of platforms) {
   const file = join(work, archive);
-  const digest = createHash("sha256").update(readFileSync(file)).digest("hex");
-  if (sums.get(archive) !== digest) throw new Error(`${archive} does not match SHA256SUMS`);
+  if (sums.get(archive) !== sha256(file)) throw new Error(`${archive} does not match SHA256SUMS`);
   const unpacked = join(work, key);
   mkdirSync(unpacked);
   if (archive.endsWith(".zip")) run("unzip", ["-q", file, binary, "-d", unpacked]);
@@ -59,9 +58,10 @@ for (const [key, archive, binary] of platforms) {
 
 const main = join(work, "pkg-main");
 mkdirSync(main);
-for (const name of ["cli.mjs", "LICENSE", "README.md", "package.json"]) cpSync(join(here, name), join(main, name));
+for (const name of ["cli.mjs", "manifest.mjs", "LICENSE", "README.md", "package.json"]) cpSync(join(here, name), join(main, name));
 const manifest = JSON.parse(readFileSync(join(main, "package.json"), "utf8"));
 manifest.optionalDependencies = Object.fromEntries(platforms.map(([key]) => [`@androiduse/${key}`, version]));
 writeFileSync(join(main, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+writeManifest(main, ["cli.mjs", "manifest.mjs"]);
 publish(main, "android-use");
 console.log(`${dryRun ? "Dry run complete" : "Published"}: android-use@${version}`);
