@@ -3,6 +3,8 @@
 use crate::ioe;
 use std::{fs, path::Path};
 
+const UNTRUSTED: &[&str] =
+    &["github.head_ref", "pull_request.title", "pull_request.body", "head.ref", "comment.body", "issue.title", "issue.body", "head_commit.message", "head_branch", "workflow_run."];
 const LOCKED: &[&str] = &["build", "test", "run", "install", "clippy", "check", "bench", "doc", "deny"];
 
 pub(crate) fn run(root: &Path) -> Result<(), String> {
@@ -27,9 +29,16 @@ pub(crate) fn run(root: &Path) -> Result<(), String> {
 pub(crate) fn check(text: &str) -> Vec<String> {
     let lines: Vec<&str> = text.lines().collect();
     let mut out = Vec::new();
-    for (i, raw) in lines.iter().enumerate() {
-        let line = raw.split(" #").next().unwrap_or("").trim_end();
-        if line.trim_start().starts_with('#') {
+    let mut scan: Vec<String> = lines.iter().map(|l| uncommented(l)).collect();
+    for i in 0..scan.len() {
+        while scan[i].ends_with('\\') && i + 1 < scan.len() {
+            let next = std::mem::take(&mut scan[i + 1]);
+            scan[i].pop();
+            scan[i].push_str(&format!(" {next}"));
+        }
+    }
+    for (i, line) in scan.iter().enumerate() {
+        if line.trim().is_empty() {
             continue;
         }
         let mut bad = |why: &str| out.push(format!("line {}: {why}", i + 1));
@@ -39,8 +48,19 @@ pub(crate) fn check(text: &str) -> Vec<String> {
                 bad(&format!("`uses: {target}` is not pinned to a full commit SHA"));
             }
         }
-        if line.contains("pull_request_target") {
-            bad("pull_request_target is not allowed");
+        for banned in ["pull_request_target", "workflow_run"] {
+            if line.contains(banned) {
+                bad(&format!("{banned} is not allowed"));
+            }
+        }
+        if UNTRUSTED.iter().any(|e| line.contains(e)) {
+            bad("attacker-controlled text must not be expanded in a workflow; pass it through env");
+        }
+        if line.contains("npm install") || line.contains("npm i ") {
+            bad("use npm ci, which installs exactly what the lockfile says");
+        }
+        if line.contains("actions/checkout") && !scan[i + 1..].iter().take_while(|l| !l.trim_start().starts_with("- ")).any(|l| l.contains("persist-credentials: false")) {
+            bad("actions/checkout needs persist-credentials: false");
         }
         if line.contains("-latest") {
             bad("runner labels must name a version, not -latest");
@@ -53,7 +73,7 @@ pub(crate) fn check(text: &str) -> Vec<String> {
         }
         let words: Vec<&str> = line.split_whitespace().collect();
         for (n, w) in words.iter().enumerate().filter(|(_, w)| **w == "cargo") {
-            let sub = words[n + 1..].iter().find(|a| !a.starts_with('+'));
+            let sub = words[n + 1..].iter().find(|a| !a.starts_with(['+', '-']));
             if sub.is_some_and(|s| LOCKED.contains(s)) && !words.contains(&"--locked") {
                 bad("cargo commands need --locked");
             }
@@ -79,30 +99,49 @@ pub(crate) fn check(text: &str) -> Vec<String> {
     out
 }
 
-/// Signing secrets live only in a job in the `release-signing` environment, and that job runs no
-/// repository code: no checkout, no toolchain setup, no cargo, npm, gradle, or xtask.
+/// Signing secrets live only in a job in the `release-signing` environment. That job runs no
+/// repository code (no checkout, toolchain, or script from anywhere), uses only the artifact actions,
+/// and refuses to run until the owner marks the environment ready.
 fn jobs(lines: &[&str]) -> Vec<String> {
     let start = lines.iter().position(|l| l.starts_with("jobs:")).map_or(lines.len(), |n| n + 1);
     let mut blocks: Vec<(&str, String)> = Vec::new();
     for l in &lines[start..] {
         match l.strip_prefix("  ").and_then(|r| r.strip_suffix(':')).filter(|r| !r.starts_with([' ', '#'])) {
             Some(name) => blocks.push((name, String::new())),
-            None => blocks.last_mut().map_or((), |(_, b)| b.push_str(&format!("{l}\n"))),
+            None => blocks.last_mut().map_or((), |(_, b)| b.push_str(&format!("{}\n", uncommented(l)))),
         }
     }
     let mut out = Vec::new();
     for (name, body) in blocks {
         let signing = body.contains("environment: release-signing");
-        if body.contains("secrets.AUBRIDGE") && !signing {
-            out.push(format!("job {name}: signing secrets belong only in a release-signing job"));
+        if !signing && ["secrets.AUBRIDGE", "secrets[", "toJSON(secrets", "secrets: inherit"].iter().any(|s| body.contains(s)) {
+            out.push(format!("job {name}: secrets belong only in a release-signing job, and by name"));
         }
-        for banned in ["actions/checkout", "actions/setup-", "cargo ", "npm ", "gradle", "xtask"] {
-            if signing && body.lines().any(|l| !l.trim_start().starts_with('#') && l.contains(banned)) {
+        if !signing {
+            continue;
+        }
+        for banned in ["actions/checkout", "actions/setup-", "cargo ", "npm ", "gradle", "xtask", "git ", "curl", "wget", " ./", "docker"] {
+            if body.contains(banned) {
                 out.push(format!("job {name}: the signing job must not use `{banned}`"));
             }
         }
+        for used in body.lines().filter_map(|l| l.split("uses:").nth(1)).map(str::trim) {
+            if !used.starts_with("actions/download-artifact@") && !used.starts_with("actions/upload-artifact@") {
+                out.push(format!("job {name}: the signing job may only use the artifact actions, not `{used}`"));
+            }
+        }
+        if !body.contains("RELEASE_SIGNING_READY") {
+            out.push(format!("job {name}: the signing job must refuse to run until vars.RELEASE_SIGNING_READY is set"));
+        }
     }
     out
+}
+
+/// The line without a trailing ` # comment`; a `#` inside quotes is not a comment.
+fn uncommented(line: &str) -> String {
+    let quotes = |s: &str| s.matches(['"', '\'']).count();
+    let cut = line.match_indices('#').find(|(at, _)| (*at == 0 || line[..*at].ends_with(' ')) && quotes(&line[..*at]) % 2 == 0);
+    cut.map_or(line, |(at, _)| &line[..at]).trim_end().to_owned()
 }
 
 /// A top-level key's value and indented body, one line each, comments dropped.
@@ -110,7 +149,7 @@ fn top_level(lines: &[&str], key: &str) -> String {
     let mut body = String::new();
     let mut inside = false;
     for l in lines {
-        if l.starts_with(key) {
+        if l.replace(['"', '\''], "").starts_with(key) {
             inside = true;
         } else if inside && !l.starts_with([' ', '\t', '#']) && !l.is_empty() {
             break;
@@ -148,9 +187,9 @@ mod tests {
     use super::*;
 
     // The shapes in the workflows before this check existed.
-    const OLD_CI: &str = "name: CI\non: [push, pull_request]\npermissions: { contents: read }\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: cargo test --workspace\n      - run: cargo install cargo-audit --locked\n      - run: curl -fsSL https://x.example/i.sh | sh\n";
+    const OLD_CI: &str = "name: CI\non: [push, pull_request]\npermissions: { contents: read }\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: cargo test --workspace\n      - run: cargo -q build --release\n      - run: |\n          echo \"x #\"; cargo install cargo-audit\n          curl -fsSL https://x.example/i.sh \\\n            | sh\n      - run: npm install\n      - run: echo \"${{ github.event.pull_request.title }}\"\n      - run: cargo install cargo-audit --locked\n";
     const OLD_SECURITY: &str = "on:\n  pull_request_target:\n  push:\n    branches: [main, 'claude/*']\npermissions:\n  contents: read\n  security-events: write\n";
-    const FIXED: &str = "name: CI\non:\n  push: { branches: [main], tags: ['v*'] }\n  pull_request:\npermissions: { contents: read }\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4\n      - run: cargo +1.94.0 test --locked --workspace\n      - run: cargo install --locked --version 0.22.2 cargo-audit\n      - run: cargo fmt --all -- --check\n";
+    const FIXED: &str = "name: CI\non:\n  push: { branches: [main], tags: ['v*'] }\n  pull_request:\npermissions: { contents: read }\njobs:\n  a:\n    runs-on: ubuntu-24.04\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4\n        with: { persist-credentials: false }\n      - run: cargo +1.94.0 test --locked --workspace\n      - run: cargo install --locked --version 0.22.2 cargo-audit\n      - run: cargo fmt --all -- --check\n";
 
     fn mentions(problems: &[String], what: &str) -> bool {
         problems.iter().any(|p| p.contains(what))
@@ -159,7 +198,7 @@ mod tests {
     #[test]
     fn the_old_workflows_fail_each_rule() {
         let ci = check(OLD_CI);
-        for what in ["full commit SHA", "-latest", "--locked", "--version", "download into a shell", "without limiting"] {
+        for what in ["full commit SHA", "-latest", "--locked", "--version", "download into a shell", "without limiting", "npm ci", "persist-credentials", "attacker-controlled"] {
             assert!(mentions(&ci, what), "{what}: {ci:?}");
         }
         let security = check(OLD_SECURITY);
@@ -167,18 +206,29 @@ mod tests {
             assert!(mentions(&security, what), "{what}: {security:?}");
         }
         assert!(mentions(&check("on: push\njobs: {}\n"), "no top-level permissions"));
+        assert!(mentions(&check("\"on\":\n  workflow_run:\n  push: { branches: [dev] }\n"), "workflow_run is not allowed"));
+        assert!(mentions(&check("\"on\":\n  push: { branches: [dev] }\n"), "not `dev`"));
     }
 
     #[test]
     fn the_signing_job_runs_no_repository_code() {
-        let job = |steps: &str| format!("permissions: {{ contents: read }}\njobs:\n  sign:\n    environment: release-signing\n    steps:\n{steps}");
+        let job = |steps: &str| {
+            format!("permissions: {{ contents: read }}\njobs:\n  sign:\n    environment: release-signing\n    steps:\n      - run: test \"$READY\" = ${{ vars.RELEASE_SIGNING_READY }}\n{steps}")
+        };
         let secret = "      - run: echo ${{ secrets.AUBRIDGE_KEY_PASSWORD }}\n";
         assert_eq!(check(&job(secret)), Vec::<String>::new());
-        let checkout = format!("      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n{secret}");
+        let checkout = format!("      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n        with: {{ persist-credentials: false }}\n{secret}");
         assert!(mentions(&check(&job(&checkout)), "must not use `actions/checkout`"));
         assert!(mentions(&check(&job("      - run: npm ci\n")), "must not use `npm `"));
-        let leaked = "permissions: { contents: read }\njobs:\n  build:\n    steps:\n      - run: echo ${{ secrets.AUBRIDGE_KEY_PASSWORD }}\n";
-        assert!(mentions(&check(leaked), "belong only in a release-signing job"));
+        assert!(mentions(&check(&job("      - run: git clone https://x.example/y && ./y/build.sh\n")), "must not use `git `"));
+        let other = "      - uses: acme/sign@11bd71901bbe5b1630ceea73d27597364c9af683\n";
+        assert!(mentions(&check(&job(other)), "only use the artifact actions"));
+        let unready = "permissions: { contents: read }\njobs:\n  sign:\n    environment: release-signing\n    steps:\n      - run: true\n";
+        assert!(mentions(&check(unready), "RELEASE_SIGNING_READY"));
+        for leak in ["${{ secrets.AUBRIDGE_KEY_PASSWORD }}", "${{ secrets['K'] }}", "${{ toJSON(secrets) }}"] {
+            let leaked = format!("permissions: {{ contents: read }}\njobs:\n  build:\n    steps:\n      - run: echo {leak}\n");
+            assert!(mentions(&check(&leaked), "belong only in a release-signing job"), "{leak}");
+        }
     }
 
     #[test]
