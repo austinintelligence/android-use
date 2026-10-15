@@ -25,3 +25,9 @@ export function writeManifest(dir, names) {
 
 /** Parses `sha256sum` output into a Map of file name to digest. */
 export const parseSums = (text) => new Map(text.trim().split("\n").map((line) => line.trim().split(/\s+/).reverse()));
+
+/** The `gh attestation verify` arguments for a release asset built by this repository's release workflow. */
+export const verifyArgs = (file, repo) => ["attestation", "verify", file, "--repo", repo, "--signer-workflow", `${repo}/.github/workflows/release.yml`];
+
+/** The `npm publish` arguments: provenance on every real publish (it needs the CI identity, so not on a dry run). */
+export const publishArgs = (dryRun) => ["publish", "--access", "public", ...(dryRun ? ["--dry-run"] : ["--provenance"])];

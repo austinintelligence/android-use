@@ -32,21 +32,19 @@ These are repository settings; the workflow cannot create them.
 2. **Required reviewer** on `release-signing` (and preferably `release`), with "Prevent self-review" on, so a person approves each signing.
 3. **Signing secrets**: move `AUBRIDGE_KEYSTORE_B64`, `AUBRIDGE_STORE_PASSWORD`, and `AUBRIDGE_KEY_PASSWORD` out of the repository secrets into the `release-signing` environment, then delete the repository-level copies.
 4. **Tag ruleset** (Settings → Rules → Rulesets): target tags `v*`, restrict creation to maintainers, and block updates and deletions.
-5. `npm` is reserved for npm publishing. Step 4 below is still run by hand, with 2FA; put any future npm token in this environment, not in repository secrets.
+5. `npm` is the environment of the workflow's `npm` job, the only job that publishes to npm. It holds no secret: npm trusted publishing signs in with the workflow's OIDC identity. Register the trusted publisher on npmjs.com (step 4 below).
 
 Until step 3 is done the `sign` job fails for lack of secrets, which stops the release before publishing.
 
 ## 4. Publish
 
-From a fresh clone of `main`, after the release exists:
+The `npm` job runs after the GitHub Release exists. It runs `node install/publish-npm.mjs`, which downloads the release assets, runs `gh attestation verify` on each (any failure stops it), checks the archives against the verified `SHA256SUMS`, stages the packages, and publishes all seven (`android-use` and the six `@androiduse/<platform>`) with `--provenance`. It skips a package already on npm, so a re-run completes a partial publish. Outside GitHub Actions it refuses to publish; `--dry-run` rehearses everything but the publish.
 
-```sh
-node install/publish-npm.mjs vX.Y.Z --dry-run
-node install/publish-npm.mjs vX.Y.Z        # needs `npm login` with 2FA; skips packages already published
-node install/render-formula.mjs vX.Y.Z > Formula/android-use.rb   # in a checkout of austinintelligence/homebrew-tap
-```
+The job also renders the Homebrew formula from the verified `SHA256SUMS` and uploads it as the `homebrew-formula` artifact. Commit it to `Formula/android-use.rb` in `austinintelligence/homebrew-tap`. To render one by hand, run `node install/render-formula.mjs vX.Y.Z`, which verifies the checksums itself; it refuses a `SHA256SUMS` file unless you pass `--verified` after checking it.
 
-Commit and push the formula. npm can take several minutes to show new packages, and the first publish of each platform package needs the `androiduse` organization to exist.
+`cargo xtask workflow-policy` allows `id-token: write` only in the `release` and `npm` environments and npm publishing only in `npm`.
+
+**Owner steps (once, on npmjs.com).** For each of the seven packages, open Settings → Trusted publisher and register GitHub Actions with repository `austinintelligence/android-use`, workflow `release.yml`, environment `npm`. A package that does not exist yet needs a first publish by an owner (or the `androiduse` organization) before it can have a trusted publisher. Then set each package to *Require two-factor authentication and disallow tokens*, and revoke any old automation token.
 
 ## Lessons from 1.1
 
