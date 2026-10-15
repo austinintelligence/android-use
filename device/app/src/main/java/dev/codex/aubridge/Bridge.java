@@ -49,6 +49,7 @@ final class Bridge implements AutoCloseable {
                         return t;
                     },
                     new ThreadPoolExecutor.AbortPolicy());
+
     /** When the host last sent a request (uptime ms), for the app's status screen; 0 = never. */
     static volatile long lastContact;
 

@@ -69,7 +69,10 @@ public final class BridgeService extends Service {
     }
 
     private static void setStopped(Context context, boolean value) {
-        context.getSharedPreferences("au", MODE_PRIVATE).edit().putBoolean("stopped", value).apply();
+        context.getSharedPreferences("au", MODE_PRIVATE)
+                .edit()
+                .putBoolean("stopped", value)
+                .apply();
     }
 
     @Override
