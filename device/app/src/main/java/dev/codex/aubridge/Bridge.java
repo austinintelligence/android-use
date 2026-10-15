@@ -202,13 +202,12 @@ final class Bridge implements AutoCloseable {
         PowerManager power = context.getSystemService(PowerManager.class);
         String on =
                 Settings.Secure.getString(
-                        context.getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+                        context.getContentResolver(),
+                        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
         on = on == null ? "" : on.toLowerCase(Locale.ROOT);
         return new JSONObject()
                 .put("screen_on", power.isInteractive())
-                .put(
-                        "locked",
-                        context.getSystemService(KeyguardManager.class).isKeyguardLocked())
+                .put("locked", context.getSystemService(KeyguardManager.class).isKeyguardLocked())
                 .put("accessibility", Ui.get() != null)
                 .put(
                         "battery_exempt",
