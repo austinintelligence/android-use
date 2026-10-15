@@ -7,8 +7,8 @@ description: Use one enrolled Android device through plain-English read and act 
 
 `android_read` and `android_act` each take one `command` string (in a shell: `au read …`, `au act '…'`). Every command form: [protocol](references/protocol.md), or send `android_read help`.
 
-1. Read `screen` (or `page` for Chrome) only when the state is unknown.
-2. Act on a label you saw, quoted exactly: `tap "Wi-Fi"`, `type "hi" in "Message" then tap "Send"`, `scroll down`, `open app "Settings"`. Add `number N` for a duplicate.
+1. Act directly on a label you expect; read `screen` (or `page` for Chrome) only when the state is unknown.
+2. Quote the label exactly: `tap "Wi-Fi"`, `type "hi" in "Message" then tap "Send"`, `scroll down`, `open app "Settings"`. Add `number N` for a duplicate.
 3. A successful action already shows the new screen; do not read it again.
 4. A missing label lists what is on screen. Use `tap point X Y` on the attached image only when no label works.
 

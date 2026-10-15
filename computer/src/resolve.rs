@@ -246,6 +246,27 @@ pub(crate) fn notification(value: &Value, target: &Target) -> Result<Box<str>> {
     pick_safe(target, &candidates, "notification list")
 }
 
+/// The label and number a screen row names: `sw Wi-Fi=on` is Wi-Fi, `Save#2` is Save number 2,
+/// `edit Email="x"`, `Inbox: 3 new` and a trailing `[disabled]` or `[selected]` are dropped.
+/// `None` when the text is not shaped like a row, so a plain label is never reinterpreted.
+pub(crate) fn from_row(text: &str) -> Option<(String, Option<u16>)> {
+    let mut row = text.trim();
+    while let Some(rest) = [" [disabled]", " [selected]"].iter().find_map(|suffix| row.strip_suffix(suffix)) {
+        row = rest;
+    }
+    for tag in ["sw ", "edit ", "chk ", "radio ", "tab ", "link ", "list ", "slider ", "btn "] {
+        row = row.strip_prefix(tag).unwrap_or(row);
+    }
+    row = row.split_once(": ").map_or(row, |(name, _)| name);
+    row = row.split_once("=\"").map_or(row, |(name, _)| name);
+    row = row.strip_suffix("=on").or_else(|| row.strip_suffix("=off")).unwrap_or(row);
+    let (name, number) = match row.rsplit_once('#') {
+        Some((name, digits)) if (1..=2).contains(&digits.len()) && digits.bytes().all(|b| b.is_ascii_digit()) => (name, digits.parse().ok().filter(|n| (1..=16).contains(n))),
+        _ => (row, None),
+    };
+    (!name.trim().is_empty() && (name != text || number.is_some())).then(|| (name.trim().to_owned(), number))
+}
+
 /// Words that make an extra label word unsafe to guess at: `tap "Save"` may tap "Save draft",
 /// but never "Save and delete all".
 const RISKY: [&str; 21] = [
@@ -271,6 +292,11 @@ const RISKY: [&str; 21] = [
     "factory",
     "transfer",
 ];
+
+/// Whether any word of a label is one that makes acting on a guess unsafe.
+pub(crate) fn risky(label: &str) -> bool {
+    normalized(label).split(' ').any(|word| RISKY.contains(&word))
+}
 
 /// Whether the only control whose label merely contains `wanted` is plainly what the agent meant:
 /// the wanted words lead or trail the label, at most two other words come with them, and none of

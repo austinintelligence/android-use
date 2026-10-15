@@ -7,7 +7,7 @@ pub const READ_TOOL: &str = "android_read";
 pub const ACT_TOOL: &str = "android_act";
 
 /// Sent once at `initialize`; kept to what an agent cannot learn from the tool descriptions.
-pub const INSTRUCTIONS: &str = "Controls one Android device. Read `screen` once if the state is unknown, then act on names you saw. \
+pub const INSTRUCTIONS: &str = "Controls one Android device. Act on a name you expect; read `screen` only if the state is unknown. \
 Rows are names to quote, with a tag for non-buttons: `sw Wi-Fi=on`, `edit Email=\"x\"`; `Save#2` means `tap \"Save\" number 2`; `e7` has no label: tap e7. \
 Every action returns the new screen or only what `Changed:`. stale: retry. partial or unknown: read before acting again, never repeat. \
 Ask first: purchases, messages, account or security changes, deletes, camera, microphone, location, recording.";

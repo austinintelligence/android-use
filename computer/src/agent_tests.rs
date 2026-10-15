@@ -233,6 +233,54 @@ mod flows {
     }
 
     #[test]
+    fn a_label_never_shown_runs_only_when_exact_unique_safe_and_just_opened() {
+        let (mut engine, _dir) = engine();
+        engine.agent.strict = true;
+        let cold = act(&mut engine, r#"tap "Settings""#).unwrap();
+        assert!(cold.text.starts_with("No item labeled \"Settings\"") && cold.text.contains("Nothing was run"), "an unseen label with no app opened: {}", cold.text);
+        engine.agent.seen.clear();
+        assert!(act(&mut engine, r#"open app "Settings" then tap "Wi-Fi""#).unwrap().text.starts_with("Done."), "exact, unique, safe, in the app just opened");
+        for risky in [r#"tap "Save and delete all""#, r#"tap "draft""#] {
+            engine.agent.seen.clear();
+            let response = act(&mut engine, &format!(r#"open app "Settings" then {risky}"#)).unwrap();
+            assert!(response.text.contains("Partly done: Opened Settings.") && response.text.contains("remaining steps were not run"), "{risky}: {}", response.text);
+        }
+        engine.agent.seen.clear();
+        engine.agent.opened = false;
+        assert!(act(&mut engine, r#"tap "Wi-Fi""#).unwrap().text.contains("Nothing was run"), "the last act did not open the app");
+        engine.model_read(CommandRead::Screen { full: false, matching: None, delta: false }).unwrap();
+        assert!(act(&mut engine, r#"tap "Wi-Fi""#).unwrap().text.starts_with("Done."), "a shown label runs as before");
+    }
+
+    #[test]
+    fn only_rows_that_were_shown_count_as_seen_and_a_new_screen_forgets_the_old_one() {
+        let (mut engine, _dir) = engine();
+        let rows: Vec<SemanticRow> = (0..70)
+            .map(|i| SemanticRow { label: format!("Row {i}"), value: String::new(), kind: String::new(), state: String::new(), enabled: true, selected: false, handle: None })
+            .collect();
+        let shown = format_semantic_rows(&rows, false, "");
+        engine.note_seen(&rows, &shown, true);
+        assert!(engine.agent.seen.contains("row 3") && !engine.agent.seen.contains("row 69"), "rows cut from the output were never shown");
+        let row = |label: &str| SemanticRow { label: label.into(), ..rows[0].clone() };
+        let pair = [row("Delete account settings"), row("Delete account")];
+        engine.note_seen(&pair, "Delete account settings", true);
+        assert!(engine.agent.seen.contains("delete account settings") && !engine.agent.seen.contains("delete account"), "a label inside another row's text was not shown");
+        engine.note_seen(&rows[..1], "Row 0", true);
+        assert_eq!(engine.agent.seen.len(), 1, "a new screen replaces what was seen");
+    }
+
+    #[test]
+    fn a_risky_label_seen_in_one_app_does_not_license_it_in_another() {
+        let (mut engine, _dir) = engine();
+        (engine.agent.strict, engine.agent.opened) = (true, true);
+        engine.agent.seen.insert("remove account".into());
+        let target = Target { label: "Remove".into(), ordinal: None, handle: None };
+        assert!(!engine.unseen_label_runs(&target, 0, 1, &["Remove".into()]), "open app then tap Remove must be refused");
+        let seen = Target { label: "Remove account".into(), ..target };
+        assert!(engine.unseen_label_runs(&seen, 0, 1, &["Remove account".into()]), "a label that was shown keeps working");
+    }
+
+    #[test]
     fn a_loading_screen_is_reported_when_it_finishes_not_after_a_fixed_sleep() {
         let (mut engine, _dir) = engine();
         // A launch that is ready at once sets the baseline for this machine's round trips.
