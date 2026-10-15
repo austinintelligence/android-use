@@ -50,19 +50,22 @@ fn count_calls(log: &str) -> usize {
     log.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok()).filter(|m| m["method"] == "tools/call").count()
 }
 
-fn sum_keys(v: &Value, suffix: &str) -> f64 {
-    match v {
-        Value::Object(map) => map.iter().map(|(k, x)| if k.ends_with(suffix) && x.is_number() { x.as_f64().unwrap_or(0.0) } else { sum_keys(x, suffix) }).sum(),
-        Value::Array(items) => items.iter().map(|x| sum_keys(x, suffix)).sum(),
-        _ => 0.0,
-    }
-}
-
 /// `(input tokens, cost in USD)` from the last JSON line of the agent's output that reports usage; `None` when it reports none.
+/// Claude-style usage excludes cached tokens from `input_tokens`, so the three top-level fields add up; Codex-style usage
+/// (`cached_input_tokens` present) already includes them.
 fn usage(out: &str) -> (Option<f64>, Option<f64>) {
     let last = out.lines().rev().filter_map(|l| serde_json::from_str::<Value>(l.trim()).ok()).find(|v| v.get("usage").is_some() || v.get("total_cost_usd").is_some());
     let Some(v) = last else { return (None, None) };
-    (v.get("usage").map(|u| sum_keys(u, "input_tokens")), v["total_cost_usd"].as_f64())
+    let field = |u: &Value, k: &str| u[k].as_f64().unwrap_or(0.0);
+    let tokens = v.get("usage").map(|u| {
+        let base = field(u, "input_tokens");
+        if u.get("cached_input_tokens").is_some() {
+            base
+        } else {
+            base + field(u, "cache_read_input_tokens") + field(u, "cache_creation_input_tokens")
+        }
+    });
+    (tokens, v["total_cost_usd"].as_f64())
 }
 
 /// Run order: each round runs every task on both builds, and the build order flips with the round, so drift hits both.
@@ -107,6 +110,8 @@ fn diff(a: &[f64], b: &[f64]) -> Value {
 
 struct Rec {
     build: usize,
+    /// False when the start state was not clean or a verifier could not run; such runs are left out of the statistics.
+    valid: bool,
     task: String,
     ok: bool,
     calls: usize,
@@ -120,7 +125,7 @@ fn metrics(recs: &[&Rec]) -> Vec<(&'static str, Vec<f64>)> {
 }
 
 fn report(recs: &[Rec]) -> Value {
-    let by = |b: usize, task: Option<&str>| -> Vec<&Rec> { recs.iter().filter(|r| r.build == b && task.is_none_or(|t| r.task == t)).collect() };
+    let by = |b: usize, task: Option<&str>| -> Vec<&Rec> { recs.iter().filter(|r| r.valid && r.build == b && task.is_none_or(|t| r.task == t)).collect() };
     let build = |b: usize, task: Option<&str>| Value::Object(metrics(&by(b, task)).into_iter().map(|(k, xs)| (k.to_string(), ci(&xs))).collect());
     let mut tasks: Vec<&str> = recs.iter().map(|r| r.task.as_str()).collect();
     tasks.sort_unstable();
@@ -144,15 +149,29 @@ fn table(r: &Value) -> String {
     out
 }
 
-/// `au` as the verifier and reset tool: the command's first word is `read` or `act`.
-fn au(exe: &Path, cmd: &str) -> String {
+/// Runs a reset or verifier command: `read ...`/`act ...` through `au`, or `adb ...` (`AU_ADB` or `adb`). `None` when it fails.
+fn au(exe: &Path, cmd: &str) -> Option<String> {
     let (kind, rest) = cmd.split_once(' ').unwrap_or((cmd, ""));
-    let out = Command::new(exe).args([kind, rest]).output();
-    out.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
+    let out = if kind == "adb" {
+        Command::new(env::var("AU_ADB").unwrap_or_else(|_| "adb".into())).args(rest.split_whitespace()).output()
+    } else {
+        Command::new(exe).args([kind, rest]).output()
+    };
+    out.ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+}
+
+/// Whether every verifier passes on the current device state; `None` when one cannot run.
+fn verified(exe: &Path, task: &Task) -> Option<bool> {
+    task.verify
+        .iter()
+        .try_fold(true, |all, (cmd, expect, not)| au(exe, cmd).map(|got| all && got.contains(expect.as_str()) && not.as_ref().is_none_or(|n| !got.contains(n.as_str()))))
 }
 
 /// Counting shim, started by the agent as its MCP server: relays stdio to `au serve --mcp` and logs each client line to `log`.
 pub fn shim(args: &[String]) -> Result<(), String> {
+    if args.len() < 2 {
+        return Err("bench-shim needs LOG AU".into());
+    }
     let mut child = Command::new(&args[1]).args(["serve", "--mcp"]).stdin(Stdio::piped()).stdout(Stdio::inherit()).spawn().map_err(ioe)?;
     let (mut input, mut log) = (child.stdin.take().ok_or("no stdin")?, fs::OpenOptions::new().create(true).append(true).open(&args[0]).map_err(ioe)?);
     for line in BufReader::new(io::stdin()).lines() {
@@ -179,12 +198,14 @@ pub fn run(root: &Path) -> Result<(), String> {
         .map(|(f, v)| get(f, v).map(PathBuf::from).ok_or(format!("bench-model needs {f} PATH ({v})")))
         .collect::<Result<_, _>>()?;
     let template = get("--cmd", "BENCH_CMD").ok_or("bench-model needs --cmd TEMPLATE (BENCH_CMD), e.g. `claude -p {prompt} --mcp-config {mcp} --output-format json`")?;
-    let num = |flag: &str, var: &str, default: f64| get(flag, var).and_then(|s| s.parse().ok()).unwrap_or(default);
+    let num = |flag: &str, var: &str, default: f64| -> Result<f64, String> {
+        get(flag, var).map_or(Ok(default), |s| s.parse::<f64>().ok().filter(|n| n.is_finite() && *n >= 0.0).ok_or(format!("{flag} needs a non-negative number, got `{s}`")))
+    };
     let (runs, max_runs, max_cost, timeout) = (
-        num("--runs", "BENCH_RUNS", 5.0) as usize,
-        num("--max-runs", "BENCH_MAX_RUNS", 200.0) as usize,
-        num("--max-cost", "BENCH_MAX_COST", f64::INFINITY),
-        num("--timeout", "BENCH_TIMEOUT", 300.0),
+        num("--runs", "BENCH_RUNS", 5.0)? as usize,
+        num("--max-runs", "BENCH_MAX_RUNS", 200.0)? as usize,
+        num("--max-cost", "BENCH_MAX_COST", 25.0)?,
+        num("--timeout", "BENCH_TIMEOUT", 300.0)?,
     );
     let model = get("--model", "BENCH_MODEL").unwrap_or_default();
     let tasks_path = get("--tasks", "BENCH_TASKS").map(PathBuf::from).unwrap_or_else(|| root.join("tools/bench/tasks.json"));
@@ -196,7 +217,7 @@ pub fn run(root: &Path) -> Result<(), String> {
     println!("planned_runs={} max_runs={max_runs} max_cost={max_cost}", order.len());
     let (dir, me) = (root.join("target/bench-model"), env::current_exe().map_err(ioe)?);
     fs::create_dir_all(&dir).map_err(ioe)?;
-    let (mut recs, mut spent) = (Vec::new(), 0.0);
+    let (mut recs, mut spent, mut priciest, mut invalid) = (Vec::new(), 0.0, 0.0f64, 0usize);
     for (n, (round, ti, b)) in order.into_iter().enumerate() {
         if n >= max_runs || spent > max_cost {
             println!("spend guard: stopping after {n} runs (cost {spent:.2})");
@@ -208,35 +229,51 @@ pub fn run(root: &Path) -> Result<(), String> {
         let _ = fs::remove_file(&log);
         let server = json!({"mcpServers": {"android-use": {"command": me, "args": ["bench-shim", log, builds[b]]}}});
         fs::write(&mcp, server.to_string()).map_err(ioe)?;
-        for cmd in &task.reset {
-            au(&builds[0], cmd);
+        // A run counts only from a known start: every reset ran, and the verifiers fail before the agent acts.
+        let reset = task.reset.iter().all(|cmd| au(&builds[0], cmd).is_some());
+        let start_ok = reset && verified(&builds[0], task) == Some(false);
+        let mut rec = Rec { build: b, task: task.name.clone(), valid: start_ok, ok: false, calls: 0, wall_s: 0.0, tokens: None };
+        if !start_ok {
+            println!("round={round} task={} build={} invalid: reset failed or the goal already holds before the agent acts", task.name, ["A", "B"][b]);
+            invalid += 1;
+            continue;
         }
         let argv = render(&template, &[("prompt", &task.goal), ("mcp", &mcp.to_string_lossy()), ("model", &model)]);
         let started = Instant::now();
         let mut child = Command::new(&argv[0]).args(&argv[1..]).stdout(fs::File::create(&out).map_err(ioe)?).stderr(Stdio::null()).stdin(Stdio::null()).spawn().map_err(ioe)?;
-        while child.try_wait().map_err(ioe)?.is_none() {
+        let mut timed_out = false;
+        let status = loop {
+            if let Some(status) = child.try_wait().map_err(ioe)? {
+                break status.code();
+            }
             if started.elapsed().as_secs_f64() > timeout {
+                timed_out = true;
                 let _ = child.kill();
                 let _ = child.wait();
-                break;
+                break None;
             }
             thread::sleep(Duration::from_millis(200));
-        }
-        let wall_s = started.elapsed().as_secs_f64();
-        let ok = task.verify.iter().all(|(cmd, expect, not)| {
-            let got = au(&builds[0], cmd);
-            got.contains(expect.as_str()) && not.as_ref().is_none_or(|n| !got.contains(n.as_str()))
-        });
+        };
+        rec.wall_s = started.elapsed().as_secs_f64();
+        let verdict = verified(&builds[0], task);
         let (tokens, cost) = usage(&fs::read_to_string(&out).unwrap_or_default());
-        spent += cost.unwrap_or(0.0);
-        let calls = count_calls(&fs::read_to_string(&log).unwrap_or_default());
-        println!("round={round} task={} build={} ok={ok} calls={calls} wall_s={wall_s:.1}", task.name, ["A", "B"][b]);
-        recs.push(Rec { build: b, task: task.name.clone(), ok, calls, wall_s, tokens });
+        // A killed run printed no total: charge it the costliest run so far rather than nothing.
+        spent += cost.unwrap_or(if timed_out { priciest } else { 0.0 });
+        priciest = priciest.max(cost.unwrap_or(0.0));
+        (rec.valid, rec.ok, rec.tokens) = (verdict.is_some(), verdict == Some(true), tokens);
+        rec.calls = count_calls(&fs::read_to_string(&log).unwrap_or_default());
+        println!("round={round} task={} build={} ok={} calls={} wall_s={:.1} exit={status:?} timed_out={timed_out}", task.name, ["A", "B"][b], rec.ok, rec.calls, rec.wall_s);
+        invalid += !rec.valid as usize;
+        recs.push(rec);
     }
     let rep = report(&recs);
     println!("{}", table(&rep));
     let path = get("--out", "BENCH_OUT").map(PathBuf::from).unwrap_or_else(|| root.join("target/bench-model.json"));
-    fs::write(path, serde_json::to_vec_pretty(&json!({"a": builds[0], "b": builds[1], "runs": recs.len(), "cost_usd": spent, "report": rep})).map_err(ioe)?).map_err(ioe)
+    fs::write(
+        path,
+        serde_json::to_vec_pretty(&json!({"a": builds[0], "b": builds[1], "runs": recs.len(), "invalid_runs": invalid, "cost_usd": spent, "report": rep})).map_err(ioe)?,
+    )
+    .map_err(ioe)
 }
 
 #[cfg(test)]
@@ -269,6 +306,11 @@ mod tests {
         let out = "{\"type\":\"system\"}\n{\"usage\":{\"input_tokens\":10,\"cache_read_input_tokens\":90,\"output_tokens\":5},\"total_cost_usd\":0.25}\n";
         assert_eq!(usage(out), (Some(100.0), Some(0.25)));
         assert_eq!(usage("plain text"), (None, None));
+        // Nested cache breakdowns are not added twice, and Codex's cached count is already inside `input_tokens`.
+        let nested =
+            "{\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":1000,\"cache_creation\":{\"ephemeral_5m_input_tokens\":1000},\"cache_read_input_tokens\":5000}}";
+        assert_eq!(usage(nested).0, Some(6010.0));
+        assert_eq!(usage("{\"usage\":{\"input_tokens\":6000,\"cached_input_tokens\":5000}}").0, Some(6000.0));
     }
 
     #[test]
@@ -291,8 +333,14 @@ mod tests {
     }
 
     #[test]
+    fn invalid_runs_stay_out_of_the_statistics() {
+        let rec = |valid, ok| Rec { build: 0, valid, task: "t".into(), ok, calls: 1, wall_s: 1.0, tokens: None };
+        assert_eq!(report(&[rec(true, false), rec(false, true)])["a"]["success"]["n"], 1);
+    }
+
+    #[test]
     fn the_report_compares_builds_per_task_and_overall() {
-        let rec = |build, ok, calls, tokens| Rec { build, task: "t".into(), ok, calls, wall_s: 10.0, tokens };
+        let rec = |build, ok, calls, tokens| Rec { build, valid: true, task: "t".into(), ok, calls, wall_s: 10.0, tokens };
         let recs = [rec(0, true, 4, Some(1000.0)), rec(0, true, 6, Some(1200.0)), rec(1, false, 8, Some(2000.0)), rec(1, true, 10, Some(2400.0))];
         let r = report(&recs);
         assert_eq!(r["a"]["success"]["mean"], 1.0);
