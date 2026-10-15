@@ -51,7 +51,7 @@ pub(crate) fn pick_safe<T: Clone + PartialEq>(target: &Target, candidates: &[Can
 pub(crate) fn loose<T: Clone + PartialEq>(target: &Target, near: Vec<(T, impl AsRef<str>)>, surface: &str) -> Result<T> {
     let needle = normalized(&target.label);
     if let ([(value, label)], None) = (near.as_slice(), target.ordinal) {
-        if near_miss(&needle, label.as_ref()) && !lookalikes(label.as_ref()) {
+        if near_miss(&needle, label.as_ref()) {
             return Ok(value.clone());
         }
     }
@@ -63,9 +63,11 @@ pub(crate) fn loose<T: Clone + PartialEq>(target: &Target, near: Vec<(T, impl As
     Err(miss)
 }
 
-/// Latin text mixed with Cyrillic, Greek, or fullwidth letters can spell a risky word invisibly.
+/// ASCII letters mixed with letters from another script (Cyrillic, Greek, Cherokee, fullwidth,
+/// math alphabets) can spell a risky word invisibly. Accented Latin is fine.
 fn lookalikes(label: &str) -> bool {
-    label.chars().any(|c| c.is_ascii_alphabetic()) && label.chars().any(|c| matches!(c, '\u{0370}'..='\u{052F}' | '\u{FF01}'..='\u{FF5E}'))
+    label.chars().any(|c| c.is_ascii_alphabetic())
+        && label.chars().any(|c| c.is_alphabetic() && !c.is_ascii() && (c == '\u{017F}' || !matches!(c, '\u{00C0}'..='\u{024F}' | '\u{1E00}'..='\u{1EFF}')))
 }
 
 /// A risky word, or an inflection of one ("payments", "delete-all", "removed").
@@ -246,7 +248,7 @@ pub(crate) fn near_miss(wanted: &str, actual: &str) -> bool {
     let aligned = actual.starts_with(&format!("{wanted} ")) || actual.ends_with(&format!(" {wanted}"));
     let extra: Vec<&str> =
         actual.split(|c: char| !c.is_alphanumeric()).filter(|word| !word.is_empty()).filter(|word| !wanted.split(|c: char| !c.is_alphanumeric()).any(|w| w == *word)).collect();
-    aligned && extra.len() <= 2 && !extra.iter().any(|word| risky_word(word))
+    aligned && !lookalikes(&actual) && extra.len() <= 2 && !extra.iter().any(|word| risky_word(word))
 }
 
 /// A label missing from the Android screen (not a page, app, or
