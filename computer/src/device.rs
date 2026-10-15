@@ -416,6 +416,7 @@ pub(crate) fn private_dir(path: &Path) -> Result<()> {
 }
 
 /// The files au writes into a state folder.
+#[cfg(unix)]
 fn ours(name: &str) -> bool {
     name.starts_with("operations.")
         || ["device.json", "lock", "screen-space.json", "aubridge.apk", "target.json", "instance", "emulator.json", "emulator.log", "ports.lock"].contains(&name)
