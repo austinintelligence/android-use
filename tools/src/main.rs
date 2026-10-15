@@ -248,6 +248,7 @@ fn version(root: &Path) -> Result<(), String> {
     if !gradle.contains("def releaseVersion = file(\"../../VERSION\").text.trim()") || !gradle.contains("versionName = releaseVersion") {
         return Err("Android helper must read its version from VERSION".into());
     }
+    gradle_signing(&gradle, &fs::read_to_string(root.join("device/example/build.gradle")).map_err(ioe)?)?;
     for path in ["README.md", "docs/guides/install.md", "install/README.md", "skills/android-use/SKILL.md"] {
         if let Some(marker) = stale_version_marker(&fs::read_to_string(root.join(path)).map_err(ioe)?) {
             return Err(format!("stale product version marker {marker} in {path}"));
@@ -255,6 +256,17 @@ fn version(root: &Path) -> Result<(), String> {
     }
     platforms_agree(root)?;
     println!("version={version}");
+    Ok(())
+}
+/// The helper's versionCode derives from VERSION, and only its release build type may use a signing key.
+fn gradle_signing(helper: &str, example: &str) -> Result<(), String> {
+    if !helper.contains("versionCode = versionParts[0] * 1_000_000 + versionParts[1] * 1_000 + versionParts[2]") {
+        return Err("helper versionCode must be major*1,000,000 + minor*1,000 + patch from VERSION".into());
+    }
+    let debug = helper.split("debug {").nth(1).is_some_and(|rest| rest.split('}').next().is_some_and(|b| b.contains("signingConfig")));
+    if debug || example.contains("signingConfig") {
+        return Err("debug and example builds must not use a release signing key".into());
+    }
     Ok(())
 }
 /// A standalone `v2` or `v3` version (`v2`, `v3.1`, `v2.0.0`), the product's old names. Words that only
@@ -691,7 +703,16 @@ fn release_notes(root: &Path) -> Result<(), String> {
 }
 #[cfg(test)]
 mod tests {
-    use super::{changelog_section, file_bytes, over_budget, stale_version_marker};
+    use super::{changelog_section, file_bytes, gradle_signing, over_budget, stale_version_marker};
+
+    #[test]
+    fn debug_builds_never_sign_with_the_release_key_and_version_code_comes_from_version() {
+        let ok = "versionCode = versionParts[0] * 1_000_000 + versionParts[1] * 1_000 + versionParts[2]\nrelease { signingConfig = x }";
+        assert!(gradle_signing(ok, "release { }").is_ok());
+        assert!(gradle_signing("versionCode = 1_000_000", "").is_err());
+        assert!(gradle_signing(&format!("{ok}\ndebug {{ signingConfig = x }}"), "").is_err());
+        assert!(gradle_signing(ok, "debug { signingConfig = x }").is_err());
+    }
 
     #[test]
     fn a_missing_artifact_fails_instead_of_measuring_zero() {

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Security
+
+- Debug and example Android builds never use the release signing key; the helper's release build uses it only when `AUBRIDGE_SIGNING_PROPERTIES` names a signing file.
+
+### Changed
+
+- The helper's `versionCode` is computed from `VERSION` (1.3.0 is 1,003,000), and `cargo xtask version` checks it.
+
 ### Fixed
 
 - `cargo xtask` gates fail closed: a missing release artifact fails the size gate instead of measuring 0 bytes, and the stale-version check flags only standalone versions such as `v2` or `v3.1`, not words that contain one (`dev2`).
