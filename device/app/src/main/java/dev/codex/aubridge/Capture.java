@@ -47,6 +47,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 final class Capture {
@@ -215,7 +216,7 @@ final class Capture {
                     }
                 },
                 handler);
-        BridgeService.capturing(ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA, "Camera capture");
+        BridgeService.begin(ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA);
         try {
             manager.openCamera(
                     camera,
@@ -332,7 +333,7 @@ final class Capture {
             if (device[0] != null) device[0].close();
             reader.close();
             thread.quitSafely();
-            BridgeService.settle();
+            BridgeService.end(ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA);
             if (!output.isFile() || output.length() == 0 || output.length() > MAX_ARTIFACT)
                 output.delete();
             prune();
@@ -362,7 +363,7 @@ final class Capture {
         byte[] buffer = new byte[min];
         long data = 0;
         boolean ok = false, sound = false;
-        BridgeService.capturing(ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE, "Recording audio");
+        BridgeService.begin(ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
         try (RandomAccessFile out = new RandomAccessFile(output, "rw")) {
             out.write(new byte[44]);
             record.startRecording();
@@ -385,7 +386,7 @@ final class Capture {
         } finally {
             if (record.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) record.stop();
             record.release();
-            BridgeService.settle();
+            BridgeService.end(ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
             if (!ok || output.length() > MAX_ARTIFACT) output.delete();
             prune();
         }
@@ -396,8 +397,16 @@ final class Capture {
         if (Build.VERSION.SDK_INT < 21) throw new Vm.Unsupported();
         if (!Projection.available()) throw new Vm.Permission();
         Recording order = new Recording();
-        BridgeService.projectionStarted();
-        order.reach(Recording.Step.SERVICE_PROMOTED);
+        BridgeService.begin(ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
+        try {
+            order.reach(Recording.Step.SERVICE_PROMOTED);
+            return record(seconds, order);
+        } finally {
+            BridgeService.end(ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
+        }
+    }
+
+    private String record(int seconds, Recording order) throws Exception {
         MediaProjection projection;
         try {
             projection = Projection.acquire(context);
@@ -422,9 +431,16 @@ final class Capture {
         MediaRecorder recorder = new MediaRecorder();
         VirtualDisplay display = null;
         boolean started = false, ok = false;
+        AtomicBoolean stopped = new AtomicBoolean();
         try {
             projection.registerCallback(
-                    new MediaProjection.Callback() {}, new Handler(Looper.getMainLooper()));
+                    new MediaProjection.Callback() {
+                        @Override
+                        public void onStop() {
+                            stopped.set(true);
+                        }
+                    },
+                    new Handler(Looper.getMainLooper()));
             order.reach(Recording.Step.CALLBACK_REGISTERED);
             recorder.setVideoSource(MediaRecorder.VideoSource.SURFACE);
             recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
@@ -452,6 +468,7 @@ final class Capture {
             started = true;
             SystemClock.sleep(seconds * 1000L);
             recorder.stop();
+            if (stopped.get()) throw new IOException("screen sharing stopped");
             if (output.length() > MAX_ARTIFACT) throw new IOException("recording too large");
             ok = true;
             return id;
@@ -461,7 +478,8 @@ final class Capture {
                     recorder.stop();
                 } catch (RuntimeException ignored) {
                 }
-            throw e;
+            // An expired or revoked grant surfaces here as a SecurityException.
+            throw e instanceof SecurityException ? new Vm.Permission() : e;
         } finally {
             if (display != null) display.release();
             try {
@@ -470,7 +488,6 @@ final class Capture {
             }
             recorder.release();
             projection.stop();
-            BridgeService.settle();
             if (!ok || output.length() > MAX_ARTIFACT) output.delete();
             prune();
         }

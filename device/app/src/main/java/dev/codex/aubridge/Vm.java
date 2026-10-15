@@ -97,9 +97,9 @@ final class Vm {
                 at = i;
                 if (SystemClock.elapsedRealtime() > end) throw new Fail(i, true);
                 boolean ok;
-                if (p.mutates && !guarded && p.name.equals("scroll_until")) {
-                    // A long loop must not hold the guard: it blocks the very events that tell
-                    // it the screen has scrolled.
+                if (p.mutates && !guarded && p.unguarded()) {
+                    // A long step must not hold the guard: scrolling needs the events it blocks,
+                    // and a capture would block taps and reads for its whole duration.
                     synchronized (ui.guard()) {
                         if (ui.snapshot().generation != expected) throw new Stale();
                     }
@@ -352,17 +352,17 @@ final class Vm {
                             throw new Bridge.Limit();
                         facing = facing + "|" + width + "x" + height;
                     }
-                    return new P(n, null, facing, 0, null, null, false);
+                    return new P(n, null, facing, 0, null, null, true);
                 case "microphone":
                     exact(a, 2);
                     int seconds = a.getInt(1);
                     if (seconds < 1 || seconds > 30) throw new Bridge.Limit();
-                    return new P(n, null, "microphone", seconds, null, null, false);
+                    return new P(n, null, "microphone", seconds, null, null, true);
                 case "screen_record":
                     exact(a, 2);
                     int duration = a.getInt(1);
                     if (duration < 1 || duration > 30) throw new Bridge.Limit();
-                    return new P(n, null, "screen_record", duration, null, null, false);
+                    return new P(n, null, "screen_record", duration, null, null, true);
                 case "notification_open":
                 case "notification_dismiss":
                 case "notification_action":
@@ -508,6 +508,13 @@ final class Vm {
                 default:
                     return false;
             }
+        }
+
+        private boolean unguarded() {
+            return name.equals("scroll_until")
+                    || name.equals("camera")
+                    || name.equals("microphone")
+                    || name.equals("screen_record");
         }
 
         @Override

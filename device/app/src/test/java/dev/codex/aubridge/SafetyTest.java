@@ -55,4 +55,23 @@ public class SafetyTest {
     public void noProvidersMeansNothingToWaitFor() {
         assertTrue(new Safety.Providers(0).none());
     }
+
+    @Test
+    public void endingOneCaptureKeepsTheOthersTypes() {
+        Safety.Held held = new Safety.Held();
+        held.add(0x20); // media projection
+        assertEquals(0x28, held.add(0x8)); // + location
+        assertEquals(0x20, held.remove(0x8));
+        assertEquals(0, held.remove(0x20));
+    }
+
+    @Test
+    public void aTypeStaysUntilEveryHolderEnds() {
+        Safety.Held held = new Safety.Held();
+        held.add(0x80);
+        held.add(0x80);
+        assertEquals(0x80, held.remove(0x80));
+        assertEquals(0, held.remove(0x80));
+        assertEquals(0, held.remove(0x80));
+    }
 }

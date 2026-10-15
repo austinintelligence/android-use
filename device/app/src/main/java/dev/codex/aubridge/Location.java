@@ -56,7 +56,7 @@ final class Location {
                     @Override
                     public void onStatusChanged(String provider, int status, Bundle extras) {}
                 };
-        BridgeService.capturing(ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION, "Location read");
+        BridgeService.begin(ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
         try {
             for (String provider : providers) {
                 try {
@@ -77,7 +77,7 @@ final class Location {
                 manager.removeUpdates(listener);
             } catch (SecurityException ignored) {
             }
-            BridgeService.settle();
+            BridgeService.end(ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
         }
         android.location.Location best = fresh.get();
         if (best == null)

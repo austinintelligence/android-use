@@ -1,5 +1,7 @@
 package dev.codex.aubridge;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /** Capture rules free of Android types, so the JVM can test them. */
@@ -41,6 +43,29 @@ final class Safety {
 
         boolean none() {
             return live.get() <= 0;
+        }
+    }
+
+    /** Counts each service type in use; the mask is the union of those still held. */
+    static final class Held {
+        private final Map<Integer, Integer> counts = new HashMap<>();
+
+        synchronized int add(int type) {
+            counts.merge(type, 1, Integer::sum);
+            return mask();
+        }
+
+        synchronized int remove(int type) {
+            Integer n = counts.get(type);
+            if (n != null && n > 1) counts.put(type, n - 1);
+            else counts.remove(type);
+            return mask();
+        }
+
+        private int mask() {
+            int mask = 0;
+            for (int type : counts.keySet()) mask |= type;
+            return mask;
         }
     }
 }
