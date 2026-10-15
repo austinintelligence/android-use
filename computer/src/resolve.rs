@@ -35,6 +35,74 @@ pub(crate) fn pick<T: Clone + PartialEq>(target: &Target, candidates: &[Candidat
     choose(target, matches, surface)
 }
 
+/// Like `pick`, but a label that merely contains the request counts only when it is the single
+/// such item and adds no risky word; otherwise it is a miss that names the candidates.
+pub(crate) fn pick_safe<T: Clone + PartialEq>(target: &Target, candidates: &[Candidate<T>], surface: &str) -> Result<T> {
+    let needle = normalized(&target.label);
+    let exact = matching(candidates, |label| *label == needle);
+    if !exact.is_empty() || needle.is_empty() {
+        return choose(target, exact, surface);
+    }
+    let near: Vec<(T, &String)> = candidates.iter().filter_map(|c| c.labels.iter().find(|l| l.contains(&needle)).map(|l| (c.value.clone(), l))).collect();
+    loose(target, near, surface)
+}
+
+/// Accepts the one loose match that is not risky; anything else is a miss listing what was near.
+pub(crate) fn loose<T: Clone + PartialEq>(target: &Target, near: Vec<(T, impl AsRef<str>)>, surface: &str) -> Result<T> {
+    let needle = normalized(&target.label);
+    if let ([(value, label)], None) = (near.as_slice(), target.ordinal) {
+        if near_miss(&needle, label.as_ref()) {
+            return Ok(value.clone());
+        }
+    }
+    let mut miss = missing(&target.label, surface);
+    if !near.is_empty() {
+        let names: Vec<String> = near.iter().take(5).map(|(_, label)| format!("\"{}\"", display(label.as_ref()))).collect();
+        miss.message = format!("{}. Similar items that were not chosen: {}. Use the full label.", miss.message, names.join(", "));
+    }
+    Err(miss)
+}
+
+/// ASCII letters mixed with letters from another script (Cyrillic, Greek, Cherokee, fullwidth,
+/// math alphabets) can spell a risky word invisibly. Accented Latin is fine.
+fn lookalikes(label: &str) -> bool {
+    label.chars().any(|c| c.is_ascii_alphabetic())
+        && label.chars().any(|c| c.is_alphabetic() && !c.is_ascii() && (c == '\u{017F}' || !matches!(c, '\u{00C0}'..='\u{024F}' | '\u{1E00}'..='\u{1EFF}')))
+}
+
+/// A risky word, or an inflection of one ("payments", "delete-all", "removed").
+fn risky_word(word: &str) -> bool {
+    RISKY.contains(&word)
+        || [
+            "pay",
+            "delet",
+            "remov",
+            "transfer",
+            "eras",
+            "reset",
+            "buy",
+            "purchas",
+            "send",
+            "submit",
+            "confirm",
+            "clear",
+            "wip",
+            "sign",
+            "log",
+            "order",
+            "install",
+            "uninstall",
+            "factory",
+            "withdraw",
+            "unsubscribe",
+            "cancel",
+            "checkout",
+            "donat",
+        ]
+        .iter()
+        .any(|stem| word.starts_with(stem))
+}
+
 /// Applies the ordinal/ambiguity rule to an already-ordered match list.
 pub(crate) fn choose<T: Clone>(target: &Target, matches: Vec<T>, surface: &str) -> Result<T> {
     if matches.is_empty() {
@@ -109,8 +177,11 @@ pub(crate) fn app(rows: &Value, name: &str) -> Result<String> {
         })
         .collect();
     let target = Target { label: name.into(), ordinal: None, handle: None };
-    pick(&target, &candidates, "device").map_err(|error| match error.code {
-        Code::Missing => Error::plain(Code::Missing, format!("No installed app is named \"{}\". Use the name shown under its launcher icon.", display(name))),
+    pick_safe(&target, &candidates, "device").map_err(|error| match error.code {
+        Code::Missing => {
+            let similar = error.message.split_once(". Similar").map_or(String::new(), |(_, rest)| format!(" Similar{}", rest.trim_end_matches(" Use the full label.")));
+            Error::plain(Code::Missing, format!("No installed app is named \"{}\".{similar} Use the name shown under its launcher icon.", display(name)))
+        }
         Code::Ambiguous => Error::plain(Code::Ambiguous, format!("\"{}\" matches more than one app. Use the app's full display name.", display(name))),
         _ => error,
     })
@@ -129,6 +200,38 @@ pub(crate) fn notification_label(item: &Value) -> String {
     label.unwrap_or_else(|| "(no title or text)".into())
 }
 
+/// Resolves `run notification action`: the notification's key and the action label to send. A
+/// notification with several actions needs the label; nothing runs without it.
+pub(crate) fn notification_action(value: &Value, target: &Target, label: Option<&str>) -> Result<(Box<str>, Option<Box<str>>)> {
+    let key = notification(value, target)?;
+    let listed_actions = notification_items(value).into_iter().find(|item| item.get("id").and_then(Value::as_str) == Some(&*key)).and_then(|item| item.get("actions")?.as_array());
+    // A helper that predates action labels lists none: it can only run the first action.
+    let Some(list) = listed_actions else {
+        return match label {
+            None => Ok((key, None)),
+            Some(_) => Err(Error::plain(
+                Code::Unsupported,
+                "The helper on the phone is too old to run a named notification action. Update the helper, or run the action without a label. Nothing ran.",
+            )),
+        };
+    };
+    let actions: Vec<&str> = list.iter().filter_map(Value::as_str).collect();
+    let listed = || actions.iter().map(|a| format!("\"{a}\"")).collect::<Vec<_>>().join(", ");
+    let title = display(&target.label);
+    match (label, actions.len()) {
+        (_, 0) => Err(Error::plain(Code::Missing, format!("The \"{title}\" notification has no actions. Nothing ran."))),
+        (None, 1) => Ok((key, None)),
+        (None, _) => Err(Error::plain(
+            Code::Ambiguous,
+            format!("The \"{title}\" notification has several actions: {}. Say run notification action \"ACTION\" on \"{title}\". Nothing ran.", listed()),
+        )),
+        (Some(wanted), _) => match actions.iter().find(|a| a.eq_ignore_ascii_case(wanted)) {
+            Some(found) => Ok((key, Some((*found).into()))),
+            None => Err(Error::plain(Code::Missing, format!("The \"{title}\" notification has no action \"{}\". Its actions: {}. Nothing ran.", display(wanted), listed()))),
+        },
+    }
+}
+
 pub(crate) fn notification(value: &Value, target: &Target) -> Result<Box<str>> {
     if value.get("enabled").and_then(Value::as_bool) != Some(true) {
         return Err(Error::plain(Code::Permission, crate::format::NOTIFICATION_ACCESS_OFF));
@@ -140,7 +243,7 @@ pub(crate) fn notification(value: &Value, target: &Target) -> Result<Box<str>> {
             (!key.is_empty()).then(|| Candidate::new(Box::<str>::from(key), [notification_label(item)]))
         })
         .collect();
-    pick(target, &candidates, "notification list")
+    pick_safe(target, &candidates, "notification list")
 }
 
 /// The label and number a screen row names: `sw Wi-Fi=on` is Wi-Fi, `Save#2` is Save number 2,
@@ -166,7 +269,7 @@ pub(crate) fn from_row(text: &str) -> Option<(String, Option<u16>)> {
 
 /// Words that make an extra label word unsafe to guess at: `tap "Save"` may tap "Save draft",
 /// but never "Save and delete all".
-const RISKY: [&str; 20] = [
+const RISKY: [&str; 21] = [
     "delete",
     "remove",
     "erase",
@@ -187,6 +290,7 @@ const RISKY: [&str; 20] = [
     "install",
     "uninstall",
     "factory",
+    "transfer",
 ];
 
 /// Whether any word of a label is one that makes acting on a guess unsafe.
@@ -200,8 +304,9 @@ pub(crate) fn risky(label: &str) -> bool {
 pub(crate) fn near_miss(wanted: &str, actual: &str) -> bool {
     let (wanted, actual) = (normalized(wanted), normalized(actual));
     let aligned = actual.starts_with(&format!("{wanted} ")) || actual.ends_with(&format!(" {wanted}"));
-    let extra: Vec<&str> = actual.split(' ').filter(|word| !wanted.split(' ').any(|w| w == *word)).collect();
-    aligned && extra.len() <= 2 && !extra.iter().any(|word| RISKY.contains(word))
+    let extra: Vec<&str> =
+        actual.split(|c: char| !c.is_alphanumeric()).filter(|word| !word.is_empty()).filter(|word| !wanted.split(|c: char| !c.is_alphanumeric()).any(|w| w == *word)).collect();
+    aligned && !lookalikes(&actual) && extra.len() <= 2 && !extra.iter().any(|word| risky_word(word))
 }
 
 /// A label missing from the Android screen (not a page, app, or
@@ -237,6 +342,25 @@ mod tests {
         assert_eq!(pick(&target("Inbox 3", None), &candidates, "screen").unwrap(), 1);
         assert_eq!(pick(&target("[]", None), &candidates, "screen").unwrap_err().code, Code::Missing);
         assert!(ambiguity("Photo", 40).contains("more specific label"));
+    }
+
+    #[test]
+    fn notification_with_several_actions_needs_a_label() {
+        let value = json!({"enabled":true,"items":[
+            {"id":"k-one","title":"Backup","actions":["Open"]},
+            {"id":"k-many","title":"Messages","actions":["Reply","Mark read"]},
+            {"id":"k-none","title":"Calendar","actions":[]},
+            {"id":"k-old","title":"Legacy"}]});
+        let run = |title: &str, label: Option<&str>| notification_action(&value, &target(title, None), label);
+        assert_eq!(run("Backup", None).unwrap(), ("k-one".into(), None), "one action runs without a label");
+        assert_eq!(run("Messages", Some("mark read")).unwrap(), ("k-many".into(), Some("Mark read".into())));
+        let error = run("Messages", None).unwrap_err();
+        assert_eq!(error.code, Code::Ambiguous);
+        assert!(error.message.contains("\"Reply\", \"Mark read\"") && error.message.contains("Nothing ran"));
+        assert_eq!(run("Messages", Some("Archive")).unwrap_err().code, Code::Missing);
+        assert_eq!(run("Calendar", None).unwrap_err().code, Code::Missing);
+        assert_eq!(run("Legacy", None).unwrap(), ("k-old".into(), None), "a helper without action lists runs its first action");
+        assert_eq!(run("Legacy", Some("Reply")).unwrap_err().code, Code::Unsupported);
     }
 
     #[test]
@@ -287,7 +411,51 @@ mod tests {
         let rows = json!([["com.google.android.apps.maps", "Maps"], ["com.example.mail", "Mail"], ["com.google.android.gm", "Gmail"]]);
         assert_eq!(app(&rows, "maps").unwrap(), "com.google.android.apps.maps");
         assert_eq!(app(&rows, "Mail").unwrap(), "com.example.mail");
-        assert_eq!(app(&rows, "ail").unwrap_err().code, Code::Ambiguous);
+        assert_eq!(app(&rows, "ail").unwrap_err().code, Code::Missing, "an ambiguous loose match is a miss");
+        assert!(app(&rows, "ail").unwrap_err().message.contains("\"gmail\""), "and lists the candidates");
         assert_eq!(app(&rows, "Camera").unwrap_err().code, Code::Missing);
+    }
+
+    #[test]
+    fn open_app_refuses_a_risky_extra_word_candidate() {
+        let rows = json!([["com.bank.transfer", "Bank Transfer"], ["com.bank.app", "Bank Notes"]]);
+        assert_eq!(app(&rows, "Bank").unwrap_err().code, Code::Missing);
+        for (name, query) in [("Bank Transfers", "Bank"), ("Center Payments", "Center"), ("Cleaner Delete-all", "Cleaner")] {
+            assert_eq!(app(&json!([["x", name]]), query).unwrap_err().code, Code::Missing, "{name}");
+        }
+        assert_eq!(app(&json!([["x", "Your verification code"]]), "on").unwrap_err().code, Code::Missing, "inside a word");
+        for (name, query) in [
+            ("Wallet Purchases", "Wallet"),
+            ("Mail Sending", "Mail"),
+            ("Files Wiper", "Files"),
+            ("Apps Uninstaller", "Apps"),
+            ("Account Signout", "Account"),
+            ("Bank Tr\u{200B}ansfer", "Bank"),
+        ] {
+            assert_eq!(app(&json!([["x", name]]), query).unwrap_err().code, Code::Missing, "{name}");
+        }
+        for (name, query) in [
+            ("Bank (Transfer)", "Bank"),
+            ("Bank \u{0422}ransfer", "Bank"),
+            ("Bank \u{FF34}ransfer", "Bank"),
+            ("Shop Checkout", "Shop"),
+            ("Plan Cancel", "Plan"),
+            ("Bank Tr\u{034F}ansfer", "Bank"),
+        ] {
+            assert_eq!(app(&json!([["x", name]]), query).unwrap_err().code, Code::Missing, "{name}");
+        }
+        assert_eq!(app(&rows, "Bank Transfer").unwrap(), "com.bank.transfer", "exact names still open");
+        assert_eq!(app(&json!([["com.bank.transfer", "Bank Transfer"]]), "Bank").unwrap_err().code, Code::Missing);
+    }
+
+    #[test]
+    fn a_risky_near_miss_notification_is_not_picked() {
+        let value = json!({"enabled":true,"items":[{"id":"k-pay","title":"Pay now","text":""}]});
+        assert_eq!(notification(&value, &target("Now", None)).unwrap_err().code, Code::Missing);
+        let value = json!({"enabled":true,"items":[{"id":"k-del","title":"Delete all photos","text":""}]});
+        assert_eq!(notification(&value, &target("Photos", None)).unwrap_err().code, Code::Missing);
+        let value = json!({"enabled":true,"items":[{"id":"k-ok","title":"Calendar event","text":""}]});
+        assert_eq!(notification(&value, &target("Calendar", None)).unwrap().as_ref(), "k-ok");
+        assert_eq!(notification(&value, &target("Calendar", Some(2))).unwrap_err().code, Code::Missing, "number never applies to a loose match");
     }
 }

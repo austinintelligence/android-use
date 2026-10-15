@@ -40,6 +40,11 @@ pub enum Action {
 pub enum AndroidAction {
     Tap(Target),
     Toggle(Target),
+    /// Leaves a switch or checkbox on or off; nothing is tapped when it already is.
+    Set {
+        target: Target,
+        on: bool,
+    },
     Hold(Target),
     Type {
         text: Box<str>,
@@ -85,7 +90,8 @@ pub enum AndroidAction {
     ScreenRecord(u16),
     NotificationOpen(Target),
     NotificationDismiss(Target),
-    NotificationAction(Target),
+    /// The optional first field is the action's label, needed when a notification has several.
+    NotificationAction(Target, Option<Box<str>>),
     PointTap {
         x: u16,
         y: u16,
@@ -300,6 +306,16 @@ fn seconds_at(tokens: &[Lexeme], index: usize) -> Result<u16> {
     Ok(seconds as u16)
 }
 
+/// `["ACTION" on] "TITLE"` after `run notification action`.
+fn notification_action_at(t: &[Lexeme], index: usize) -> Result<AndroidAction> {
+    let (label, index) = if is_word(t, index + 1, "on") { (Some(quoted_at(t, index, "notification action")?), index + 2) } else { (None, index) };
+    let (target, next) = target_at(t, index)?;
+    if next != t.len() {
+        return Err(Error::new(Code::Args, "notification run action accepts one target"));
+    }
+    Ok(AndroidAction::NotificationAction(target, label))
+}
+
 fn target_at(tokens: &[Lexeme], index: usize) -> Result<(Target, usize)> {
     if let Some(number) = tokens
         .get(index)
@@ -442,6 +458,13 @@ fn parse_android_action(t: &[Lexeme]) -> Result<AndroidAction> {
             AndroidAction::Toggle(target)
         });
     }
+    if t.len() >= 3 && is_word(t, 0, "set") {
+        let (target, next) = target_at(t, 1)?;
+        if next + 1 != t.len() || !(is_word(t, next, "on") || is_word(t, next, "off")) {
+            return Err(Error::new(Code::Args, "set needs a target and on or off"));
+        }
+        return Ok(AndroidAction::Set { target, on: is_word(t, next, "on") });
+    }
     if t.len() >= 4 && is_word(t, 0, "type") && (is_word(t, 2, "in") || is_word(t, 2, "into")) {
         let text = quoted_at(t, 1, "text")?;
         let (target, next) = target_at(t, 3)?;
@@ -559,19 +582,11 @@ fn parse_android_action(t: &[Lexeme]) -> Result<AndroidAction> {
         return Ok(if is_word(t, 0, "open") { AndroidAction::NotificationOpen(target) } else { AndroidAction::NotificationDismiss(target) });
     }
     if t.len() >= 4 && is_word(t, 0, "run") && is_word(t, 1, "notification") && is_word(t, 2, "action") {
-        let (target, next) = target_at(t, 3)?;
-        if next != t.len() {
-            return Err(Error::new(Code::Args, "notification run action accepts one target"));
-        }
-        return Ok(AndroidAction::NotificationAction(target));
+        return notification_action_at(t, 3);
     }
     if t.len() >= 3 && is_word(t, 0, "notification") {
         if is_word(t, 1, "run") && is_word(t, 2, "action") {
-            let (target, next) = target_at(t, 3)?;
-            if next != t.len() {
-                return Err(Error::new(Code::Args, "notification run action accepts one target"));
-            }
-            return Ok(AndroidAction::NotificationAction(target));
+            return notification_action_at(t, 3);
         }
         let (target, next) = target_at(t, 2)?;
         if next != t.len() {

@@ -15,6 +15,11 @@ fn step_results_read_as_one_summary() {
 }
 
 #[test]
+fn the_quiet_window_defaults_to_200_and_takes_a_sane_override() {
+    assert_eq!([None, Some("150"), Some("120"), Some("0"), Some("5000"), Some("x")].map(quiet_window), [200, 150, 120, 200, 200, 200]);
+}
+
+#[test]
 fn deadlines_cover_the_longest_wait() {
     assert_eq!(deadline(&parse_act_command(r#"tap "A""#).unwrap()), 8000);
     assert_eq!(deadline(&parse_act_command(r#"tap "A" then wait for text "B" up to 12 seconds"#).unwrap()), 13_000);
@@ -34,45 +39,58 @@ fn only_package_shaped_names_skip_lookup() {
 /// with "Wi-Fi" and "Bluetooth".
 mod flows {
     use super::*;
-    use crate::{bridge::Bridge, device::Device};
+    use crate::link::FakeLink;
     use base64::{engine::general_purpose::STANDARD, Engine as _};
-    use std::{
-        io::{Read as _, Write as _},
-        net::{TcpListener, TcpStream},
-    };
-
-    fn frame_in(s: &mut TcpStream) -> Option<Value> {
-        let mut header = [0u8; 4];
-        s.read_exact(&mut header).ok()?;
-        let mut body = vec![0; u32::from_be_bytes(header) as usize];
-        s.read_exact(&mut body).ok()?;
-        serde_json::from_slice(&body).ok()
-    }
-
-    fn frame_out(s: &mut TcpStream, value: &Value) {
-        let body = serde_json::to_vec(value).unwrap();
-        s.write_all(&(body.len() as u32).to_be_bytes()).unwrap();
-        s.write_all(&body).unwrap();
-    }
 
     fn labels(screen: &str) -> &'static [&'static str] {
         if screen == "settings" {
             &["Wi-Fi", "Bluetooth", "Flaky", "Save draft", "Save and delete all"]
+        } else if screen == "switches" {
+            &["Dark mode", "Sticky", "Alarm", "Alarm"]
+        } else if screen == "loading" {
+            &["Loading"]
+        } else if screen == "late" {
+            &["Late"]
         } else {
             &["Settings"]
         }
     }
 
-    fn fake_helper(stream: &mut TcpStream, capture: &[u8]) {
-        let (mut screen, mut generation) = ("home", 1u64);
-        while let Some(q) = frame_in(stream) {
+    fn fake_helper(capture: Vec<u8>) -> impl FnMut(&Value) -> Option<Value> {
+        let (mut screen, mut generation, mut dark) = ("home", 1u64, true);
+        // A screen that replaces the current one by itself at a given time.
+        let mut later: Option<(std::time::Instant, &str)> = None;
+        // The loading screen starts its 120 ms when it is first read, whatever the host did before.
+        let mut unread = false;
+        move |q| {
+            if let Some((_, next)) = later.filter(|(at, _)| *at <= std::time::Instant::now()) {
+                (screen, generation, later) = (next, generation + 1, None);
+            }
+            if unread && q[1] == "semantic" {
+                unread = false;
+                later = later.map(|(_, next)| (std::time::Instant::now() + std::time::Duration::from_millis(120), next));
+            }
             let seq = q[0].clone();
             let names = labels(screen);
             let reply = match q[1].as_str().unwrap() {
                 "status" => json!([seq, 0, generation, 7]),
                 "observe" if q[2].as_str() == Some(generation.to_string().as_str()) => json!([seq, 0, generation]),
                 "observe" => json!([seq, 0, generation, "fixture", names.iter().enumerate().map(|(i, l)| json!([i, l, 98, 3])).collect::<Vec<_>>()]),
-                "semantic" => json!([seq, 0, names.iter().map(|l| json!([l, "", "button", "", true, false])).collect::<Vec<_>>()]),
+                // "Dark mode" flips when tapped; "Sticky" is a switch whose tap changes nothing.
+                "semantic" if screen == "switches" => {
+                    json!([
+                        seq,
+                        0,
+                        [
+                            json!(["Dark mode", "", "switch", if dark { "checked" } else { "unchecked" }, true, false]),
+                            json!(["Sticky", "", "switch", "unchecked", true, false]),
+                            json!(["Alarm", "", "button", "", true, false]),
+                            json!(["Alarm", "", "switch", "checked", true, false])
+                        ]
+                    ])
+                }
+                // Loading text is plain text (empty kind), as the helper reports it.
+                "semantic" => json!([seq, 0, names.iter().map(|l| json!([l, "", if *l == "Loading" { "" } else { "button" }, "", true, false])).collect::<Vec<_>>()]),
                 "resolve" if q[2]["handle"].as_i64().is_some_and(|handle| handle >= 0) => {
                     let handle = q[2]["handle"].as_u64().unwrap() as usize;
                     json!([seq, 0, {"r": (handle < names.len()).then_some(handle).into_iter().collect::<Vec<_>>(), "t": 0, "l": []}])
@@ -101,14 +119,24 @@ mod flows {
                     generation += 1;
                     json!([seq, 1, generation, 0])
                 }
-                "run" if screen == "settings" && q[6].as_array().unwrap().iter().any(|op| op[0] == "tap" && op[1] == 1) => return, // Tapping "Bluetooth" drops the connection mid-plan.
+                "run" if screen == "settings" && q[6].as_array().unwrap().iter().any(|op| op[0] == "tap" && op[1] == 1) => return None, // Tapping "Bluetooth" drops the connection mid-plan.
                 "run" => {
                     let mut changes = 0;
                     let (mut failed, mut artifact) = (None, None);
                     for (at, op) in q[6].as_array().unwrap().iter().enumerate() {
                         match op[0].as_str().unwrap() {
-                            "launch" => (screen, generation, changes) = ("settings", generation + 1, changes + 1),
-                            "tap" | "tap_point" => (generation, changes) = (generation + 1, changes + 1),
+                            "launch" if op[1] == "com.slow.loading" => {
+                                (screen, generation, changes, later, unread) =
+                                    ("loading", generation + 1, changes + 1, Some((std::time::Instant::now() + std::time::Duration::from_secs(3600), "settings")), true)
+                            }
+                            "launch" if op[1] == "com.slow.late" => (screen, generation, changes) = ("late", generation + 1, changes + 1),
+                            "launch" => (screen, generation, changes) = (if op[1] == "com.example.switches" { "switches" } else { "settings" }, generation + 1, changes + 1),
+                            // The tap lands but the screen only reacts 400 ms later.
+                            "tap" if screen == "late" => (changes, later) = (changes + 1, Some((std::time::Instant::now() + std::time::Duration::from_millis(400), "settings"))),
+                            "tap" | "tap_point" => {
+                                dark ^= screen == "switches" && op[1] == 0;
+                                (generation, changes) = (generation + 1, changes + 1)
+                            }
                             "capture" => artifact = Some("a1"),
                             "settle" => {}
                             "wait" => generation += 1, // The screen changes by itself.
@@ -133,7 +161,7 @@ mod flows {
                 }
                 _ => json!([seq, 5]),
             };
-            frame_out(stream, &reply);
+            Some(reply)
         }
     }
 
@@ -145,15 +173,9 @@ mod flows {
     }
 
     fn engine() -> (Engine, tempfile::TempDir) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let capture = phone_screenshot();
-        std::thread::spawn(move || fake_helper(&mut listener.accept().unwrap().0, &capture));
         let dir = tempfile::tempdir().unwrap();
-        let mut engine = Engine::at(crate::device::Paths::at(dir.path().to_path_buf()).unwrap()).unwrap();
-        let device = Device { endpoint: "fake".into(), hardware: "fake-serial".into() };
-        engine.attach(Bridge::over(TcpStream::connect(address).unwrap(), device.clone()), device);
-        (engine, dir)
+        let link = FakeLink::new(fake_helper(phone_screenshot()));
+        (Engine::with_link(crate::device::Paths::at(dir.path().to_path_buf()).unwrap(), Box::new(link)).unwrap(), dir)
     }
 
     trait Words {
@@ -259,6 +281,29 @@ mod flows {
     }
 
     #[test]
+    fn a_loading_screen_is_reported_when_it_finishes_not_after_a_fixed_sleep() {
+        let (mut engine, _dir) = engine();
+        // A launch that is ready at once sets the baseline for this machine's round trips.
+        let begun = std::time::Instant::now();
+        act(&mut engine, r#"open app "com.slow.late""#).unwrap();
+        let baseline = begun.elapsed();
+        let begun = std::time::Instant::now();
+        let response = act(&mut engine, r#"open app "com.slow.loading""#).unwrap();
+        let extra = begun.elapsed().saturating_sub(baseline);
+        assert!(response.text.contains("Now on screen:\nWi-Fi"), "{}", response.text);
+        // The screen takes 120 ms; a fixed 500 ms sleep would add at least that much.
+        assert!(extra < std::time::Duration::from_millis(450), "{extra:?} more than a ready launch");
+    }
+
+    #[test]
+    fn a_tap_whose_change_lands_late_is_reported_as_changed() {
+        let (mut engine, _dir) = engine();
+        act(&mut engine, r#"open app "com.slow.late""#).unwrap();
+        let response = act(&mut engine, r#"tap "Late""#).unwrap();
+        assert!(response.text.contains("Now on screen:\nWi-Fi"), "{}", response.text);
+    }
+
+    #[test]
     fn the_same_screen_after_an_action_is_reported_as_changes_not_listed_again() {
         let (mut engine, _dir) = engine();
         let first = act(&mut engine, r#"open app "Settings" then tap "Wi-Fi""#).unwrap().text;
@@ -343,6 +388,53 @@ mod flows {
         act(&mut engine, "capture screen").unwrap();
         assert_eq!(act(&mut engine, r#"tap "Bluetooth""#).err().map(|e| e.code), Some(Code::Unknown));
         assert_eq!(engine.agent.space, None, "an unknown outcome");
+    }
+
+    #[test]
+    fn set_taps_nothing_when_the_switch_is_already_in_that_state() {
+        let (mut engine, _dir) = engine();
+        act(&mut engine, r#"open app "com.example.switches""#).unwrap();
+        let text = act(&mut engine, r#"set "Dark mode" on"#).unwrap().text;
+        assert_eq!(text, "Done. Dark mode was already on.");
+        // A tap would have flipped the fake's switch off.
+        let screen = engine.model_read(CommandRead::Screen { full: false, matching: None, delta: false }).unwrap().text;
+        assert!(screen.contains("Dark mode=on"), "{screen}");
+    }
+
+    #[test]
+    fn set_taps_once_and_verifies_the_new_state() {
+        let (mut engine, _dir) = engine();
+        act(&mut engine, r#"open app "com.example.switches""#).unwrap();
+        let text = act(&mut engine, r#"set "Dark mode" off"#).unwrap().text;
+        assert!(text.starts_with("Done. Dark mode is now off."), "{text}");
+        assert_eq!(act(&mut engine, r#"set "Dark mode" off"#).unwrap().text, "Done. Dark mode was already off.");
+        assert!(act(&mut engine, r#"set "Dark mode" on then set "Dark mode" off then set "Dark mode" off"#)
+            .unwrap()
+            .text
+            .starts_with("Done. Dark mode is now on. Dark mode is now off. Dark mode was already off."));
+    }
+
+    #[test]
+    fn toggle_reports_the_flip_and_fails_when_nothing_flipped() {
+        let (mut engine, _dir) = engine();
+        act(&mut engine, r#"open app "com.example.switches""#).unwrap();
+        let text = act(&mut engine, r#"toggle "Dark mode""#).unwrap().text;
+        assert!(text.starts_with("Done. Dark mode is now off."), "{text}");
+        let error = act(&mut engine, r#"toggle "Sticky""#).err().unwrap();
+        assert_eq!(error.code, Code::Partial);
+        assert!(error.message.starts_with("Tapped Sticky, but it is still off.") && error.message.contains("Dark mode=off"), "{}", error.message);
+        let not_a_switch = act(&mut engine, r#"set "Missing" on"#).unwrap();
+        assert!(not_a_switch.text.contains("No item labeled"), "{}", not_a_switch.text);
+    }
+
+    #[test]
+    fn a_numbered_or_duplicate_label_never_guesses_which_switch_it_means() {
+        let (mut engine, _dir) = engine();
+        act(&mut engine, r#"open app "com.example.switches""#).unwrap();
+        for command in [r#"set "Alarm" number 2 on"#, r#"set "Alarm" number 1 on"#] {
+            assert!(act(&mut engine, command).unwrap_err_or_text().contains("not a uniquely named switch"), "{command}");
+        }
+        assert!(act(&mut engine, r#"set "Alarm" on"#).unwrap_err_or_text().contains("matches 2 items"));
     }
 
     #[test]
