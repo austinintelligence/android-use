@@ -1,7 +1,6 @@
 use crate::{
     api::{normalized, BrowserOp, BrowserPlan, BrowserPredicate, BrowserRead, Capture, Code, Error, Op, Plan, Result, Target},
-    bridge::Bridge,
-    device::{Adb, Device},
+    link::{AdbLink, DeviceLink as _},
     resolve::choose,
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -21,6 +20,7 @@ const MAX_TABS: usize = 50;
 const MAX_SCREENSHOT: usize = 8 * 1024 * 1024;
 const DOM_SELECTOR: &str = "a,button,input,textarea,select,[role=button],[onclick]";
 const HTTP_READ: Duration = Duration::from_secs(5);
+const CDP_COMMAND: Duration = Duration::from_secs(10);
 const KEY_UP: &str = "key-up";
 
 #[derive(Debug, Clone)]
@@ -36,8 +36,7 @@ struct Tab {
 type Opener = Box<dyn Fn() -> Result<TcpStream>>;
 
 pub struct Browser {
-    adb: Adb,
-    device: Device,
+    link: AdbLink,
     open: Opener,
     cdp: Option<Cdp>,
     tabs: Vec<Tab>,
@@ -59,12 +58,11 @@ pub struct Outcome {
 }
 
 impl Browser {
-    pub fn connect(adb: Adb, device: Device) -> Result<Self> {
-        let (opener_adb, opener_device) = (adb.clone(), device.clone());
+    pub fn connect(mut link: AdbLink) -> Result<Self> {
+        let (opener_adb, opener_device) = link.resolved()?;
         let open: Opener = Box::new(move || opener_adb.open_stream(&opener_device, "localabstract:chrome_devtools_remote"));
         let mut browser = Self {
-            adb,
-            device,
+            link,
             open,
             cdp: None,
             tabs: Vec::new(),
@@ -256,7 +254,7 @@ impl Browser {
     fn helper_screenshot(&self, deadline: Instant) -> std::result::Result<Vec<u8>, &'static str> {
         let left = || deadline.checked_duration_since(Instant::now()).filter(|left| !left.is_zero()).ok_or("timeout");
         left()?;
-        let mut bridge = Bridge::connect(self.adb.clone(), self.device.clone()).map_err(|_| "helper")?;
+        let mut bridge = self.link.clone().helper().map_err(|_| "helper")?;
         bridge.set_read_timeout(left()?).map_err(|_| "helper")?;
         let (generation, _) = bridge.status().map_err(|_| "helper")?;
         let id = format!("browser-shot-{:x}", nonce()).into_boxed_str();
@@ -486,7 +484,12 @@ fn tab_match(tabs: &[Tab], target: &Target) -> Result<Box<str>> {
     let label = |tab: &Tab| normalized(if tab.title.is_empty() { "untitled" } else { &tab.title });
     let ids = |test: &dyn Fn(&Tab) -> bool| tabs.iter().filter(|tab| tab.kind == "page" && !needle.is_empty() && test(tab)).map(|tab| tab.id.as_str().into()).collect::<Vec<_>>();
     let exact = ids(&|tab| label(tab) == needle || normalized(&tab.url) == needle);
-    choose(target, if exact.is_empty() { ids(&|tab| label(tab).starts_with(&needle)) } else { exact }, "tab list")
+    if !exact.is_empty() {
+        return choose(target, exact, "tab list");
+    }
+    let near =
+        tabs.iter().filter(|tab| tab.kind == "page" && !needle.is_empty() && label(tab).starts_with(&needle)).map(|tab| (Box::<str>::from(tab.id.as_str()), label(tab))).collect();
+    crate::resolve::loose(target, near, "tab list")
 }
 
 fn dom_action_expression(stable_id: u64, command: &str) -> String {
@@ -496,6 +499,7 @@ fn dom_action_expression(stable_id: u64, command: &str) -> String {
 struct Cdp {
     stream: TcpStream,
     id: u64,
+    deadline: Duration,
 }
 
 impl Cdp {
@@ -530,7 +534,7 @@ impl Cdp {
         if actual_accept != Some(expected_accept.as_str()) {
             return Err(Error::new(Code::Protocol, "Chrome WebSocket upgrade was not authenticated"));
         }
-        Ok(Self { stream, id: 0 })
+        Ok(Self { stream, id: 0, deadline: CDP_COMMAND })
     }
     /// Errors before the request is written are `Helper`: nothing ran. Once it
     /// is written, a lost or unreadable reply is `Unknown`, because Chrome may
@@ -541,7 +545,12 @@ impl Cdp {
         let id = self.id;
         write_ws(&mut self.stream, &serde_json::to_string(&json!({"id":id,"method":method,"params":params})).map_err(|_| Error::new(Code::Protocol, "CDP JSON failed"))?)
             .map_err(|error| Error::new(Code::Helper, error.message))?;
+        let end = Instant::now() + self.deadline;
         loop {
+            // Unrelated events keep arriving, so a per-read timeout alone never ends the wait.
+            let left = end.checked_duration_since(Instant::now()).filter(|left| !left.is_zero());
+            let left = left.ok_or_else(|| Error::new(Code::Unknown, format!("no reply to {method} within {}s", self.deadline.as_secs())))?;
+            self.stream.set_read_timeout(Some(left)).map_err(|error| Error::new(Code::Unknown, error.to_string()))?;
             let payload = read_ws(&mut self.stream).map_err(|error| Error::new(Code::Unknown, format!("lost the reply to {method}: {}", error.message)))?;
             let value: Value = serde_json::from_slice(&payload).map_err(|_| Error::new(Code::Unknown, format!("the reply to {method} was not valid JSON")))?;
             if value.get("id").and_then(Value::as_u64) != Some(id) {
@@ -723,157 +732,5 @@ fn nonce() -> u64 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::net::Ipv4Addr;
-    use std::{
-        io::{Read, Write},
-        net::TcpListener,
-        thread,
-    };
-
-    #[test]
-    fn http_reader_honors_content_length_without_waiting_for_close() {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let worker = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0u8; 128];
-            let _ = stream.read(&mut request);
-            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: keep-alive\r\n\r\nhello").unwrap();
-            stream.flush().unwrap();
-            thread::sleep(Duration::from_millis(50));
-        });
-        let open: Opener = Box::new(move || Ok(TcpStream::connect((Ipv4Addr::LOCALHOST, port))?));
-        assert_eq!(http_get(&open, "/json/version", HTTP_READ).unwrap(), "hello");
-        worker.join().unwrap();
-    }
-
-    #[test]
-    fn websocket_reader_rejects_oversized_frame_before_allocation() {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let worker = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            stream.write_all(&[0x81, 127]).unwrap();
-            stream.write_all(&(MAX_CDP as u64 + 1).to_be_bytes()).unwrap();
-            stream.flush().unwrap();
-        });
-        let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
-        assert_eq!(read_ws(&mut stream).unwrap_err().code, Code::Bounds);
-        worker.join().unwrap();
-    }
-
-    #[test]
-    fn websocket_reader_reassembles_bounded_text_fragments() {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let worker = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            stream.write_all(&[0x01, 3]).unwrap();
-            stream.write_all(b"one").unwrap();
-            stream.write_all(&[0x80, 3]).unwrap();
-            stream.write_all(b"two").unwrap();
-            stream.flush().unwrap();
-        });
-        let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
-        assert_eq!(read_ws(&mut stream).unwrap(), b"onetwo");
-        worker.join().unwrap();
-    }
-
-    #[test]
-    fn tabs_match_exact_then_title_prefix_never_url_substring() {
-        let tab = |id: &str, title: &str, url: &str| Tab { id: id.into(), kind: "page".into(), title: title.into(), url: url.into(), websocket: None };
-        let tabs = [tab("a", "Results for bread", "https://www.google.com/search?q=search+tips"), tab("b", "", "about:blank")];
-        let find = |label: &str| tab_match(&tabs, &Target { label: label.into(), ordinal: None, handle: None }).map(|id| id.to_string());
-        assert_eq!(find("search").unwrap_err().code, Code::Missing);
-        assert_eq!((find("untitled").unwrap(), find("about:blank").unwrap(), find("Results for\u{2026}").unwrap()), ("b".into(), "b".into(), "a".into()));
-    }
-
-    /// Runs `ops` against a fake Chrome page that answers request n with `reply(method, n)`; `None` drops it.
-    fn fake_chrome(ops: Vec<BrowserOp>, reply: fn(&str, u8) -> Option<Value>) -> (Outcome, Browser) {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let port = listener.local_addr().unwrap().port();
-        thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            for n in 0.. {
-                let Ok(request) = read_ws(&mut stream).map(|frame| serde_json::from_slice::<Value>(&frame).unwrap()) else { return };
-                let Some(mut body) = reply(request["method"].as_str().unwrap(), n) else { return };
-                body["id"] = request["id"].clone();
-                write_ws(&mut stream, &body.to_string()).unwrap();
-            }
-        });
-        let (stream, device) = (TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap(), Device { endpoint: "t".into(), hardware: "t".into() });
-        let (cdp, selected, nodes, dom_fingerprint) = (Some(Cdp { stream, id: 0 }), "t".to_owned(), vec![9], Some(String::new()));
-        let mut b = Browser {
-            adb: Adb::for_tests(),
-            device,
-            open: Box::new(|| Err(Error::new(Code::Helper, "no device"))),
-            cdp,
-            tabs: vec![],
-            selected,
-            signature: None,
-            generation: 1,
-            nodes,
-            nodes_generation: 1,
-            dom_fingerprint,
-        };
-        (b.act_inner(&BrowserPlan { id: "p".into(), generation: 1, deadline_ms: 5000, max_mutations: 16, ops: ops.into_boxed_slice() }).unwrap(), b)
-    }
-
-    #[test]
-    fn uncertain_steps_are_unknown_and_refs_and_sockets_are_kept_honest() {
-        // keyDown accepted, keyUp rejected: the key was delivered and the socket stays usable.
-        let (outcome, browser) = fake_chrome(vec![BrowserOp::Key("Enter".into())], |_, n| Some(if n == 0 { json!({"result":{}}) } else { json!({"error":{}}) }));
-        assert_eq!((outcome.mutations, outcome.error, outcome.partial, browser.cdp.is_some()), (1, Some("unknown"), true, true));
-        // A step whose reply is lost after an earlier mutation stays unknown rather than partial.
-        let (outcome, _) = fake_chrome(vec![BrowserOp::Scroll(100), BrowserOp::Key("Enter".into())], |_, n| (n == 0).then(|| json!({"result":{}})));
-        assert_eq!((outcome.mutations, outcome.at, outcome.error), (1, Some(1), Some("unknown")));
-        // Node refs do not survive a navigation inside the same plan.
-        let (outcome, _) = fake_chrome(vec![BrowserOp::Reload, BrowserOp::Click(0)], |_, _| Some(json!({"result":{"result":{"value":true}}})));
-        assert_eq!((outcome.mutations, outcome.at, outcome.error), (1, Some(1), Some("partial")));
-        // A rejected best-effort activation still captures through Chrome.
-        let (outcome, _) =
-            fake_chrome(vec![BrowserOp::Screenshot], |method, _| Some(if method == "Page.captureScreenshot" { json!({"result":{"data":"anBn"}}) } else { json!({"error":{}}) }));
-        assert_eq!((outcome.error, outcome.artifact.as_deref()), (None, Some(&b"jpg"[..])));
-        // A lost /json/activate reply may mean the tab was selected.
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let worker = thread::spawn(move || drop(listener.accept().unwrap().0.read(&mut [0u8; 256])));
-        let (_, mut browser) = fake_chrome(vec![], |_, _| None);
-        browser.open = Box::new(move || Ok(TcpStream::connect((Ipv4Addr::LOCALHOST, port))?));
-        assert_eq!(browser.activate("t2", Instant::now() + Duration::from_secs(2)), Err("unknown"));
-        worker.join().unwrap();
-    }
-
-    #[test]
-    fn a_click_on_an_unchanged_page_is_not_mistaken_for_a_changed_one() {
-        // Chrome returns the fingerprint as JSON text of a string; comparing it quoted made every
-        // click, focus, and type look stale.
-        let (outcome, _) = fake_chrome(vec![BrowserOp::Click(0)], |_, n| Some(json!({"result":{"result":{"value": if n == 0 { json!("\"\"") } else { json!(true) }}}})));
-        assert_eq!((outcome.mutations, outcome.error), (1, None));
-    }
-
-    #[test]
-    fn displayed_fields_are_bounded() {
-        assert_eq!(limit("abcdef", 3), "abc");
-        assert_eq!(limit("ééé", 2), "éé");
-    }
-
-    #[test]
-    fn page_text_unquotes_runtime_json() {
-        assert_eq!(clean_page_text(r#""Example Domain\nLearn more""#), "Example Domain\nLearn more");
-        assert_eq!(clean_page_text("plain"), "plain");
-    }
-
-    #[test]
-    fn framework_text_entry_uses_native_setter_and_events() {
-        let command = "const p=Object.getPrototypeOf(e);const d=Object.getOwnPropertyDescriptor(p,'value');if(d&&d.set)d.set.call(e,\"TEXT\");e.dispatchEvent(new Event('input'));e.dispatchEvent(new Event('change'))";
-        let expression = dom_action_expression(7, command);
-        assert!(expression.contains("state.ids.get(e)===7"));
-        assert!(expression.contains("Object.getOwnPropertyDescriptor"));
-        assert!(expression.contains("d.set.call"));
-        assert!(expression.contains("input"));
-        assert!(expression.contains("change"));
-    }
-}
+#[path = "browser_tests.rs"]
+mod tests;

@@ -25,6 +25,13 @@ use std::{
 /// Quiet time the helper waits for after a change before the reply is built, and the longest it
 /// waits: a tap redraws quickly, typed text feeds debounced search lists, a launched app cold-starts.
 const QUIET_MS: u16 = 200;
+/// The quiet window: `QUIET_ENV` when it is a whole number of milliseconds up to `TYPED_QUIET_MS`, else `QUIET_MS`.
+fn quiet_window(value: Option<&str>) -> u16 {
+    value.and_then(|ms| ms.parse().ok()).filter(|ms| (1..=TYPED_QUIET_MS).contains(ms)).unwrap_or(QUIET_MS)
+}
+
+/// Overrides `QUIET_MS` (the quiet window after an action) for sweeps such as `benchmark-live`.
+const QUIET_ENV: &str = "AU_QUIET_MS";
 const TYPED_QUIET_MS: u16 = 900;
 const SETTLE_CAP_MS: u16 = 1500;
 const LAUNCH_CAP_MS: u16 = 5000;
@@ -77,6 +84,8 @@ pub(crate) struct AgentState {
     pub(crate) seen: HashSet<String>,
     /// The last plan launched an app, so its screen is the one the agent just chose to enter.
     pub(crate) opened: bool,
+    /// The screen generation the last Android plan ran against, to tell whether it moved.
+    pub(crate) acted_from: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -192,7 +201,12 @@ impl Engine {
                     start += consumed;
                 }
                 Err(error) if resolve::is_screen_miss(&error) => {
-                    let mut response = self.screen_miss(&error, &done);
+                    let missed = resolve::missed_label(&error).map(normalized);
+                    let failing = actions.iter().find_map(|action| match action {
+                        Action::Android(android) if Some(normalized(&display(&target_label(android)))) == missed => Some(android),
+                        _ => None,
+                    });
+                    let mut response = self.screen_miss(&error, &done, failing);
                     response.failed = !done.is_empty() && changed.is_some();
                     return Ok(response);
                 }
@@ -346,7 +360,13 @@ impl Engine {
             return Ok(None);
         }
         let rows = self.semantic_rows("")?;
-        let label = normalized(&target.label);
+        // A row copied from the screen (`sw Wi-Fi=on`) names the switch it shows.
+        let mut label = normalized(&target.label);
+        if !rows.iter().any(|row| normalized(&row.label) == label) {
+            if let Some((name, None)) = resolve::from_row(&target.label) {
+                label = normalized(&name);
+            }
+        }
         let mut hits = rows.iter().filter(|row| if target.handle.is_some() { row.handle == target.handle } else { normalized(&row.label) == label });
         let row = hits.next().filter(|_| target.handle.is_some() || hits.next().is_none());
         Ok(row.filter(|row| matches!(row.kind.as_str(), "switch" | "checkbox")).map(|row| matches!(row.state.as_str(), "checked" | "on")))
@@ -365,7 +385,7 @@ impl Engine {
             }
             let typed = ops.iter().any(|op| matches!(op, Op::Text(..)));
             ops.push(Op::Settle {
-                quiet_ms: if typed { TYPED_QUIET_MS } else { QUIET_MS },
+                quiet_ms: if typed { TYPED_QUIET_MS } else { quiet_window(std::env::var(QUIET_ENV).ok().as_deref()) },
                 cap_ms: if package.is_some() { LAUNCH_CAP_MS } else { SETTLE_CAP_MS },
                 package: package.unwrap_or_default(),
             });
@@ -377,6 +397,7 @@ impl Engine {
             max_mutations: MAX_MUTATIONS,
             ops: ops.into_boxed_slice(),
         };
+        self.agent.acted_from = scene.generation;
         let run = self.run_plan(&plan);
         self.end_image_unless_unchanged(&run, scene.generation);
         let receipt = run.map_err(crate::journal::explain_reuse)?;
@@ -458,7 +479,10 @@ impl Engine {
             A::ScreenRecord(seconds) => Op::Capture(Capture::ScreenRecord(*seconds)),
             A::NotificationOpen(target) => Op::NotificationOpen(self.notification_key(target)?),
             A::NotificationDismiss(target) => Op::NotificationDismiss(self.notification_key(target)?),
-            A::NotificationAction(target) => Op::NotificationAction(self.notification_key(target)?),
+            A::NotificationAction(target, label) => {
+                let (key, label) = resolve::notification_action(&self.read(Read::Notifications)?, target, label.as_deref())?;
+                Op::NotificationAction(key, label)
+            }
             A::PointTap { x, y } => {
                 let (x, y) = self.map_point(*x, *y)?;
                 Op::PointTap { x, y }
@@ -479,6 +503,19 @@ impl Engine {
     /// `want` is `"edit"` when the step needs a text field and `"scroll"` when it needs a scrollable
     /// area, so a heading or a control with the same words is not a candidate.
     fn resolve_target_as(&mut self, scene: &Scene, target: &Target, want: &str) -> Result<u16> {
+        let first = self.resolve_exact_as(scene, target, want);
+        // A whole row copied from `screen` (`sw Wi-Fi=on`, `Save#2`) names its control when its
+        // text is not itself a label.
+        match (&first, resolve::from_row(&target.label)) {
+            (Err(error), Some((label, ordinal))) if target.handle.is_none() && resolve::is_screen_miss(error) => {
+                let row = Target { label: label.into(), ordinal: target.ordinal.or(ordinal), handle: None };
+                self.resolve_exact_as(scene, &row, want).or(first)
+            }
+            _ => first,
+        }
+    }
+
+    fn resolve_exact_as(&mut self, scene: &Scene, target: &Target, want: &str) -> Result<u16> {
         let args = json!({"label": target.label.as_ref(), "ordinal": target.ordinal.unwrap_or(0), "want": want, "handle": target.handle.map_or(-1, i32::from)});
         match self.bridge_read(|bridge| bridge.query("resolve", args.clone())) {
             Ok(value) => {
@@ -491,18 +528,22 @@ impl Engine {
                 }
                 // A single control whose label only contains the request is acted on when it is
                 // plainly what was meant, and the result names it; otherwise it counts as missing.
-                if tier >= 2 && refs.len() == 1 && target.ordinal.is_none() {
-                    let actual = labels.first().map(String::as_str).unwrap_or_default();
+                // A number does not excuse the check: `Save number 2` may not reach "Save and delete all".
+                if tier >= 2 && (refs.len() == 1 || target.ordinal.is_some()) {
+                    let actual = labels.get(target.ordinal.map_or(0, |n| usize::from(n) - 1)).map(String::as_str).unwrap_or_default();
                     if !resolve::near_miss(&target.label, actual) {
                         return Err(Error::plain(
                             Code::Missing,
                             format!("{}; the closest label is \"{}\", which was not tapped", resolve::missing(&target.label, "screen").message, display(actual)),
                         ));
                     }
-                    self.agent.mapping.push(format!("\"{}\" is the closest label to \"{}\"", display(actual), display(&target.label)));
+                    if target.ordinal.is_none() {
+                        self.agent.mapping.push(format!("\"{}\" is the closest label to \"{}\"", display(actual), display(&target.label)));
+                    }
                 }
                 self.agent.loose = tier >= 2 && !refs.is_empty();
                 resolve::choose(target, refs, "screen")
+                    .map_err(|error| if error.code == Code::Ambiguous && target.ordinal.is_none() { self.say_which(error, &labels) } else { error })
             }
             Err(error) if error.code == Code::Unsupported => resolve::scene_target(scene, target),
             Err(error) => Err(error),
@@ -725,7 +766,7 @@ fn target_label(action: &AndroidAction) -> String {
 /// Whether an action can bring up a different screen than the one it was compiled against.
 fn navigates(action: &AndroidAction) -> bool {
     use AndroidAction as A;
-    matches!(action, A::OpenApp(_) | A::OpenSetting(_) | A::OpenLink(_) | A::Key(_) | A::NotificationOpen(_) | A::NotificationAction(_))
+    matches!(action, A::OpenApp(_) | A::OpenSetting(_) | A::OpenLink(_) | A::Key(_) | A::NotificationOpen(_) | A::NotificationAction(..))
 }
 
 fn is_media(action: &Action) -> bool {
