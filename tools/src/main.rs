@@ -248,6 +248,7 @@ fn version(root: &Path) -> Result<(), String> {
     if !gradle.contains("def releaseVersion = file(\"../../VERSION\").text.trim()") || !gradle.contains("versionName = releaseVersion") {
         return Err("Android helper must read its version from VERSION".into());
     }
+    gradle_signing(&gradle, &fs::read_to_string(root.join("device/example/build.gradle")).map_err(ioe)?)?;
     for path in ["README.md", "docs/guides/install.md", "install/README.md", "skills/android-use/SKILL.md"] {
         if let Some(marker) = stale_version_marker(&fs::read_to_string(root.join(path)).map_err(ioe)?) {
             return Err(format!("stale product version marker {marker} in {path}"));
@@ -256,6 +257,18 @@ fn version(root: &Path) -> Result<(), String> {
     platforms_agree(root)?;
     pins_agree(root, version)?;
     println!("version={version}");
+    Ok(())
+}
+/// The helper's versionCode derives from VERSION, and only its release build type may use a signing key.
+fn gradle_signing(helper: &str, example: &str) -> Result<(), String> {
+    if !helper.contains("versionCode = versionParts[0] * 1_000_000 + versionParts[1] * 1_000 + versionParts[2]") {
+        return Err("helper versionCode must be major*1,000,000 + minor*1,000 + patch from VERSION".into());
+    }
+    // The one signing assignment must sit in the release build type; nothing may clone it into debug.
+    let assigns = helper.matches("signingConfig").count() - helper.matches("signingConfigs").count();
+    if assigns != 1 || helper.find("signingConfig =") < helper.find("release {") || helper.contains("initWith") || example.contains("signingConfig") {
+        return Err("only the helper's release build type may use a signing key".into());
+    }
     Ok(())
 }
 /// Docs that show an install or launch command an agent may run. Each pin in them must name VERSION.
@@ -725,7 +738,19 @@ fn release_notes(root: &Path) -> Result<(), String> {
 }
 #[cfg(test)]
 mod tests {
-    use super::{changelog_section, file_bytes, over_budget, pin_mismatch, stale_version_marker};
+    use super::{changelog_section, file_bytes, gradle_signing, over_budget, pin_mismatch, stale_version_marker};
+
+    #[test]
+    fn debug_builds_never_sign_with_the_release_key_and_version_code_comes_from_version() {
+        let ok = "versionCode = versionParts[0] * 1_000_000 + versionParts[1] * 1_000 + versionParts[2]\nrelease { signingConfig = x }";
+        assert!(gradle_signing(ok, "release { }").is_ok());
+        assert!(gradle_signing("versionCode = 1_000_000", "").is_err());
+        assert!(gradle_signing(&format!("{ok}\ndebug {{ signingConfig = x }}"), "").is_err());
+        assert!(gradle_signing(&format!("{ok}\ndebug{{signingConfig=x}}"), "").is_err());
+        assert!(gradle_signing(&format!("{ok}\ndebug {{ initWith release }}"), "").is_err());
+        assert!(gradle_signing(&format!("defaultConfig {{ signingConfig = x }}\n{ok}"), "").is_err());
+        assert!(gradle_signing(ok, "debug { signingConfig = x }").is_err());
+    }
 
     #[test]
     fn a_mismatched_pin_names_itself() {
