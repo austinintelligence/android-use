@@ -1,7 +1,6 @@
 use crate::{
     api::{normalized, BrowserOp, BrowserPlan, BrowserPredicate, BrowserRead, Capture, Code, Error, Op, Plan, Result, Target},
-    bridge::Bridge,
-    device::{Adb, Device},
+    link::{AdbLink, DeviceLink as _},
     resolve::choose,
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -36,8 +35,7 @@ struct Tab {
 type Opener = Box<dyn Fn() -> Result<TcpStream>>;
 
 pub struct Browser {
-    adb: Adb,
-    device: Device,
+    link: AdbLink,
     open: Opener,
     cdp: Option<Cdp>,
     tabs: Vec<Tab>,
@@ -59,12 +57,11 @@ pub struct Outcome {
 }
 
 impl Browser {
-    pub fn connect(adb: Adb, device: Device) -> Result<Self> {
-        let (opener_adb, opener_device) = (adb.clone(), device.clone());
+    pub fn connect(mut link: AdbLink) -> Result<Self> {
+        let (opener_adb, opener_device) = link.resolved()?;
         let open: Opener = Box::new(move || opener_adb.open_stream(&opener_device, "localabstract:chrome_devtools_remote"));
         let mut browser = Self {
-            adb,
-            device,
+            link,
             open,
             cdp: None,
             tabs: Vec::new(),
@@ -256,7 +253,7 @@ impl Browser {
     fn helper_screenshot(&self, deadline: Instant) -> std::result::Result<Vec<u8>, &'static str> {
         let left = || deadline.checked_duration_since(Instant::now()).filter(|left| !left.is_zero()).ok_or("timeout");
         left()?;
-        let mut bridge = Bridge::connect(self.adb.clone(), self.device.clone()).map_err(|_| "helper")?;
+        let mut bridge = self.link.clone().helper().map_err(|_| "helper")?;
         bridge.set_read_timeout(left()?).map_err(|_| "helper")?;
         let (generation, _) = bridge.status().map_err(|_| "helper")?;
         let id = format!("browser-shot-{:x}", nonce()).into_boxed_str();
@@ -803,11 +800,10 @@ mod tests {
                 write_ws(&mut stream, &body.to_string()).unwrap();
             }
         });
-        let (stream, device) = (TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap(), Device { endpoint: "t".into(), hardware: "t".into() });
+        let stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
         let (cdp, selected, nodes, dom_fingerprint) = (Some(Cdp { stream, id: 0 }), "t".to_owned(), vec![9], Some(String::new()));
         let mut b = Browser {
-            adb: Adb::for_tests(),
-            device,
+            link: AdbLink::new(crate::device::Paths::at(tempfile::tempdir().unwrap().path().to_path_buf()).unwrap()),
             open: Box::new(|| Err(Error::new(Code::Helper, "no device"))),
             cdp,
             tabs: vec![],

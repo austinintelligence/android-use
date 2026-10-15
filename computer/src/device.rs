@@ -101,10 +101,6 @@ fn choose_endpoint(binding: &Binding, connected: &[(Box<str>, Box<str>)]) -> Res
 }
 
 impl Adb {
-    #[cfg(test)]
-    pub(crate) fn for_tests() -> Self {
-        Self { path: PathBuf::from("adb-not-used-in-tests") }
-    }
     pub fn discover() -> Result<Self> {
         if let Some(v) = env::var_os("AU_ADB") {
             let p = PathBuf::from(v);

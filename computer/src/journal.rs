@@ -22,7 +22,7 @@ use serde_json::{json, Value};
 use std::{
     collections::{HashMap, VecDeque},
     fs::{self, OpenOptions},
-    io::{ErrorKind, Write},
+    io::{ErrorKind, Read, Seek, Write},
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -49,6 +49,11 @@ pub(crate) struct Journal {
     order: VecDeque<Box<str>>,
     owner: Box<str>,
     held: Option<fs::File>,
+    /// (lock-file write counter, journal length and mtime) as of this process's last load or write.
+    seen: Option<(u64, u64, Option<SystemTime>)>,
+    wrote: bool,
+    #[cfg(test)]
+    loads: u32,
 }
 
 impl Drop for Journal {
@@ -131,13 +136,29 @@ impl Journal {
         })
     }
 
-    /// Runs `f` under the journal lock with the file reloaded, so every decision
-    /// is made on what other processes have already written.
+    /// Runs `f` under the journal lock with the file current, so every decision
+    /// is made on what other processes have already written. The lock file holds
+    /// a counter every writer bumps; the journal is re-parsed only when that
+    /// counter or the file length differs from what this process last saw.
     fn locked<T>(&mut self, f: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
-        let lock = OpenOptions::new().create(true).truncate(false).write(true).open(&self.lock_path)?;
+        let mut lock = OpenOptions::new().create(true).truncate(false).read(true).write(true).open(&self.lock_path)?;
         lock.lock()?;
-        let result = self.reload().and_then(|()| f(self));
-        drop(lock);
+        let mut raw = [0; 8];
+        let count = lock.read_exact(&mut raw).map_or(0, |()| u64::from_le_bytes(raw));
+        let path = self.path.clone();
+        let length = || fs::metadata(&path).map_or((0, None), |m| (m.len(), m.modified().ok()));
+        let before = length();
+        let result = if self.seen == Some((count, before.0, before.1)) { Ok(()) } else { self.reload() }.and_then(|()| f(self));
+        let after = length();
+        self.seen = result.is_ok().then_some((count, after.0, after.1));
+        if after != before || std::mem::take(&mut self.wrote) {
+            let next = count.wrapping_add(1);
+            if lock.rewind().and_then(|()| lock.write_all(&next.to_le_bytes())).is_ok() {
+                self.seen = self.seen.map(|(_, length, time)| (next, length, time));
+            } else {
+                self.seen = None;
+            }
+        }
         result
     }
 
@@ -153,6 +174,10 @@ impl Journal {
     }
 
     fn reload(&mut self) -> Result<()> {
+        #[cfg(test)]
+        {
+            self.loads += 1;
+        }
         self.states.clear();
         self.order.clear();
         recover(&self.path)?;
@@ -228,24 +253,23 @@ impl Journal {
         if !valid(id) || digest.len() != 64 {
             return;
         }
-        if let Some(pos) = self.order.iter().position(|v| v.as_ref() == id) {
-            self.order.remove(pos);
+        let state = match kind {
+            "p" => a.get(3).and_then(Value::as_u64).map(|generation| {
+                let text = |i: usize| a.get(i).and_then(Value::as_str).unwrap_or_default().into();
+                State::Pending { digest: digest.into(), generation, owner: text(4), surface: text(5) }
+            }),
+            "d" => a.get(3).cloned().and_then(|v| serde_json::from_value::<Receipt>(v).ok()).map(|receipt| State::Done { digest: digest.into(), receipt }),
+            _ => None,
+        };
+        // A rejected record leaves both the state and its place in `order` alone.
+        let Some(state) = state else { return };
+        if self.states.contains_key(id) {
+            if let Some(pos) = self.order.iter().rposition(|v| v.as_ref() == id) {
+                self.order.remove(pos);
+            }
         }
         self.order.push_back(id.into());
-        match kind {
-            "p" => {
-                if let Some(g) = a.get(3).and_then(Value::as_u64) {
-                    let text = |i: usize| a.get(i).and_then(Value::as_str).unwrap_or_default().into();
-                    self.states.insert(id.into(), State::Pending { digest: digest.into(), generation: g, owner: text(4), surface: text(5) });
-                }
-            }
-            "d" => {
-                if let Some(r) = a.get(3).cloned().and_then(|v| serde_json::from_value::<Receipt>(v).ok()) {
-                    self.states.insert(id.into(), State::Done { digest: digest.into(), receipt: r });
-                }
-            }
-            _ => {}
-        }
+        self.states.insert(id.into(), state);
     }
 
     /// Appends one record in a single write. If the write fails, the partial
@@ -256,6 +280,7 @@ impl Journal {
             return Err(Error::new(Code::Bounds, "journal record exceeds limit"));
         }
         line.push(b'\n');
+        self.wrote = true;
         let mut file = OpenOptions::new().create(true).append(true).open(&self.path)?;
         let before = file.metadata()?.len();
         let written = file.write_all(&line).and_then(|()| if durable { file.sync_all() } else { Ok(()) });
@@ -288,7 +313,8 @@ impl Journal {
         Ok(changed)
     }
 
-    fn compact(&self) -> Result<()> {
+    fn compact(&mut self) -> Result<()> {
+        self.wrote = true;
         let mut bytes = Vec::new();
         for id in &self.order {
             let Some(state) = self.states.get(id.as_ref()) else { continue };
@@ -457,6 +483,68 @@ mod tests {
         assert!(!stale.exists(), "an owner whose process exited is reclaimed");
         assert!(live.exists(), "an owner that still holds its lock is kept");
         drop(held);
+    }
+
+    #[test]
+    fn many_acts_in_one_process_parse_the_journal_once() {
+        let d = tempfile::tempdir().unwrap();
+        let mut j = open(&d);
+        let start = j.loads;
+        for i in 0..50 {
+            let id = format!("op{i}");
+            assert!(j.begin(&id, 1, A, ANDROID).unwrap().is_none());
+            j.finish(A, &receipt(&id)).unwrap();
+        }
+        assert_eq!(j.loads, start, "own writes never trigger a reload");
+    }
+
+    #[test]
+    fn another_handle_writing_bumps_the_counter_and_is_seen() {
+        let d = tempfile::tempdir().unwrap();
+        let mut first = open(&d);
+        let mut second = open(&d);
+        assert!(first.begin("warm", 1, A, ANDROID).unwrap().is_none());
+        first.finish(A, &receipt("warm")).unwrap();
+        let counter = || fs::read(first.lock_path.clone()).unwrap();
+        let before = counter();
+        let loads = first.loads;
+        assert!(second.begin("theirs", 1, B, ANDROID).unwrap().is_none());
+        assert_ne!(counter(), before, "a writer bumps the lock-file counter");
+        assert_eq!(first.begin("theirs", 1, B, ANDROID).unwrap().unwrap().e.as_deref(), Some("unknown"), "the other write is seen");
+        assert_eq!(first.loads, loads + 1);
+    }
+
+    #[test]
+    fn a_same_length_rewrite_is_seen_through_the_counter_and_bad_records_leave_no_ghosts() {
+        let d = tempfile::tempdir().unwrap();
+        let mut first = open(&d);
+        assert!(first.begin("ab", 1, A, ANDROID).unwrap().is_none());
+        first.finish(A, &receipt("ab")).unwrap();
+        first.apply(&json!(["bad", "p", A, "x"]));
+        first.apply(&json!(["bad", "p", A, 1]));
+        assert_eq!(first.order.len(), first.states.len(), "a malformed record leaves no ghost in the order queue");
+        let path = first.path.clone();
+        let before = fs::read(&path).unwrap();
+        fs::write(&path, String::from_utf8(before.clone()).unwrap().replace("\"ab\"", "\"cd\"")).unwrap();
+        assert_eq!(fs::read(&path).unwrap().len(), before.len());
+        let lock = first.lock_path.clone();
+        let count = u64::from_le_bytes(fs::read(&lock).unwrap()[..8].try_into().unwrap());
+        fs::write(&lock, (count + 1).to_le_bytes()).unwrap();
+        assert!(first.begin("cd", 1, A, ANDROID).unwrap().is_some(), "the rewritten journal is reloaded");
+    }
+
+    #[test]
+    fn a_rejected_record_for_a_pending_id_keeps_its_fence_through_compaction() {
+        let d = tempfile::tempdir().unwrap();
+        let mut j = open(&d);
+        assert!(j.begin("ab", 1, A, ANDROID).unwrap().is_none());
+        j.apply(&json!(["ab", "p", A, "x"]));
+        j.apply(&json!(["ab", "z", A]));
+        assert_eq!(j.order.iter().map(|id| &**id).collect::<Vec<_>>(), ["ab"]);
+        j.compact().unwrap();
+        drop(j);
+        let mut reopened = open(&d);
+        assert_eq!(reopened.begin("ab", 1, A, ANDROID).unwrap().unwrap().e.as_deref(), Some("unknown"), "the pending record survives");
     }
 
     #[test]
