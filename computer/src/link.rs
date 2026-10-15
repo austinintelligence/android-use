@@ -384,11 +384,12 @@ mod handshake_tests {
         let reply = h["reply"].clone();
         let mut peer = Peer::new(move |_| Some(reply.clone()));
         let log = peer.log.clone();
-        assert_eq!(prove(&mut peer, &key, &CHALLENGE).unwrap(), ("token".into(), "nonce".into()));
+        let challenge = URL_SAFE.decode(h["command"][4].as_str().unwrap()).unwrap();
+        assert_eq!(prove(&mut peer, &key, &challenge).unwrap(), ("token".into(), "nonce".into()));
         assert_eq!(log.borrow()[0], h["challenge"]);
         let reply = h["command_reply"].clone();
         let mut peer = Peer::new(move |_| Some(reply.clone()));
-        prove_command(&mut peer, &key, &CHALLENGE, "token", "nonce").unwrap();
+        prove_command(&mut peer, &key, &challenge, "token", "nonce").unwrap();
         assert_eq!(peer.log.borrow()[0], h["command"]);
     }
 
