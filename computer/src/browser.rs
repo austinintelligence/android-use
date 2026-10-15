@@ -803,7 +803,7 @@ mod tests {
         let stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
         let (cdp, selected, nodes, dom_fingerprint) = (Some(Cdp { stream, id: 0 }), "t".to_owned(), vec![9], Some(String::new()));
         let mut b = Browser {
-            link: AdbLink::new(crate::device::Paths::at(std::env::temp_dir().join("au-browser-test")).unwrap()),
+            link: AdbLink::new(crate::device::Paths::at(tempfile::tempdir().unwrap().path().to_path_buf()).unwrap()),
             open: Box::new(|| Err(Error::new(Code::Helper, "no device"))),
             cdp,
             tabs: vec![],
