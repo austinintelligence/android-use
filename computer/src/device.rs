@@ -320,44 +320,48 @@ impl Adb {
 }
 
 pub(crate) fn run_bounded(program: &Path, args: &[&str], timeout: Duration) -> Result<Vec<u8>> {
+    let name = program.file_stem().map_or_else(|| "command".into(), |stem| stem.to_string_lossy().into_owned());
     let mut child = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| Error::new(Code::Device, format!("failed to start adb: {e}")))?;
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
-    let out = thread::spawn(move || {
-        let mut b = Vec::new();
-        stdout.take(MAX_ADB_OUTPUT + 1).read_to_end(&mut b).map(|_| b)
-    });
-    let err = thread::spawn(move || {
-        let mut b = Vec::new();
-        stderr.take(MAX_ADB_OUTPUT + 1).read_to_end(&mut b).map(|_| b)
-    });
-    let start = Instant::now();
+        .map_err(|e| Error::new(Code::Device, format!("failed to start {name}: {e}")))?;
+    // Readers report over channels, so a grandchild that keeps a pipe open after the child exits
+    // can delay the output only until the deadline, never past it.
+    let reader = |pipe: Box<dyn Read + Send>| {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let mut b = Vec::new();
+            let _ = sender.send(pipe.take(MAX_ADB_OUTPUT + 1).read_to_end(&mut b).map(|_| b));
+        });
+        receiver
+    };
+    let (out, err) = (reader(Box::new(child.stdout.take().unwrap())), reader(Box::new(child.stderr.take().unwrap())));
+    let deadline = Instant::now() + timeout;
+    let timed_out = || Error::new(Code::Timeout, format!("{name} command timed out"));
     let status = loop {
         if let Some(s) = child.try_wait()? {
             break s;
         }
-        if start.elapsed() >= timeout {
+        if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            // The readers end when the pipes close; a grandchild holding them must not hold us.
-            return Err(Error::new(Code::Timeout, "adb command timed out"));
+            return Err(timed_out());
         }
         thread::sleep(Duration::from_millis(10));
     };
-    let stdout = out.join().map_err(|_| Error::new(Code::Io, "adb stdout reader failed"))??;
-    let stderr = err.join().map_err(|_| Error::new(Code::Io, "adb stderr reader failed"))??;
+    let collect = |receiver: std::sync::mpsc::Receiver<std::io::Result<Vec<u8>>>| {
+        receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())).map_err(|_| timed_out())?.map_err(Error::from)
+    };
+    let (stdout, stderr) = (collect(out)?, collect(err)?);
     if stdout.len() as u64 > MAX_ADB_OUTPUT || stderr.len() as u64 > MAX_ADB_OUTPUT {
-        return Err(Error::new(Code::Bounds, "adb output exceeded 256 KiB"));
+        return Err(Error::new(Code::Bounds, format!("{name} output exceeded 256 KiB")));
     }
     if !status.success() {
         let detail = sanitize_stderr(&stderr);
-        return Err(Error::new(Code::Device, format!("adb command failed with {status}: {detail}")));
+        return Err(Error::new(Code::Device, format!("{name} command failed with {status}: {detail}")));
     }
     Ok(stdout)
 }

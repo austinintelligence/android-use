@@ -268,14 +268,12 @@ fn edit_json(path: &Path, keys: &[&str], entry: Option<&Value>, o: Options) -> R
 }
 
 /// Codex keeps servers in `[mcp_servers.android-use]` tables; replace or append exactly that table.
-fn edit_toml(path: &Path, command: Option<&str>, o: Options) -> Result<Edit> {
+fn edit_toml(path: &Path, block: Option<&str>, o: Options) -> Result<Edit> {
     let text = read_config(path)?;
     let header = format!("[mcp_servers.{NAME}]");
     let lines: Vec<&str> = text.lines().collect();
-    let start = lines.iter().position(|line| line.trim() == header);
-    let end = start.map_or(0, |at| lines[at + 1..].iter().position(|line| line.trim_start().starts_with('[')).map_or(lines.len(), |n| at + 1 + n));
-    let block = command.map(|command| format!("{header}\ncommand = {}\nargs = [\"serve\", \"--mcp\"]\n", json!(command)));
-    let outcome = match (start, &block) {
+    let (start, end) = toml_table(&lines);
+    let outcome = match (start, block) {
         (None, None) => return Ok(Edit::Done("absent")),
         (Some(at), Some(block)) if lines[at..end].join("\n").trim_end() == block.trim_end() => return Ok(Edit::Done("unchanged")),
         (Some(at), _) if !ours(&json!(lines[at..end].join(" "))) && !o.force => {
@@ -301,6 +299,30 @@ fn edit_toml(path: &Path, command: Option<&str>, o: Options) -> Result<Edit> {
         write_config(&target, (kept.join("\n").trim_end().to_owned() + "\n").as_bytes())?;
     }
     Ok(Edit::Done(outcome))
+}
+
+/// The table au writes for Codex.
+fn toml_block(command: &str) -> String {
+    format!("[mcp_servers.{NAME}]\ncommand = {}\nargs = [\"serve\", \"--mcp\"]\n", json!(command))
+}
+
+/// Where the `[mcp_servers.android-use]` table starts and ends in `lines`.
+fn toml_table(lines: &[&str]) -> (Option<usize>, usize) {
+    let start = lines.iter().position(|line| line.trim() == format!("[mcp_servers.{NAME}]"));
+    (start, start.map_or(0, |at| lines[at + 1..].iter().position(|line| line.trim_start().starts_with('[')).map_or(lines.len(), |n| at + 1 + n)))
+}
+
+/// The `android-use` entry as it stands in a client's config (a JSON value or a TOML table).
+fn read_entry(client: Client, file: &Path) -> Option<String> {
+    let text = fs::read_to_string(file).ok()?;
+    if client == Client::Codex {
+        let lines: Vec<&str> = text.lines().collect();
+        let (start, end) = toml_table(&lines);
+        return start.map(|at| lines[at..end].join("\n") + "\n");
+    }
+    let value: Value = serde_json::from_str(&text).ok()?;
+    let node = client.keys().iter().try_fold(&value, |node, key| node.get(*key))?;
+    node.get(NAME).map(Value::to_string)
 }
 
 /// Reads a config file. Only a missing file is an empty config; any other error aborts the edit.
@@ -336,12 +358,19 @@ fn run_cli(program: &Path, args: &[String], timeout: Duration) -> bool {
 /// Replaces the entry through the agent's CLI (remove the old one, add the new). When the add
 /// fails the old entry is put back, so a failed update never leaves the agent without au.
 fn replace_entry(client: Client, d: &Dirs, cli: &Path, command: &str, timeout: Duration) -> bool {
-    let file = client.config_file(d);
-    let before = fs::read(&file).ok().filter(|bytes| String::from_utf8_lossy(bytes).contains(NAME));
+    let file = fs::canonicalize(client.config_file(d)).unwrap_or_else(|_| client.config_file(d));
+    let before = read_entry(client, &file);
     let _ = run_cli(cli, &cli_args(client, None), timeout);
     let added = run_cli(cli, &cli_args(client, Some(command)), timeout);
-    if let (false, Some(old)) = (added, before) {
-        let _ = write_config(&file, &old);
+    // Put back only the one entry, and only if the remove really took it: the running agent
+    // writes this file too, so the rest of it is never rewritten from a snapshot.
+    if let (false, Some(old), None) = (added, &before, read_entry(client, &file)) {
+        let force = Options { force: true, dry_run: false };
+        let _ = if client == Client::Codex {
+            edit_toml(&file, Some(old), force)
+        } else {
+            serde_json::from_str(old).map_err(|_| Error::new(Code::Io, "bad entry")).and_then(|entry| edit_json(&file, client.keys(), Some(&entry), force))
+        };
     }
     added
 }
@@ -377,7 +406,7 @@ fn write_skill(dir: &Path, o: Options) -> Result<&'static str> {
 fn file_edit(client: Client, d: &Dirs, command: Option<&str>, o: Options) -> Result<Edit> {
     let path = client.config_file(d);
     match (client, command) {
-        (Client::Codex, _) => edit_toml(&path, command, o),
+        (Client::Codex, _) => edit_toml(&path, command.map(toml_block).as_deref(), o),
         (_, Some(command)) => edit_json(&path, client.keys(), Some(&client.entry(command)), o),
         (_, None) => edit_json(&path, client.keys(), None, o),
     }
@@ -529,11 +558,11 @@ mod tests {
         let theirs = "model = \"x\"\n\n[mcp_servers.other]\ncommand = \"o\"\n";
         fs::write(&path, theirs).unwrap();
         let o = Options::default();
-        assert_eq!(edit_toml(&path, Some("/bin/au"), o).unwrap_done(), "installed");
+        assert_eq!(edit_toml(&path, Some(&toml_block("/bin/au")), o).unwrap_done(), "installed");
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.starts_with(theirs) && text.contains("[mcp_servers.android-use]\ncommand = \"/bin/au\""), "{text}");
-        assert_eq!(edit_toml(&path, Some("/bin/au"), o).unwrap_done(), "unchanged");
-        assert_eq!(edit_toml(&path, Some("/new/au"), o).unwrap_done(), "updated");
+        assert_eq!(edit_toml(&path, Some(&toml_block("/bin/au")), o).unwrap_done(), "unchanged");
+        assert_eq!(edit_toml(&path, Some(&toml_block("/new/au")), o).unwrap_done(), "updated");
         assert_eq!(edit_toml(&path, None, o).unwrap_done(), "removed");
         assert_eq!(fs::read_to_string(&path).unwrap(), theirs);
     }
@@ -605,18 +634,33 @@ mod safe_write_tests {
     }
 
     #[test]
-    fn a_hung_agent_cli_is_killed_and_a_failed_re_add_restores_the_old_entry() {
+    fn a_hung_agent_cli_is_killed_even_when_a_grandchild_holds_the_pipes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (d, _) = cursor(&dir);
+        for body in ["exec sleep 30", "sleep 6 &\nexit 0"] {
+            let started = Instant::now();
+            replace_entry(Client::Claude, &d, &fake_cli(dir.path(), body), "au", Duration::from_millis(300));
+            assert!(started.elapsed() < Duration::from_secs(3), "{body}: {:?}", started.elapsed());
+        }
+    }
+
+    #[test]
+    fn a_failed_re_add_restores_only_the_old_entry_and_only_when_it_was_removed() {
         let dir = tempfile::tempdir().unwrap();
         let (d, _) = cursor(&dir);
         let file = Client::Claude.config_file(&d);
-        let started = Instant::now();
-        assert!(!replace_entry(Client::Claude, &d, &fake_cli(dir.path(), "exec sleep 30"), "au", Duration::from_millis(300)));
-        assert!(started.elapsed() < Duration::from_secs(10));
-
-        let old = "{\"mcpServers\":{\"android-use\":{\"command\":\"au\"}}}";
-        fs::write(&file, old).unwrap();
-        let cli = fake_cli(dir.path(), &format!("[ \"$2\" = remove ] && {{ echo '{{}}' > '{}'; exit 0; }}; exit 1", file.display()));
-        assert!(!replace_entry(Client::Claude, &d, &cli, "au", CLI_TIMEOUT));
-        assert_eq!(fs::read_to_string(&file).unwrap(), old);
+        let old = "{\"startups\":1,\"mcpServers\":{\"android-use\":{\"command\":\"au\"}}}";
+        let state = |text: &str| fs::write(&file, text).unwrap();
+        // The remove takes the entry and the running agent bumps a counter; the add fails.
+        state(old);
+        let removes = fake_cli(dir.path(), &format!("[ \"$2\" = remove ] && echo '{{\"startups\":2,\"mcpServers\":{{}}}}' > '{}'; exit 1", file.display()));
+        assert!(!replace_entry(Client::Claude, &d, &removes, "au", CLI_TIMEOUT));
+        let restored: Value = serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(restored, json!({"startups":2,"mcpServers":{"android-use":{"command":"au"}}}));
+        // The remove did nothing, but the agent changed the file meanwhile: leave it alone.
+        state(old);
+        let bumps = fake_cli(dir.path(), &format!("echo '{{\"startups\":9,\"mcpServers\":{{\"android-use\":{{\"command\":\"au\"}}}}}}' > '{}'; exit 1", file.display()));
+        assert!(!replace_entry(Client::Claude, &d, &bumps, "au", CLI_TIMEOUT));
+        assert!(fs::read_to_string(&file).unwrap().contains("\"startups\":9"));
     }
 }
