@@ -473,6 +473,9 @@ fn parse_android_action(t: &[Lexeme]) -> Result<AndroidAction> {
     }
     if t.len() == 7 && is_word(t, 0, "wait") && is_word(t, 1, "for") && is_word(t, 3, "up") && is_word(t, 4, "to") && is_word(t, 6, "seconds") {
         let (target, next) = target_at(t, 2)?;
+        if target.handle.is_some() {
+            return Err(Error::new(Code::Args, "wait for takes a label, not a handle: eN names an element of an earlier screen image"));
+        }
         if next != 3 {
             return Err(Error::new(Code::Args, "wait target must be followed by up to N seconds"));
         }

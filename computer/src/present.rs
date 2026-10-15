@@ -120,6 +120,7 @@ impl Engine {
         if marks.is_empty() {
             return None;
         }
+        self.agent.marked_in = self.scene.as_ref().map(|scene| scene.package.clone());
         let mut image = visual::decode(bytes).ok()?;
         marks::draw(&mut image, &marks);
         visual::encode(image.w, image.h, &image.pixels, usize::MAX).ok()

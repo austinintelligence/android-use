@@ -38,7 +38,9 @@ mod flows {
     use base64::{engine::general_purpose::STANDARD, Engine as _};
 
     fn labels(screen: &str) -> &'static [&'static str] {
-        if screen == "settings" {
+        if screen == "dupes" {
+            &["Save", "Cancel", "Save"]
+        } else if screen == "settings" {
             &["Wi-Fi", "Bluetooth", "Flaky", "Save draft", "Save and delete all"]
         } else {
             &["Settings"]
@@ -53,7 +55,7 @@ mod flows {
             let reply = match q[1].as_str().unwrap() {
                 "status" => json!([seq, 0, generation, 7]),
                 "observe" if q[2].as_str() == Some(generation.to_string().as_str()) => json!([seq, 0, generation]),
-                "observe" => json!([seq, 0, generation, "fixture", names.iter().enumerate().map(|(i, l)| json!([i, l, 98, 3])).collect::<Vec<_>>()]),
+                "observe" => json!([seq, 0, generation, screen, names.iter().enumerate().map(|(i, l)| json!([i, l, 98, 3])).collect::<Vec<_>>()]),
                 "semantic" => json!([seq, 0, names.iter().map(|l| json!([l, "", "button", "", true, false])).collect::<Vec<_>>()]),
                 "resolve" if q[2]["handle"].as_i64().is_some_and(|handle| handle >= 0) => {
                     let handle = q[2]["handle"].as_u64().unwrap() as usize;
@@ -79,7 +81,7 @@ mod flows {
                 }
                 "run" if q[2].as_u64() != Some(generation) => json!([seq, 1, generation, 0]),
                 // "Flaky" changes the screen every time it is tapped, so the plan is always stale.
-                "run" if q[6].as_array().unwrap().iter().any(|op| op[0] == "tap" && op[1] == 2) => {
+                "run" if screen == "settings" && q[6].as_array().unwrap().iter().any(|op| op[0] == "tap" && op[1] == 2) => {
                     generation += 1;
                     json!([seq, 1, generation, 0])
                 }
@@ -89,13 +91,16 @@ mod flows {
                     let (mut failed, mut artifact) = (None, None);
                     for (at, op) in q[6].as_array().unwrap().iter().enumerate() {
                         match op[0].as_str().unwrap() {
-                            "launch" => (screen, generation, changes) = ("settings", generation + 1, changes + 1),
+                            "launch" => (screen, generation, changes) = (if op[1] == "com.dupes" { "dupes" } else { "settings" }, generation + 1, changes + 1),
                             "tap" | "tap_point" => (generation, changes) = (generation + 1, changes + 1),
                             "capture" => artifact = Some("a1"),
                             "settle" => {}
                             "wait" => generation += 1, // The screen changes by itself.
                             "assert" => {
-                                let present = labels(screen).contains(&op[1][1][1].as_str().unwrap());
+                                let present = match op[1][1].as_u64() {
+                                    Some(handle) => (handle as usize) < labels(screen).len(),
+                                    None => labels(screen).contains(&op[1][1][1].as_str().unwrap()),
+                                };
                                 if present != (op[1][0] == "exists") {
                                     failed = Some(at);
                                     break;
@@ -202,6 +207,49 @@ mod flows {
         assert_eq!(act(&mut engine, "tap e0").unwrap().status, "done");
         let gone = act(&mut engine, "tap e40").unwrap_err_or_text();
         assert!(gone.contains("e40 is not on the current screen"), "{gone}");
+    }
+
+    #[test]
+    fn verify_a_handle_checks_that_element_and_wait_for_a_handle_is_rejected() {
+        let (mut engine, _dir) = engine();
+        act(&mut engine, r#"open app "com.dupes""#).unwrap();
+        // "e1" is the Cancel control; a label search for "e1" would find nothing.
+        assert_eq!(act(&mut engine, "verify e1 exists").unwrap().text, "Done.");
+        assert!(act(&mut engine, "verify e9 exists").unwrap_err_or_text().contains("e9 is not on the current screen"));
+        let waited = parse_act_command("wait for e3 up to 2 seconds").unwrap_err();
+        assert!(waited.message.contains("wait for takes a label, not a handle"), "{}", waited.message);
+        let gone = act(&mut engine, "verify e1 is gone").unwrap_err_or_text();
+        assert!(gone.contains("verify gone takes a plain label"), "{gone}");
+    }
+
+    #[test]
+    fn a_number_picks_the_nth_duplicate_and_is_never_dropped() {
+        let (mut engine, _dir) = engine();
+        act(&mut engine, r#"open app "com.dupes""#).unwrap();
+        assert!(act(&mut engine, r#"tap "Save""#).unwrap_err_or_text().contains("matches 2 items"));
+        assert_eq!(act(&mut engine, r#"tap "Save" number 2"#).unwrap().status, "done");
+        assert!(act(&mut engine, r#"tap "Save" number 3"#).unwrap_err_or_text().contains("matches 2 items"));
+        assert!(act(&mut engine, r#"verify "Save" number 2 is gone"#).unwrap_err_or_text().contains("plain label"));
+    }
+
+    #[test]
+    fn a_reconnect_drops_the_cached_scene() {
+        let (mut engine, _dir) = engine();
+        engine.ensure_scene().unwrap();
+        assert!(engine.scene.is_some());
+        engine.reset_connections();
+        assert!(engine.scene.is_none());
+        assert_eq!(engine.ensure_scene().unwrap().nodes.len(), 1, "the screen is fetched again, not read from the cache");
+    }
+
+    #[test]
+    fn a_handle_from_an_earlier_window_is_refused() {
+        let (mut engine, _dir) = engine();
+        engine.agent.marked_in = Some("home".into());
+        act(&mut engine, r#"open app "Settings""#).unwrap();
+        let old = act(&mut engine, "tap e0").unwrap_err_or_text();
+        assert!(old.contains("e0 is from an earlier screen; read the screen again"), "{old}");
+        assert!(engine.agent.marked_in.is_none());
     }
 
     #[test]

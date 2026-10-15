@@ -68,6 +68,8 @@ pub(crate) struct AgentState {
     pub(crate) mapping: Vec<String>,
     /// Whether the last target resolved by a containing label rather than an exact one.
     pub(crate) loose: bool,
+    /// The package whose screen the last numbered image showed; its `eN` handles die with it.
+    pub(crate) marked_in: Option<Box<str>>,
 }
 
 #[derive(Clone, Copy)]
@@ -368,8 +370,11 @@ impl Engine {
             A::WaitTarget { target, seconds } => Op::Wait(Predicate::Exists(Match::Label(target.label.clone())), seconds.saturating_mul(1000)),
             A::WaitText { text, seconds } => Op::Wait(Predicate::Text(text.clone()), seconds.saturating_mul(1000)),
             A::WaitScreenChange { seconds } => Op::Wait(Predicate::GenerationAfter(scene.generation), seconds.saturating_mul(1000)),
-            A::VerifyExists(target) if target.ordinal.is_some() => Op::Assert(Predicate::Exists(Match::Ref(self.resolve_target(scene, target)?))),
+            A::VerifyExists(target) if target.ordinal.is_some() || target.handle.is_some() => Op::Assert(Predicate::Exists(Match::Ref(self.resolve_target(scene, target)?))),
             A::VerifyExists(target) => Op::Assert(Predicate::Exists(Match::Label(target.label.clone()))),
+            A::VerifyGone(target) if target.ordinal.is_some() || target.handle.is_some() => {
+                return Err(Error::new(Code::Args, "verify gone takes a plain label; a number or eN handle cannot name an element that is no longer there"));
+            }
             // A gone target cannot be resolved to a ref; check the label instead.
             A::VerifyGone(target) => Op::Assert(Predicate::Missing(Match::Label(target.label.clone()))),
             A::VerifyText(text) => Op::Assert(Predicate::Text(text.clone())),
@@ -403,6 +408,10 @@ impl Engine {
     /// `want` is `"edit"` when the step needs a text field and `"scroll"` when it needs a scrollable
     /// area, so a heading or a control with the same words is not a candidate.
     fn resolve_target_as(&mut self, scene: &Scene, target: &Target, want: &str) -> Result<u16> {
+        if let Some(handle) = target.handle.filter(|_| self.agent.marked_in.as_deref().is_some_and(|shown| shown != &*scene.package)) {
+            self.agent.marked_in = None;
+            return Err(Error::plain(Code::Missing, format!("e{handle} is from an earlier screen; read the screen again for current handles")));
+        }
         let args = json!({"label": target.label.as_ref(), "ordinal": target.ordinal.unwrap_or(0), "want": want, "handle": target.handle.map_or(-1, i32::from)});
         match self.bridge_read(|bridge| bridge.query("resolve", args.clone())) {
             Ok(value) => {
