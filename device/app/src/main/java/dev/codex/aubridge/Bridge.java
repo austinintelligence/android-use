@@ -44,10 +44,12 @@ final class Bridge implements AutoCloseable {
                     },
                     new ThreadPoolExecutor.AbortPolicy());
     private volatile boolean open = true;
+    private final Runnable onBindFailure;
     private LocalServerSocket bootstrap, command;
 
-    Bridge(Context context) {
+    Bridge(Context context, Runnable onBindFailure) {
         this.context = context;
+        this.onBindFailure = onBindFailure;
         new SecureRandom().nextBytes(token);
         new SecureRandom().nextBytes(nonce);
         capture = new Capture(context);
@@ -60,24 +62,26 @@ final class Bridge implements AutoCloseable {
     }
 
     private void listen(boolean boot) {
+        String name = boot ? "aubridge-bootstrap-v3" : "aubridge-v3";
+        LocalServerSocket server;
         try {
-            LocalServerSocket server =
-                    new LocalServerSocket(boot ? "aubridge-bootstrap-v3" : "aubridge-v3");
-            if (boot) bootstrap = server;
-            else command = server;
-            while (open) {
-                LocalSocket socket = server.accept();
-                try {
-                    workers.execute(() -> handle(socket, boot));
-                } catch (RuntimeException e) {
-                    try {
-                        socket.close();
-                    } catch (IOException ignored) {
-                    }
-                }
-            }
-        } catch (IOException ignored) {
+            server = Serve.bind(() -> new LocalServerSocket(name), 6, 250);
+        } catch (IOException e) {
+            if (open) onBindFailure.run();
+            return;
         }
+        if (boot) bootstrap = server;
+        else command = server;
+        Serve.loop(
+                server::accept,
+                socket -> {
+                    try {
+                        workers.execute(() -> handle(socket, boot));
+                    } catch (RuntimeException e) {
+                        socket.close();
+                    }
+                },
+                () -> open);
     }
 
     private void handle(LocalSocket socket, boolean boot) {
@@ -90,17 +94,37 @@ final class Bridge implements AutoCloseable {
                     new DataOutputStream(new BufferedOutputStream(s.getOutputStream()));
             if (boot) {
                 JSONArray q = read(in);
-                if (q.length() != 2 || q.optLong(0, -1) != 0 || !"bootstrap".equals(q.optString(1)))
-                    return;
-                write(out, new JSONArray().put(0).put(0).put(b64(token)).put(b64(nonce)));
+                byte[] challenge = q.length() == 3 ? unb64(q.optString(2)) : new byte[0];
+                if (q.optLong(0, -1) != 0
+                        || !"bootstrap".equals(q.optString(1))
+                        || challenge.length < 16
+                        || challenge.length > 64) return;
+                byte[] proof = HelperKey.respond(HelperKey.key(), challenge);
+                write(
+                        out,
+                        new JSONArray()
+                                .put(0)
+                                .put(0)
+                                .put(b64(token))
+                                .put(b64(nonce))
+                                .put(b64(proof)));
                 return;
             }
             JSONArray hello = read(in);
-            if (!auth(hello)) {
+            byte[] challenge = auth(hello);
+            if (challenge == null) {
                 write(out, new JSONArray().put(0).put(7));
                 return;
             }
-            write(out, new JSONArray().put(0).put(0));
+            write(
+                    out,
+                    new JSONArray()
+                            .put(0)
+                            .put(0)
+                            .put(
+                                    b64(
+                                            HelperKey.respondCommand(
+                                                    HelperKey.key(), challenge, b64(token)))));
             long seq = 0;
             while (open) {
                 JSONArray q;
@@ -121,11 +145,17 @@ final class Bridge implements AutoCloseable {
         }
     }
 
-    private boolean auth(JSONArray q) {
-        if (q.length() != 4 || q.optLong(0, -1) != 0 || !"hello".equals(q.optString(1)))
-            return false;
-        return MessageDigest.isEqual(token, unb64(q.optString(2)))
-                && MessageDigest.isEqual(nonce, unb64(q.optString(3)));
+    /** The host's challenge if the hello carries this process's token and nonce, else null. */
+    private byte[] auth(JSONArray q) {
+        if (q.length() != 5 || q.optLong(0, -1) != 0 || !"hello".equals(q.optString(1)))
+            return null;
+        byte[] challenge = unb64(q.optString(4));
+        boolean ok =
+                MessageDigest.isEqual(token, unb64(q.optString(2)))
+                        & MessageDigest.isEqual(nonce, unb64(q.optString(3)))
+                        & challenge.length >= 16
+                        & challenge.length <= 64;
+        return ok ? challenge : null;
     }
 
     private JSONArray dispatch(JSONArray q) {
