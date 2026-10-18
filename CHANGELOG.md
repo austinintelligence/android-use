@@ -77,6 +77,7 @@
 - `cargo xtask golden-capture NAME` needs `--reviewed`, confirming the screen shows nothing personal, and refuses a screen with what looks like an email address, phone number, or card number.
 - `verify eN` checks that handle instead of searching for the label "eN"; `wait for eN`, `verify eN is gone`, and `verify "X" number N is gone` are rejected instead of silently dropping the handle or number; a reconnect to the helper clears the cached screen; an `eN` from an earlier screen is refused with "read the screen again".
 - Every wait now has a deadline: a hung `adb`, `emulator`, or `sdkmanager` child or a stalled output pipe is stopped with a clear error, each Chrome DevTools command times out instead of waiting forever, `au emulator snapshot` and `destroy` touch only emulators `au emulator create` made (a foreign AVD or emulator is refused), and a failed `au emulator start` kills the emulator it spawned.
+- The MCP tools no longer return `structuredContent`. The server declares no `outputSchema` but sent structured content with every result, and a client that prefers it to `content` — Claude Code does — handed the model `{"status":"ok"}` in place of the screen, so every read arrived empty and every failure lost its explanation. The status is already in the text. Present since at least 1.1.2.
 
 ### Security
 

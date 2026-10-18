@@ -100,9 +100,7 @@ fn new_call(engine: &mut Engine, name: &str, args: Value, request_identity: Opti
 }
 
 fn model_result(result: Result<ModelResponse>) -> Value {
-    result
-        .map(|response| model_json(&response))
-        .unwrap_or_else(|error| json!({"content":[{"type":"text","text":plain_error(&error)}],"isError":true,"structuredContent":{"status":error.code.wire()}}))
+    result.map(|response| model_json(&response)).unwrap_or_else(|error| json!({"content":[{"type":"text","text":plain_error(&error)}],"isError":true}))
 }
 
 fn model_json(response: &ModelResponse) -> Value {
@@ -110,10 +108,10 @@ fn model_json(response: &ModelResponse) -> Value {
     if let Some(image) = response.image.as_ref().filter(|image| image.mime_type.starts_with("image/")) {
         content.push(json!({"type":"image","data":STANDARD.encode(image.bytes.as_ref()),"mimeType":image.mime_type}));
     }
-    let mut result = json!({"content":content,"isError":response.failed});
-    // Small on purpose: clients that copy structured content into the model's context pay for it.
-    result["structuredContent"] = if response.status.is_empty() { json!({"status":"ok"}) } else { json!({"status":response.status,"changed":response.changed}) };
-    result
+    // No `structuredContent`. This server declares no `outputSchema`, so a client is free to
+    // prefer structured content over `content` — and Claude Code does, which handed the model
+    // `{"status":"ok"}` in place of the screen. The status lives in `text` for anyone who wants it.
+    json!({"content":content,"isError":response.failed})
 }
 enum Frame {
     Line(Vec<u8>),
@@ -200,7 +198,7 @@ mod tests {
             ..Default::default()
         };
         let value = model_json(&response);
-        assert_eq!(value["structuredContent"], json!({"status":"ok"}));
+        assert!(value.get("structuredContent").is_none(), "a client that prefers structured content would show this instead of the screen");
         assert_eq!(value["content"][0]["type"], "text");
         assert_eq!(value["content"][1]["type"], "image");
         assert_eq!(value["content"][1]["mimeType"], "image/png");
