@@ -836,5 +836,8 @@ fn looks_like_package(name: &str) -> bool {
 }
 
 #[cfg(test)]
+#[path = "session_tests.rs"]
+mod session_tests;
+#[cfg(test)]
 #[path = "agent_tests.rs"]
 mod tests;

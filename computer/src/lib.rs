@@ -8,6 +8,7 @@ mod artifact;
 pub mod bridge;
 mod browser;
 pub mod clients;
+mod collapse;
 mod command;
 mod compress;
 pub mod device;
