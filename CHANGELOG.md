@@ -72,6 +72,7 @@
 - Budgets (formatted lines), raised once for 1.3.0: Rust production 9,100, Java 4,700, automation 3,200, authored code 22,800. They were full (Rust 7,489 of 7,520, authored 15,512 of 15,550). The new caps are what the 33 other 1.3.0 PRs measure together (Rust 8,689, Java 4,382, automation 2,923, authored 21,358) plus about 5% for review fixes. The largest additions are the all-windows tree op (Java +361), the helper handshake (Java +225), the real-model benchmark (automation +355) and the workflow policy check (automation +187).
 - Screen presentation (the text view, `Changed:` diffs, and screen images for the model) moved out of `agent.rs` into `present.rs`; no behavior change.
 - `DeviceLink` is now the one seam between the engine and a device: `AdbLink` is the real adb and bridge path, and a scripted in-process `FakeLink` replaces the socket-based test helper. No behavior or wire change.
+- The host binary size limits rise once for 1.3.0, to 1,120,000 bytes (1,450,000 on Linux) from 1,000,000 (1,300,000): the 1.3.0 Linux release binary is 1,328,904 bytes, with the device link, helper handshake, APK signature check, preflight, and policy work. The helper APK limit stays 60,000 (48,168).
 
 ## 1.2.0 — 2026-10-10
 
