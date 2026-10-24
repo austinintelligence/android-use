@@ -182,7 +182,10 @@ final class Bridge implements AutoCloseable {
                             .put(seq)
                             .put(0)
                             .put(ui == null ? 0 : ui.generation())
-                            .put(ui == null ? 0 : 7 | TreeWindows.CAPABILITY);
+                            .put(
+                                    ui == null
+                                            ? 0
+                                            : 7 | TreeWindows.CAPABILITY | Approval.CAPABILITY);
                 case "observe":
                     if (ui == null) return err(seq, 10);
                     return ui.observe(seq, q.isNull(2) ? null : q.optString(2), q.optInt(3));
@@ -220,6 +223,35 @@ final class Bridge implements AutoCloseable {
                     return new JSONArray().put(seq).put(0).put(Location.read(context));
                 case "notifications":
                     return new JSONArray().put(seq).put(0).put(Notify.read(context));
+                case "approve":
+                    {
+                        JSONObject ask = q.optJSONObject(2);
+                        if (ask == null) return err(seq, 5);
+                        if (!Approval.start(
+                                ask.optString("text"),
+                                ask.optString("detail"),
+                                ask.optLong("ms", 120_000),
+                                SystemClock.elapsedRealtime())) return err(seq, 6);
+                        context.startActivity(
+                                new Intent(context, ApproveActivity.class)
+                                        .addFlags(
+                                                Intent.FLAG_ACTIVITY_NEW_TASK
+                                                        | Intent.FLAG_ACTIVITY_CLEAR_TOP));
+                        return new JSONArray()
+                                .put(seq)
+                                .put(0)
+                                .put(new JSONObject().put("state", "pending"));
+                    }
+                case "approval":
+                    {
+                        String answer = Approval.current(SystemClock.elapsedRealtime());
+                        // An answer is read once; the next prompt starts clean.
+                        if (!"pending".equals(answer)) Approval.clear();
+                        return new JSONArray()
+                                .put(seq)
+                                .put(0)
+                                .put(new JSONObject().put("state", answer));
+                    }
                 case "apps":
                     return new JSONArray().put(seq).put(0).put(apps(context));
                 case "run":

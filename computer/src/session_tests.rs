@@ -1,6 +1,6 @@
 //! Flow tests for the session layer: routines, policy, secrets, events, window notes and the
 //! settle behaviour, against the same scripted helper as `agent_tests.rs`.
-use super::tests::flows::{engine, fake_helper, phone_screenshot, Words, NOTES, TREE, TYPED};
+use super::tests::flows::{engine, fake_helper, phone_screenshot, Words, APPROVAL, NOTES, TREE, TYPED};
 use super::*;
 use crate::link::FakeLink;
 
@@ -246,4 +246,63 @@ fn the_agent_cannot_answer_androids_own_prompt_but_can_tap_the_same_word_elsewhe
     show_windows(vec![window(1, 0, "Settings", "com.android.settings")], false);
     assert!(call(&mut engine, "android_act", r#"tap "OK""#).is_ok(), "without the prompt, OK is an ordinary label");
     TREE.with(|tree| *tree.borrow_mut() = None);
+}
+
+fn person_answers(state: &'static str, changes_screen: bool) {
+    APPROVAL.with(|answer| *answer.borrow_mut() = Some((state, changes_screen)));
+    TYPED.with(|typed| typed.borrow_mut().clear());
+}
+
+#[test]
+fn an_allowed_ask_runs_the_steps_it_covered() {
+    let (mut engine, _dir) = engine();
+    call(&mut engine, "android_act", r#"open app "com.example.bank""#).unwrap();
+    person_answers("allow", false);
+    let reply = call(&mut engine, "android_act", r#"ask phone "Type hello into Email?" then type "hello" in "Email""#).unwrap();
+    assert_eq!(reply.status, "done", "{}", reply.text);
+    assert_eq!(TYPED.with(|t| t.borrow().clone()), ["hello"]);
+    assert_eq!(call(&mut engine, "android_act", r#"ask phone "Is this you?""#).unwrap().text, "Allowed on the phone.");
+    APPROVAL.with(|answer| *answer.borrow_mut() = None);
+}
+
+#[test]
+fn deny_timeout_and_a_changed_screen_each_run_nothing() {
+    let (mut engine, _dir) = engine();
+    call(&mut engine, "android_act", r#"open app "com.example.bank""#).unwrap();
+    for (state, changes, said) in [("deny", false, "denied it on the phone"), ("timeout", false, "Nobody answered"), ("allow", true, "approval no longer applies")] {
+        person_answers(state, changes);
+        let error = call(&mut engine, "android_act", r#"ask phone "Type it?" then type "hello" in "Email""#).err().unwrap();
+        assert_eq!(error.code, Code::Denied, "{state}");
+        assert!(error.message.contains(said) && error.message.contains("Nothing was run"), "{state}: {}", error.message);
+        assert!(TYPED.with(|t| t.borrow().is_empty()), "{state}: nothing was typed");
+        if changes {
+            call(&mut engine, "android_act", r#"open app "com.example.bank""#).unwrap();
+        }
+    }
+    APPROVAL.with(|answer| *answer.borrow_mut() = None);
+}
+
+#[test]
+fn a_helper_that_cannot_ask_says_to_update_and_runs_nothing() {
+    APPROVAL.with(|answer| *answer.borrow_mut() = None);
+    TYPED.with(|typed| typed.borrow_mut().clear());
+    let (mut engine, _dir) = engine();
+    let error = call(&mut engine, "android_act", r#"ask phone "Type it?" then type "hello" in "Email""#).err().unwrap();
+    assert_eq!(error.code, Code::Unsupported);
+    assert!(error.message.contains("au update") && TYPED.with(|t| t.borrow().is_empty()), "{}", error.message);
+}
+
+#[test]
+fn the_phone_shows_the_command_without_typed_passwords() {
+    // The prompt text is built by `ask`; the detail line hides secret-looking fields.
+    assert_eq!(crate::trace::redact(r#"type "hunter2" in "Password""#), r#"type "***" in "Password""#);
+}
+
+#[test]
+fn file_transfer_is_off_until_the_policy_names_a_folder() {
+    let (mut engine, _dir) = engine();
+    let error = call(&mut engine, "android_act", r#"push file "a.txt""#).err().unwrap();
+    assert_eq!(error.code, Code::Blocked);
+    assert!(error.message.contains("files.dir"), "{}", error.message);
+    assert_eq!(call(&mut engine, "android_act", r#"pull file "../x""#).err().map(|e| e.code), Some(Code::Args));
 }

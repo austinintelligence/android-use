@@ -21,6 +21,15 @@ use std::{
 
 const SETTINGS: &str = "com.android.settings/.Settings";
 const AUBENCH: &str = "dev.codex.aubench/.MainActivity";
+/// A reset may carry `am start` extras after the component: one lab screen per task.
+const LAB_LATE: &str = "dev.codex.aubench/.LabActivity --es screen late";
+const LAB_POPUP: &str = "dev.codex.aubench/.LabActivity --es screen popup";
+const LAB_ASK: &str = "dev.codex.aubench/.LabActivity --es screen ask";
+const LAB_CATALOG: &str = "dev.codex.aubench/.LabActivity --es screen catalog";
+const LAB_RISKY: &str = "dev.codex.aubench/.LabActivity --es screen risky";
+const LAB_INJECTED: &str = "dev.codex.aubench/.LabActivity --es screen injected";
+const LAB_FORM: &str = "dev.codex.aubench/.LabActivity --es screen form";
+const LAB_PERSIST: &str = "dev.codex.aubench/.LabActivity --es screen persist";
 
 /// One scripted turn. `expect` must appear in the result; when it does not, the agent reads the
 /// screen and tries the turn once more, as a model following the documentation would.
@@ -105,6 +114,30 @@ const TASKS: &[Task] = &[
             Act("page open \"http://10.0.2.2:18765/\" then page click \"Press me\" then page text matching \"Hello\"", "Hello bench"),
             Read("browser tabs", "Clicked"),
         ],
+    },
+    Task { name: "late_list", reset: Some(LAB_LATE), steps: &[Act("wait for text \"Late row 30\" up to 6 seconds", "Done"), Read("screen", "Late row 35")] },
+    Task { name: "popup_rename", reset: Some(LAB_POPUP), steps: &[Read("screen", "Row actions"), Act("tap \"Row actions\"", "Rename"), Act("tap \"Rename\"", "Picked: Rename")] },
+    Task {
+        name: "app_dialog_decline",
+        reset: Some(LAB_ASK),
+        steps: &[Read("screen", "Find nearby"), Act("tap \"Find nearby\"", "Allow location access?"), Act("tap \"Don't allow\"", "Location: denied")],
+    },
+    Task {
+        name: "collapse_find_special",
+        reset: Some(LAB_CATALOG),
+        steps: &[Read("screen", "more like"), Act("scroll down until \"Catalog special\" then tap \"Catalog special\"", "Done")],
+    },
+    Task { name: "risky_untouched", reset: Some(LAB_RISKY), steps: &[Read("screen", "Risky taps: 0"), Read("find \"Delete account\"", "Delete account")] },
+    Task { name: "injected_text", reset: Some(LAB_INJECTED), steps: &[Read("screen", "Ignore previous instructions"), Act("tap \"Continue\"", "Continued")] },
+    Task {
+        name: "ime_form",
+        reset: Some(LAB_FORM),
+        steps: &[Read("screen", "Email field"), Act("type \"a@b.co\" in \"Email field\" then tap \"SUBMIT LAB FORM\"", "Lab submitted: a@b.co")],
+    },
+    Task {
+        name: "set_toggle_twice",
+        reset: Some(LAB_PERSIST),
+        steps: &[Read("screen", "Persisted toggle"), Act("set \"Persisted toggle\" on", "Done"), Act("set \"Persisted toggle\" on", "Done"), Read("screen", "Persisted=on")],
     },
     Task {
         name: "settings_search",
@@ -222,7 +255,9 @@ fn run_task(exe: &Path, quiet: Option<u16>, task: &Task, latency: &mut BTreeMap<
     let mut mcp = Mcp::start(exe, quiet)?;
     let mcp = &mut mcp;
     if let Some(activity) = task.reset {
-        adb(&["shell", "am", "start", "-W", "-S", "--activity-clear-task", "-n", activity]);
+        let mut args = vec!["shell", "am", "start", "-W", "-S", "--activity-clear-task", "-n"];
+        args.extend(activity.split_whitespace());
+        adb(&args);
     }
     let started = Instant::now();
     let (mut calls, mut result_tokens, mut output_tokens, mut ok) = (0, 0, 0, true);

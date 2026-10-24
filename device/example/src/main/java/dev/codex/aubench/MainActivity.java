@@ -2,6 +2,7 @@ package dev.codex.aubench;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Intent;
 import android.os.Bundle;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -87,6 +88,11 @@ public final class MainActivity extends Activity {
         icon.setImageResource(android.R.drawable.ic_menu_info_details);
         icon.setOnClickListener(view -> state.setText("Icon tapped"));
         content.addView(icon, matchWrap());
+
+        Button lab = new Button(this);
+        lab.setText("OPEN LAB");
+        lab.setOnClickListener(view -> startActivity(new Intent(this, LabActivity.class)));
+        content.addView(lab, matchWrap());
 
         state = new TextView(this);
         state.setText("Ready");

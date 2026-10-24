@@ -65,6 +65,8 @@ pub(crate) mod flows {
     thread_local! {
         /// Every text the fake device was asked to type.
         pub(crate) static TYPED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+        /// What a person does on the phone: (answer, whether the screen changes meanwhile). None: an old helper.
+        pub(crate) static APPROVAL: std::cell::RefCell<Option<(&'static str, bool)>> = const { std::cell::RefCell::new(None) };
         /// The windows the fake device reports through the `tree` op; none means a helper without it.
         pub(crate) static TREE: std::cell::RefCell<Option<Value>> = const { std::cell::RefCell::new(None) };
         /// What the fake device reports for `notifications`.
@@ -132,6 +134,14 @@ pub(crate) mod flows {
                     let exact = hits(false);
                     let (refs, tier) = if exact.is_empty() { (hits(true), 2) } else { (exact, 0) };
                     json!([seq, 0, {"r": refs, "t": tier, "l": refs.iter().map(|&i| names[i]).collect::<Vec<_>>()}])
+                }
+                "approve" if APPROVAL.with(|answer| answer.borrow().is_some()) => json!([seq, 0, {"state": "pending"}]),
+                "approval" if APPROVAL.with(|answer| answer.borrow().is_some()) => {
+                    let (state, changes_screen) = APPROVAL.with(|answer| answer.borrow().unwrap());
+                    if changes_screen {
+                        (screen, generation) = ("settings", generation + 1);
+                    }
+                    json!([seq, 0, {"state": state}])
                 }
                 "notifications" if NOTES.with(|notes| !notes.borrow().is_null()) => json!([seq, 0, NOTES.with(|notes| notes.borrow().clone())]),
                 "artifact" => {

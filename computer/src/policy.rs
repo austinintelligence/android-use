@@ -16,6 +16,8 @@ pub(crate) struct Policy {
     pub capture: bool,
     /// Apps whose notifications `read code from notification` may read.
     pub codes_apps: Vec<String>,
+    /// The one folder `push file` and `pull file` may use; transfer is off without it.
+    pub files_dir: Option<String>,
     pub present: bool,
 }
 
@@ -56,6 +58,13 @@ impl Policy {
                 "apps.deny" => policy.apps_deny = list(value, line)?,
                 "risky.extra" => policy.risky_extra = list(value, line)?,
                 "codes.apps" => policy.codes_apps = list(value, line)?,
+                "files.dir" => {
+                    let dir = text(value, line)?;
+                    if !Path::new(&dir).is_absolute() {
+                        return Err(Error::plain(Code::Args, format!("policy.toml line {line}: files.dir is an absolute folder path")));
+                    }
+                    policy.files_dir = Some(dir);
+                }
                 "capture.allow" => {
                     policy.capture = match value {
                         "true" => true,
@@ -129,13 +138,14 @@ impl Policy {
         }
         let join = |list: &[String]| if list.is_empty() { "none".to_owned() } else { list.join(", ") };
         format!(
-            "apps.allow: {}\napps.deny: {}\nrisky.extra: {}\nactions.max_per_session: {}\ncapture.allow: {}\ncodes.apps: {}",
+            "apps.allow: {}\napps.deny: {}\nrisky.extra: {}\nactions.max_per_session: {}\ncapture.allow: {}\ncodes.apps: {}\nfiles.dir: {}",
             join(&self.apps_allow),
             join(&self.apps_deny),
             join(&self.risky_extra),
             self.max_actions.map_or("none".to_owned(), |n| n.to_string()),
             self.capture,
-            join(&self.codes_apps)
+            join(&self.codes_apps),
+            self.files_dir.as_deref().unwrap_or("none")
         )
     }
 }
@@ -143,6 +153,13 @@ impl Policy {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn files_dir_must_be_an_absolute_path() {
+        assert_eq!(Policy::parse("files.dir = \"/srv/au-files\"").unwrap().files_dir.as_deref(), Some("/srv/au-files"));
+        assert!(Policy::parse("files.dir = \"relative/dir\"").unwrap_err().message.contains("absolute"));
+        assert!(Policy::default().files_dir.is_none());
+    }
 
     const SAMPLE: &str = "# team policy\napps.allow = [\"com.android.settings\", \"Clock\"]\napps.deny = [\"com.example.bank\"]\nrisky.extra = [\"unsubscribe\", \"cancel\"]\nactions.max_per_session = 200\ncapture.allow = false\ncodes.apps = [\"Bank\"]\n";
 

@@ -15,6 +15,7 @@ use std::{
     process::{Command, Stdio},
 };
 
+#[cfg(not(windows))]
 const SERVICE: &str = "android-use";
 
 pub trait SecretStore {

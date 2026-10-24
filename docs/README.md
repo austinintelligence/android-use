@@ -12,6 +12,8 @@
 ## Use it
 
 - [Workflows](guides/workflows.md): look once, act and verify, recover.
+- [Control: policy, secrets, approvals, traces](guides/control.md)
+- [Testing apps with `au test`](guides/app-testing.md)
 - [Troubleshooting](guides/troubleshooting.md)
 - [Production guidance](guides/production.md)
 
@@ -27,4 +29,4 @@
 ## Contribute
 
 - [Development](contributing/development.md) · [Testing](contributing/testing.md) · [Releasing](contributing/release.md)
-- [Measurements](design/measurements.md) · [Remote broker proposal](design/remote-broker.md)
+- [1.4 design and test plan](design/1.4.md) · [Measurements](design/measurements.md) · [Remote broker proposal](design/remote-broker.md)

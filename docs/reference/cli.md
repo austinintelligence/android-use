@@ -10,6 +10,10 @@ Run `au setup` once with one authorized, unlocked Android device. Use `au doctor
 | `au read COMMAND` | Same as the `android_read` tool, e.g. `au read screen`, `au read 'find "Wi-Fi"'`. |
 | `au act COMMAND` | Same as the `android_act` tool, e.g. `au act 'tap "Wi-Fi"'`. Images are saved and returned as a path. |
 | `au serve --mcp` | MCP server over stdio for agent clients. |
+| `au test FILE... [--junit PATH]` | Run end-to-end test files written in the command grammar; exit 1 on a failure. See [testing apps](../guides/app-testing.md). |
+| `au trace list\|show ID\|export ID\|to-test ID` | Review a session, export it as one page, or turn it into a test. |
+| `au secret add NAME --apps PKG\|list\|remove NAME` | Keep a value in the system store for `type secret`. The value is read from stdin. See [control](../guides/control.md). |
+| `au watch [--port N]` | A loopback page with the live command log and Pause, Resume and Stop. |
 | `au devices` | List connected device endpoints and their states. |
 | `au enroll ENDPOINT` | Bind one connected hardware identity when several devices are attached. |
 | `au repair [APK]` / `au update [APK]` | Reinstall or update the helper. |

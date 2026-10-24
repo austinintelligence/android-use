@@ -429,11 +429,11 @@ fn docs(root: &Path, write: bool) -> Result<(), String> {
         ("skills/android-use/references/safety.md", 520, 130),
         ("skills/android-use/references/setup.md", 520, 130),
         ("AGENTS.md", 1800, 450),
-        ("docs/reference/agent-protocol.md", 2800, 700),
+        ("docs/reference/agent-protocol.md", 3100, 780),
         ("docs/agents/quickstart.md", 1800, 450),
         ("docs/agents/install.md", 7200, 1800),
         ("docs/guides/workflows.md", 1400, 350),
-        ("docs/reference/cli.md", 2800, 700),
+        ("docs/reference/cli.md", 3500, 880),
         ("examples/README.md", 2000, 500),
     ];
     let mut skill_bytes = 0usize;

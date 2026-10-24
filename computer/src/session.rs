@@ -3,9 +3,10 @@
 //! Everything here only restricts or repeats; the engine still checks every plan itself.
 use crate::{
     api::{parse_act_command, parse_read_command, Code, Error, Result},
+    ask,
     command::{Action, AndroidAction, BrowserAction},
     engine::{Engine, ModelResponse},
-    events,
+    events, files,
     policy::Policy,
     resolve, routine,
     secret::{self, OsStore, SecretStore},
@@ -84,10 +85,16 @@ pub fn call(engine: &mut Engine, read: bool, command: &str, identity: Option<&st
     let result = if read {
         read_command(engine, command)
     } else {
-        match (routine::parse(command), events::parse_wait(command)) {
-            (Some(meta), _) => meta.and_then(|meta| run_routine(engine, meta, identity)),
-            (None, Some(wait)) => wait.and_then(|wait| wait_notification(engine, &wait)),
-            (None, None) => act(engine, command, identity),
+        if let Some(meta) = routine::parse(command) {
+            meta.and_then(|meta| run_routine(engine, meta, identity))
+        } else if let Some(wait) = events::parse_wait(command) {
+            wait.and_then(|wait| wait_notification(engine, &wait))
+        } else if let Some(transfer) = files::parse(command) {
+            transfer.and_then(|transfer| files::run(engine, &transfer)).map(|text| ModelResponse { text, status: "done", ..Default::default() })
+        } else if let Some(question) = ask::parse(command) {
+            question.and_then(|question| ask_phone(engine, &question, identity))
+        } else {
+            act(engine, command, identity)
         }
     };
     let root = engine.root().to_path_buf();
@@ -110,6 +117,15 @@ fn read_command(engine: &mut Engine, command: &str) -> Result<ModelResponse> {
         _ => return engine.model_read(parse_read_command(command)?),
     };
     Ok(ModelResponse { text, ..Default::default() })
+}
+
+/// A person's yes on the phone, then the steps it covers.
+fn ask_phone(engine: &mut Engine, question: &ask::Ask, identity: Option<&str>) -> Result<ModelResponse> {
+    ask::ask(engine, question)?;
+    if question.then.is_empty() {
+        return Ok(ModelResponse { text: "Allowed on the phone.".into(), status: "done", ..Default::default() });
+    }
+    act(engine, &question.then, identity)
 }
 
 fn notification_items(engine: &mut Engine) -> Result<Vec<events::Item>> {

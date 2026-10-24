@@ -12,6 +12,10 @@ Tap and long press by label or number; type into a field; scroll the main list o
 
 Each plan names the UI it was built from; if the screen changed first, nothing runs (`stale`). A label that is only a close match is used when it is safe and reported; risky words (delete, pay, send) never match loosely.
 
+## Control what an agent may do
+
+`policy.toml`, secrets, approvals on the phone, pause and stop, traces, notification waits and file transfer are described in [control](../guides/control.md). They only restrict or repeat what the commands above can already do.
+
 ## Use Chrome
 
 List and select tabs; read a page's title, text, and interactive elements; open a link; click, focus, type, send keys, scroll; wait for text; reload; go back or forward; capture a page screenshot. Chrome must expose its Android debugging socket (open it once). Agents cannot run arbitrary page JavaScript.

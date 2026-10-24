@@ -122,6 +122,8 @@ const EXTRAS: &str = "Routines (replay a command that worked, in one call):\n\
 - run routine \"NAME\" [with \"VALUE\" ...] (runs like any command, so a changed screen is a miss)\n\
 Secrets and waiting:\n\
 - type secret \"NAME\" in \"FIELD\" (first step of a command; only a password field of an app the secret allows)\n\
+- ask phone \"QUESTION\" then STEPS (a person answers on the phone; ask before payments, messages, deletes; nothing runs if denied or the screen changed)\n\
+- push file \"NAME\" | pull file \"NAME\" (the phone's Downloads; needs files.dir in policy.toml; ask the user first)\n\
 - wait for notification [from \"APP\"] up to N seconds (N is 1-120)\n\
 - android_read routines | secrets | policy | audit | code from notification \"APP\"\n";
 

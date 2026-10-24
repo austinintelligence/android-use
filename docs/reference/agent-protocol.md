@@ -22,9 +22,10 @@ A successful action says `Done.` (with a note if a label was a close match), the
 | `… matches N items` | Ambiguous at that step; earlier steps ran. | Add `number N`. |
 | `The screen changed before anything ran` | `stale`. Nothing ran. | Retry the same command. |
 | `Check failed` / `Waited …` | A verify or wait was false. | Read, then decide. |
-| `Partly done` | Some steps changed the device, then one failed. | Read and reconcile; never repeat the whole command. |
+| `Partly done` | Some steps changed the device, then one failed; the screen is shown. | Send only the steps still needed; never repeat the whole command. |
 | `uncertain` | `unknown`: it may have run. | Read before any other change. |
 | `locked`, `screen_off`, `helper_killed`, `stopped` | Nothing ran. | Do the step named, resend. |
+| `blocked_by_policy`, `paused`, `denied` | Nothing ran: a person's rule, pause, or no. | Do not work around it; tell the user. |
 | `missing the Android permission` | Android denied a capability. | Ask the user to grant it on the device. |
 
 ## Images and coordinates

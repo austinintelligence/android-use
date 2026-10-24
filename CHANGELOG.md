@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased (1.4.0)
+
+**Highlights.** An agent can now keep what worked, be held back by a person's rules, and be watched and stopped from the computer or the phone. Commands, tools and flags from 1.3 are unchanged; everything new is additive and off until used. Design and test plan: [docs/design/1.4.md](docs/design/1.4.md).
+
+### Added
+
+- Routines: `save routine "NAME" from last [with "VALUE" ...]`, `run routine "NAME" [with ...]` and `read routines` replay a command that worked, in one call, with values as parameters. A routine is text and runs through the normal parser, journal and risky-word rules.
+- `policy.toml`: `apps.allow`/`apps.deny` (matched on name, package and launcher label), `risky.extra`, `actions.max_per_session`, `capture.allow`, `codes.apps`, `files.dir`. A bad file refuses the session. New result codes `blocked_by_policy`, `paused` and `denied`; `read policy` shows what is in force.
+- Secrets: `au secret add|list|remove` (value on stdin, kept in the system store) and `type secret "NAME" in "FIELD"`, typed only into a single password field of an allowed app and removed from replies, errors, traces and routines.
+- `ask phone "QUESTION" then STEPS`: a full-screen Allow once / Deny prompt on the phone that shows the exact steps, cannot be answered by the agent, and voids itself if the screen's labels change meanwhile (needs the 1.4 helper).
+- Session traces (`au trace list|show|export|to-test`), written with password-like and clipboard text redacted and deleted after 7 days.
+- `au test FILE... [--junit PATH]`: end-to-end tests in the command grammar with `expect screen`, `expect no screen`, `expect result`, `reset app` and `clear app`.
+- `au watch`: a loopback page (token, loopback `Host` only) with the live command log and Pause, Resume and Stop.
+- `wait for notification [from "APP"] up to N seconds`, `read code from notification "APP"` and `read audit`.
+- `push file` / `pull file` between `files.dir` and the phone's Downloads (off without the policy key; plain names, 64 MB, no links out of the folder, no overwrite).
+- Fixture app lab screens, eight more `benchmark-live` tasks, and `bench-model` support for refusal tasks, mid-run interference and per-family reports (`tools/bench/tasks-1.4.json`).
+
+### Changed
+
+- A changed screen is reported once it holds still for a poll (at most 700 ms more), with a note when it never does.
+- A dialog or popup, the keyboard and Android's own permission prompts get one line above the listing when the helper has the `tree` op. The agent cannot tap Allow, OK or Accept while Android's own prompt is up.
+- Runs of six or more look-alike plain rows (`Fixture row 1` ...) collapse to the first two, a `+N more like` line and the last; `screen full` lists them all. Risky, stateful and mixed-kind runs never collapse.
+- A `Partly done` result includes the current screen.
+- Source budgets raised once for these features (Rust 12,000, Java 5,600, automation 3,900, authored 27,500), and the documentation budgets for the protocol and CLI references.
+
+### Not done
+
+- Gradle dependency locking (needs Google's Maven repository; not reachable where this was built).
+- The Android helper changes (approvals, lab screens) were written without an Android toolchain and have not been compiled or run; run `cargo xtask test` and the live checks before release.
+- `read icons` contact sheet and a clipboard command: `eN` already names every unlabeled control, and Android 10+ does not let a background service read the clipboard reliably.
+- Emulator chaos scenarios E1 to E8 and the version bump to 1.4.0.
+
 ## 1.3.0 — 2026-10-24
 
 **Highlights.** 1.3.0 hardens and speeds up 1.2 without changing its commands, tools, or flags. The helper now proves who it is before `au` talks to it, `au` installs only a helper signed with the pinned key, and the release path is tag-gated, signed in isolation, published to npm with provenance, and smoke-tested from the real packages on three systems. Agents act first, `set` is idempotent, misses suggest a fix, and a locked phone, a dark screen, or a killed helper each return a typed result with one next step. Every finding from the 1.2 review is fixed here, left to a named 2.0 component, or closed as won't-fix.
