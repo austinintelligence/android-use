@@ -13,7 +13,7 @@ One row per line: a plain name is a button or text; `sw Wi-Fi=on`, `edit Email="
 
 ## Results
 
-A successful action says `Done.` (with a note if a label was a close match), then the screen it led to, or only `Changed:` rows (`~ + -`) when it is the screen you last saw. Chains may cross screens: steps after an app, link, or page opens are resolved on what it shows. Results also carry `structuredContent` with `status` and `changed`.
+A successful action says `Done.` (with a note if a label was a close match), then the screen it led to, or only `Changed:` rows (`~ + -`) when it is the screen you last saw. Chains may cross screens: steps after an app, link, or page opens are resolved on what it shows.
 
 | Result | Meaning | Next move |
 | --- | --- | --- |

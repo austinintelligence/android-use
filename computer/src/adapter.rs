@@ -99,9 +99,7 @@ pub(crate) fn new_call(engine: &mut Engine, name: &str, args: Value, request_ide
 }
 
 fn model_result(result: Result<ModelResponse>) -> Value {
-    result
-        .map(|response| model_json(&response))
-        .unwrap_or_else(|error| json!({"content":[{"type":"text","text":plain_error(&error)}],"isError":true,"structuredContent":{"status":error.code.wire()}}))
+    result.map(|response| model_json(&response)).unwrap_or_else(|error| json!({"content":[{"type":"text","text":plain_error(&error)}],"isError":true}))
 }
 
 fn model_json(response: &ModelResponse) -> Value {
@@ -109,10 +107,10 @@ fn model_json(response: &ModelResponse) -> Value {
     if let Some(image) = response.image.as_ref().filter(|image| image.mime_type.starts_with("image/")) {
         content.push(json!({"type":"image","data":STANDARD.encode(image.bytes.as_ref()),"mimeType":image.mime_type}));
     }
-    let mut result = json!({"content":content,"isError":response.failed});
-    // Small on purpose: clients that copy structured content into the model's context pay for it.
-    result["structuredContent"] = if response.status.is_empty() { json!({"status":"ok"}) } else { json!({"status":response.status,"changed":response.changed}) };
-    result
+    // No `structuredContent`. This server declares no `outputSchema`, so a client may prefer
+    // structured content over `content`, and Claude Code does: it showed the model
+    // `{"status":"ok"}` in place of the screen. The status is in `text` for anyone who wants it.
+    json!({"content":content,"isError":response.failed})
 }
 enum Frame {
     Line(Vec<u8>),
@@ -199,11 +197,22 @@ mod tests {
             ..Default::default()
         };
         let value = model_json(&response);
-        assert_eq!(value["structuredContent"], json!({"status":"ok"}));
+        assert!(value.get("structuredContent").is_none(), "a client that prefers structured content would show this instead of the screen");
         assert_eq!(value["content"][0]["type"], "text");
         assert_eq!(value["content"][1]["type"], "image");
         assert_eq!(value["content"][1]["mimeType"], "image/png");
         assert_eq!(value["isError"], false);
+    }
+
+    #[test]
+    fn the_screen_text_and_the_failure_explanation_reach_the_client_in_content() {
+        let read = model_result(Ok(ModelResponse { text: "Settings\nWi-Fi".into(), ..Default::default() }));
+        assert_eq!((read["content"][0]["text"].as_str(), read["isError"].as_bool(), read.get("structuredContent").is_none()), (Some("Settings\nWi-Fi"), Some(false), true));
+        let failed = model_result(Err(Error::plain(Code::Blocked, "Blocked by policy.toml: nothing was run.")));
+        assert_eq!(
+            (failed["content"][0]["text"].as_str(), failed["isError"].as_bool(), failed.get("structuredContent").is_none()),
+            (Some("Blocked by policy.toml: nothing was run."), Some(true), true)
+        );
     }
 
     fn request(engine: &mut Engine, value: Value) -> Value {

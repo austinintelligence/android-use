@@ -25,6 +25,10 @@
 - A `Partly done` result includes the current screen.
 - Source budgets raised once for these features (Rust 12,000, Java 5,600, automation 3,900, authored 27,500), and the documentation budgets for the protocol and CLI references.
 
+### Fixed
+
+- The MCP tools no longer return `structuredContent` (contributed by lisniuse in [#90](https://github.com/austinintelligence/android-use/pull/90)). The server declares no `outputSchema` but sent structured content with every result, and a client that prefers it to `content`, such as Claude Code, handed the model `{"status":"ok"}` in place of the screen: every read arrived empty and every failure lost its explanation. The status is already in the text. **Compatibility:** a client that read `structuredContent.status` or `.changed` no longer sees them. Present since at least 1.1.2.
+
 ### Not done
 
 - Gradle dependency locking (needs Google's Maven repository; not reachable where this was built).
