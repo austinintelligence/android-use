@@ -35,6 +35,12 @@ pub enum Code {
     HelperKilled,
     /// Stop was pressed on the helper's notification.
     Stopped,
+    /// `policy.toml` forbids this command.
+    Blocked,
+    /// A person paused the session from `au watch`.
+    Paused,
+    /// A person (or the timeout) denied an approval asked on the phone.
+    Denied,
 }
 impl Code {
     pub fn wire(self) -> &'static str {
@@ -61,6 +67,9 @@ impl Code {
             Self::ScreenOff => "screen_off",
             Self::HelperKilled => "helper_killed",
             Self::Stopped => "stopped",
+            Self::Blocked => "blocked_by_policy",
+            Self::Paused => "paused",
+            Self::Denied => "denied",
         }
     }
 }

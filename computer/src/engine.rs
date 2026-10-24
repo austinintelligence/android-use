@@ -32,6 +32,7 @@ pub struct Engine {
     pub(crate) agent: AgentState,
     /// The last act command that ran without failing, for `save routine ... from last`.
     pub(crate) last_act: Option<String>,
+    pub(crate) guard: crate::session::Session,
     /// Random per-process salt for operation ids. Request identities such as
     /// JSON-RPC ids restart in every client session, while the journal is
     /// durable; without the salt a new session could collide with old records.
@@ -62,6 +63,7 @@ impl Engine {
 
     /// An engine over any device link; tests pass a `FakeLink`.
     pub(crate) fn with_link(paths: Paths, link: Box<dyn DeviceLink>) -> Result<Self> {
+        let guard = crate::session::Session::open(&paths.root)?;
         Ok(Self {
             artifacts: Artifacts::new(paths.clone()),
             journal: Journal::open(&paths)?,
@@ -72,10 +74,17 @@ impl Engine {
             scene: None,
             agent: AgentState::default(),
             last_act: None,
+            guard,
             session: session_id(),
             request_counter: 0,
             stopped: false,
         })
+    }
+
+    /// Runs `adb -s ENDPOINT args...` against the enrolled device (file transfer, test resets).
+    pub fn adb(&mut self, args: &[&str], timeout: std::time::Duration) -> Result<Vec<u8>> {
+        let endpoint = self.link.device()?.endpoint;
+        crate::device::Adb::discover()?.run(Some(&endpoint), args, timeout)
     }
 
     pub fn root(&self) -> &Path {

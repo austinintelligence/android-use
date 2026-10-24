@@ -188,8 +188,8 @@ fn size(root: &Path) -> Result<(usize, usize, usize), String> {
     Ok((rust, java, automation))
 }
 /// Formatted-line budgets: Rust production, Java production, automation, all authored code.
-/// Raised once per milestone, in one PR, and stated in the changelog.
-const BUDGETS: [(&str, usize); 4] = [("rust_production", 9100), ("android_production", 4700), ("automation", 3200), ("authored_code", 22_800)];
+/// Raised once per milestone, in one PR, and stated in the changelog (1.4.0: the new features in docs/design/1.4.md).
+const BUDGETS: [(&str, usize); 4] = [("rust_production", 12_000), ("android_production", 5600), ("automation", 3900), ("authored_code", 27_500)];
 /// Budgets measure conventionally formatted code (rustfmt; google-java-format --aosp for the
 /// helper), so they track real complexity rather than how densely lines are packed.
 fn over_budget(rust: usize, java: usize, automation: usize, authored: usize) -> Result<(), String> {
@@ -786,9 +786,9 @@ mod tests {
     }
 
     #[test]
-    fn budgets_allow_the_one_three_limits_and_name_what_is_over() {
-        assert!(over_budget(9100, 4700, 3200, 22_800).is_ok());
-        assert_eq!(over_budget(9101, 4700, 3201, 22_800).unwrap_err(), "source budget exceeded: rust_production 9101 > 9100, automation 3201 > 3200");
+    fn budgets_allow_the_one_four_limits_and_name_what_is_over() {
+        assert!(over_budget(12_000, 5600, 3900, 27_500).is_ok());
+        assert_eq!(over_budget(12_001, 5600, 3901, 27_500).unwrap_err(), "source budget exceeded: rust_production 12001 > 12000, automation 3901 > 3900");
     }
 
     #[test]

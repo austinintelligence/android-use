@@ -656,7 +656,7 @@ pub(crate) fn plain_error_model(error: &Error) -> String {
     match error.code {
         Code::Args | Code::Bounds | Code::Unsupported if message.contains("Use ") => bounded_output(message, 320),
         Code::Args | Code::Bounds | Code::Unsupported => bounded_output(format!("The command needs a correction: {message}."), 320),
-        Code::Ambiguous | Code::Missing | Code::Partial | Code::Locked | Code::ScreenOff | Code::HelperKilled | Code::Stopped => bounded_output(message, 480),
+        Code::Ambiguous | Code::Missing | Code::Partial | Code::Locked | Code::ScreenOff | Code::HelperKilled | Code::Stopped | Code::Blocked | Code::Paused | Code::Denied => bounded_output(message, 480),
         Code::Permission => "Android Use's Accessibility service is off or a required Android permission is missing. Ask the user to turn on Android-Use under Settings → Accessibility on the device (and grant any permission the task needs), then retry.".into(),
         Code::Artifact => bounded_output(format!("{message}. Capture the screen before using an image alias."), 320),
         Code::Stale => "The screen changed before anything ran, so nothing was done. Retry the same command.".into(),

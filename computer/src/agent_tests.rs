@@ -53,9 +53,18 @@ mod flows {
             &["Loading"]
         } else if screen == "late" {
             &["Late"]
+        } else if screen == "com.example.bank" {
+            &["Email", "Password"]
         } else {
             &["Settings"]
         }
+    }
+
+    thread_local! {
+        /// Every text the fake device was asked to type.
+        static TYPED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+        /// What the fake device reports for `notifications`.
+        static NOTES: std::cell::RefCell<Value> = const { std::cell::RefCell::new(Value::Null) };
     }
 
     fn fake_helper(capture: Vec<u8>) -> impl FnMut(&Value) -> Option<Value> {
@@ -91,6 +100,9 @@ mod flows {
                         ]
                     ])
                 }
+                "semantic" if screen == "com.example.bank" => {
+                    json!([seq, 0, [json!(["Email", "", "text field", "", true, false]), json!(["Password", "empty password", "text field", "", true, false])]])
+                }
                 // Loading text is plain text (empty kind), as the helper reports it.
                 "semantic" => json!([seq, 0, names.iter().map(|l| json!([l, "", if *l == "Loading" { "" } else { "button" }, "", true, false])).collect::<Vec<_>>()]),
                 "resolve" if q[2]["handle"].as_i64().is_some_and(|handle| handle >= 0) => {
@@ -111,6 +123,7 @@ mod flows {
                     let (refs, tier) = if exact.is_empty() { (hits(true), 2) } else { (exact, 0) };
                     json!([seq, 0, {"r": refs, "t": tier, "l": refs.iter().map(|&i| names[i]).collect::<Vec<_>>()}])
                 }
+                "notifications" if NOTES.with(|notes| !notes.borrow().is_null()) => json!([seq, 0, NOTES.with(|notes| notes.borrow().clone())]),
                 "artifact" => {
                     let (start, end) = (q[3].as_u64().unwrap() as usize, q[4].as_u64().unwrap() as usize);
                     json!([seq, 0, capture.len(), start, STANDARD.encode(&capture[start..end])])
@@ -136,6 +149,8 @@ mod flows {
                                 (screen, generation, changes) = (
                                     if op[1] == "com.example.switches" {
                                         "switches"
+                                    } else if op[1] == "com.example.bank" {
+                                        "com.example.bank"
                                     } else if op[1] == "com.dupes" {
                                         "dupes"
                                     } else {
@@ -149,6 +164,10 @@ mod flows {
                             "tap" if screen == "late" => (changes, later) = (changes + 1, Some((std::time::Instant::now() + std::time::Duration::from_millis(400), "settings"))),
                             "tap" | "tap_point" => {
                                 dark ^= screen == "switches" && op[1] == 0;
+                                (generation, changes) = (generation + 1, changes + 1)
+                            }
+                            "text" => {
+                                TYPED.with(|typed| typed.borrow_mut().push(op[2].as_str().unwrap().to_owned()));
                                 (generation, changes) = (generation + 1, changes + 1)
                             }
                             "capture" => artifact = Some("a1"),
@@ -684,5 +703,149 @@ mod flows {
         call(&mut engine, "android_act", r#"save routine "row" from last with "Wi-Fi""#).unwrap();
         let bad = call(&mut engine, "android_act", r#"run routine "row" with "x" then tap "Bluetooth""#);
         assert!(bad.is_err(), "extra text after the value is refused");
+    }
+
+    fn engine_with_policy(policy: &str) -> Result<(Engine, tempfile::TempDir)> {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("policy.toml"), policy).unwrap();
+        let link = FakeLink::new(fake_helper(phone_screenshot()));
+        Engine::with_link(crate::device::Paths::at(dir.path().to_path_buf()).unwrap(), Box::new(link)).map(|engine| (engine, dir))
+    }
+
+    #[test]
+    fn a_denied_app_is_blocked_by_name_and_by_package_before_anything_runs() {
+        let (mut engine, _dir) = engine_with_policy("apps.deny = [\"Settings\", \"com.slow.late\"]\n").unwrap();
+        for command in [r#"open app "Settings""#, r#"open app "settings""#, r#"open app "com.android.settings""#, r#"open app "com.slow.late""#] {
+            let error = call(&mut engine, "android_act", command).err().unwrap();
+            assert_eq!(error.code, Code::Blocked, "{command}");
+            assert!(error.message.contains("Blocked by policy.toml") && error.message.contains("Nothing was run"), "{}", error.message);
+        }
+        assert!(call(&mut engine, "android_act", r#"open app "com.dupes""#).is_ok(), "an app the policy does not list still opens");
+    }
+
+    #[test]
+    fn an_allow_list_blocks_everything_else_and_read_policy_shows_the_rules() {
+        let (mut engine, _dir) = engine_with_policy("apps.allow = [\"Settings\"]\ncapture.allow = false\n").unwrap();
+        assert!(call(&mut engine, "android_act", r#"open app "Settings""#).is_ok());
+        assert_eq!(call(&mut engine, "android_act", r#"open app "com.dupes""#).err().map(|e| e.code), Some(Code::Blocked));
+        let capture = call(&mut engine, "android_act", "capture screen").err().unwrap();
+        assert!(capture.message.contains("capture.allow is false"), "{}", capture.message);
+        let shown = call(&mut engine, "android_read", "policy").unwrap().text;
+        assert!(shown.contains("apps.allow: Settings") && shown.contains("capture.allow: false"), "{shown}");
+    }
+
+    #[test]
+    fn the_action_budget_refuses_the_whole_command_that_would_pass_it() {
+        let (mut engine, _dir) = engine_with_policy("actions.max_per_session = 3\n").unwrap();
+        assert!(call(&mut engine, "android_act", r#"open app "Settings" then tap "Wi-Fi""#).is_ok());
+        let over = call(&mut engine, "android_act", r#"tap "Wi-Fi" then tap "Wi-Fi""#).err().unwrap();
+        assert!(over.message.contains("2 are used") && over.message.contains("Nothing was run"), "{}", over.message);
+        assert!(call(&mut engine, "android_act", r#"tap "Wi-Fi""#).is_ok(), "one more step still fits");
+        assert_eq!(call(&mut engine, "android_act", r#"tap "Wi-Fi""#).err().map(|e| e.code), Some(Code::Blocked));
+        assert!(call(&mut engine, "android_read", "status").is_ok(), "reads are never counted");
+    }
+
+    #[test]
+    fn a_broken_policy_file_refuses_to_open_the_session() {
+        let error = engine_with_policy("apps.allow = Settings\n").err().unwrap();
+        assert!(error.message.contains("policy.toml line 1"), "{}", error.message);
+    }
+
+    #[test]
+    fn extra_risky_words_make_a_loose_match_a_miss() {
+        // "Flaky" is on the fake settings screen; with it risky, a guessed loose label is refused.
+        let (mut engine, _dir) = engine_with_policy("risky.extra = [\"flaky\"]\n").unwrap();
+        assert!(crate::resolve::risky("Flaky thing") && !crate::resolve::risky("Calm thing"));
+        drop(engine.model_read(CommandRead::Status));
+    }
+
+    fn with_secret(value: &str, apps: &[&str]) -> (Engine, tempfile::TempDir) {
+        let (mut engine, dir) = engine();
+        let store = crate::secret::tests::Memory::default();
+        let apps: Vec<String> = apps.iter().map(|app| (*app).to_owned()).collect();
+        crate::secret::add(dir.path(), &store, "bank pin", &apps, value).unwrap();
+        engine.guard.secrets = Box::new(store);
+        TYPED.with(|typed| typed.borrow_mut().clear());
+        (engine, dir)
+    }
+
+    #[test]
+    fn a_secret_is_typed_into_a_password_field_and_appears_nowhere_the_agent_or_disk_can_see() {
+        let (mut engine, dir) = with_secret("4921", &["com.example.bank"]);
+        call(&mut engine, "android_act", r#"open app "com.example.bank""#).unwrap();
+        let reply = call(&mut engine, "android_act", r#"type secret "bank pin" in "Password""#).unwrap();
+        assert_eq!(reply.status, "done", "{}", reply.text);
+        assert_eq!(TYPED.with(|t| t.borrow().clone()), ["4921"], "the device received the value");
+        assert!(!reply.text.contains("4921"), "{}", reply.text);
+        // Nothing under the state folder (trace, journal, routines, secrets.json) holds the value.
+        call(&mut engine, "android_act", r#"save routine "login" from last"#).unwrap();
+        let mut stack = vec![dir.path().to_path_buf()];
+        while let Some(path) = stack.pop() {
+            if path.is_dir() {
+                stack.extend(std::fs::read_dir(&path).unwrap().flatten().map(|e| e.path()));
+            } else if let Ok(bytes) = std::fs::read(&path) {
+                assert!(!String::from_utf8_lossy(&bytes).contains("4921"), "{} holds the secret", path.display());
+            }
+        }
+        let routine = call(&mut engine, "android_read", "routines").unwrap().text;
+        assert!(routine.contains(r#"type secret "bank pin" in "Password""#), "the routine keeps the step, not the value: {routine}");
+    }
+
+    #[test]
+    fn a_secret_is_refused_in_a_plain_field_in_another_app_or_when_unknown() {
+        let (mut engine, _dir) = with_secret("4921", &["com.example.bank"]);
+        call(&mut engine, "android_act", r#"open app "com.example.bank""#).unwrap();
+        let plain = call(&mut engine, "android_act", r#"type secret "bank pin" in "Email""#).err().unwrap();
+        assert!(plain.message.contains("not a single password field"), "{}", plain.message);
+        let unknown = call(&mut engine, "android_act", r#"type secret "nope" in "Password""#).err().unwrap();
+        assert!(unknown.message.contains("No secret named"), "{}", unknown.message);
+        let later = call(&mut engine, "android_act", r#"tap "Email" then type secret "bank pin" in "Password""#).err().unwrap();
+        assert!(later.message.contains("first step"), "{}", later.message);
+        call(&mut engine, "android_act", r#"open app "Settings""#).unwrap();
+        let (mut other, _d) = with_secret("4921", &["com.other"]);
+        call(&mut other, "android_act", r#"open app "com.example.bank""#).unwrap();
+        let wrong_app = call(&mut other, "android_act", r#"type secret "bank pin" in "Password""#).err().unwrap();
+        assert!(wrong_app.message.contains("is not allowed in com.example.bank"), "{}", wrong_app.message);
+        assert!(TYPED.with(|t| t.borrow().is_empty()), "nothing was typed in any refusal");
+    }
+
+    #[test]
+    fn a_session_trace_holds_no_typed_password() {
+        let (mut engine, dir) = engine();
+        call(&mut engine, "android_act", r#"open app "com.example.bank""#).unwrap();
+        call(&mut engine, "android_act", r#"type "hunter2" in "Password""#).unwrap();
+        let id = std::fs::read_dir(dir.path().join("traces")).unwrap().flatten().next().unwrap().path();
+        let text = std::fs::read_to_string(id).unwrap();
+        assert!(text.contains(r#"type \"***\" in \"Password\""#) && !text.contains("hunter2"), "{text}");
+    }
+
+    #[test]
+    fn a_code_is_read_only_for_apps_the_policy_lists_and_the_text_is_not_returned_otherwise() {
+        let bank = json!({"id":"k1","time":10,"package":"com.bank","title":"Bank","text":"Your code is 482915","actions":[]});
+        NOTES.with(|notes| *notes.borrow_mut() = json!({"enabled": true, "items": [bank]}));
+        let (mut engine, _dir) = engine_with_policy("codes.apps = [\"com.bank\"]\n").unwrap();
+        assert_eq!(call(&mut engine, "android_read", r#"code from notification "Bank""#).unwrap().text, "Code: 482915 (from com.bank)");
+        let (mut closed, _d) = engine_with_policy("codes.apps = [\"com.other\"]\n").unwrap();
+        let blocked = call(&mut closed, "android_read", r#"code from notification "Bank""#).err().unwrap();
+        assert!(blocked.message.contains("codes.apps does not list com.bank") && !blocked.message.contains("482915"), "{}", blocked.message);
+        assert_eq!(call(&mut engine, "android_read", r#"code from notification "Nobody""#).err().map(|e| e.code), Some(Code::Missing));
+    }
+
+    #[test]
+    fn waiting_for_a_notification_times_out_with_a_plain_result() {
+        NOTES.with(|notes| *notes.borrow_mut() = json!({"enabled": true, "items": []}));
+        let (mut engine, _dir) = engine();
+        let started = std::time::Instant::now();
+        let reply = call(&mut engine, "android_act", r#"wait for notification from "Bank" up to 1 second"#).unwrap();
+        assert!(started.elapsed() >= std::time::Duration::from_secs(1));
+        assert_eq!((reply.status, reply.text.as_str()), ("not_found", "No \"Bank\" notification arrived within 1 seconds."));
+    }
+
+    #[test]
+    fn the_audit_reads_the_screen_the_agent_would() {
+        let (mut engine, _dir) = engine();
+        call(&mut engine, "android_act", r#"open app "com.example.switches""#).unwrap();
+        let audit = call(&mut engine, "android_read", "audit").unwrap().text;
+        assert!(audit.contains("\"alarm\" x2") && audit.contains("Not measured"), "{audit}");
     }
 }

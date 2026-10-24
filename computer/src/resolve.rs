@@ -70,9 +70,23 @@ fn lookalikes(label: &str) -> bool {
         && label.chars().any(|c| c.is_alphabetic() && !c.is_ascii() && (c == '\u{017F}' || !matches!(c, '\u{00C0}'..='\u{024F}' | '\u{1E00}'..='\u{1EFF}')))
 }
 
+thread_local! {
+    /// Extra risky words from `policy.toml` (normalized), set when a session opens.
+    static EXTRA_RISKY: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+pub(crate) fn set_extra_risky(words: &[String]) {
+    EXTRA_RISKY.with(|extra| *extra.borrow_mut() = words.iter().map(|word| normalized(word)).collect());
+}
+
+fn extra_risky(word: &str) -> bool {
+    EXTRA_RISKY.with(|extra| extra.borrow().iter().any(|w| w == word))
+}
+
 /// A risky word, or an inflection of one ("payments", "delete-all", "removed").
 fn risky_word(word: &str) -> bool {
     RISKY.contains(&word)
+        || extra_risky(word)
         || [
             "pay",
             "delet",
@@ -302,7 +316,7 @@ pub(crate) fn confirms(label: &str) -> bool {
 
 /// Whether any word of a label is one that makes acting on a guess unsafe.
 pub(crate) fn risky(label: &str) -> bool {
-    normalized(label).split(' ').any(|word| RISKY.contains(&word))
+    normalized(label).split(' ').any(|word| RISKY.contains(&word) || extra_risky(word))
 }
 
 /// Whether the only control whose label merely contains `wanted` is plainly what the agent meant:

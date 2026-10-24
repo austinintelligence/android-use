@@ -595,16 +595,39 @@ impl Engine {
     }
 
     fn resolve_app(&mut self, name: &str) -> Result<String> {
-        if looks_like_package(name) {
-            return Ok(name.to_owned());
-        }
-        match normalized(name).as_str() {
-            "settings" | "android settings" => return Ok("com.android.settings".into()),
-            "chrome" | "google chrome" => return Ok("com.android.chrome".into()),
-            _ => {}
+        let known = match normalized(name).as_str() {
+            _ if looks_like_package(name) => Some(name.to_owned()),
+            "settings" | "android settings" => Some("com.android.settings".to_owned()),
+            "chrome" | "google chrome" => Some("com.android.chrome".to_owned()),
+            _ => None,
+        };
+        if let Some(package) = known {
+            self.allow_app(name, &package)?;
+            return Ok(package);
         }
         let rows = self.bridge_read(|bridge| bridge.query("apps", Value::Null))?;
-        resolve::app(&rows, name)
+        let package = resolve::app(&rows, name)?;
+        self.allow_app(name, &package)?;
+        Ok(package)
+    }
+
+    /// Checks `policy.toml` against every spelling of the app: the name asked, its package, and
+    /// its launcher label, so denying "Settings" also stops `open app "com.android.settings"`.
+    fn allow_app(&mut self, name: &str, package: &str) -> Result<()> {
+        if !self.guard.policy.restricts_apps() {
+            return Ok(());
+        }
+        let known = match package {
+            "com.android.settings" => Some("Settings".to_owned()),
+            "com.android.chrome" => Some("Chrome".to_owned()),
+            _ => self.bridge_read(|bridge| bridge.query("apps", Value::Null)).ok().and_then(|rows| {
+                rows.as_array()?.iter().find_map(|row| match row.as_array().map(Vec::as_slice) {
+                    Some([p, label]) if p.as_str() == Some(package) => label.as_str().map(str::to_owned),
+                    _ => None,
+                })
+            }),
+        };
+        self.guard.policy.app_ok(&[name, package, known.as_deref().unwrap_or_default()])
     }
 
     fn notification_key(&mut self, target: &Target) -> Result<Box<str>> {

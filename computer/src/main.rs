@@ -2,7 +2,7 @@
 
 use au::{
     adapter,
-    api::{parse_act_command, parse_read_command, Code, Error, Read, Result},
+    api::{parse_read_command, Code, Error, Read, Result},
     clients::{self, Client, Dirs, Options},
     emulator,
     engine::{plain_error, Engine, ModelResponse},
@@ -74,18 +74,32 @@ fn run(human: bool) -> Result<Value> {
         "read" => {
             let mut engine = Engine::open()?;
             engine.load_image_space();
-            let response = parse_read_command(&a[1..].join(" ")).and_then(|command| engine.model_read(command)).map_err(|e| Error::plain(e.code, plain_error(&e)))?;
+            let response = au::session::call(&mut engine, true, &a[1..].join(" "), None).map_err(|e| Error::plain(e.code, plain_error(&e)))?;
             engine.save_image_space();
             model_value(&engine, response)?
         }
         "act" => {
             let mut engine = Engine::open()?;
             engine.load_image_space();
-            let response = parse_act_command(&a[1..].join(" ")).and_then(|actions| engine.model_act(&actions, None));
+            let response = au::session::call(&mut engine, false, &a[1..].join(" "), None);
             engine.save_image_space(); // also on failure: a failed command may still have changed the screen
             let response = response.map_err(|e| Error::plain(e.code, plain_error(&e)))?;
             model_value(&engine, response)?
         }
+        "trace" => trace_command(&a)?,
+        "secret" => secret_command(&a)?,
+        "watch" => {
+            let port = a
+                .iter()
+                .position(|arg| arg == "--port")
+                .and_then(|at| a.get(at + 1))
+                .map(|p| p.parse::<u16>().map_err(|_| Error::new(Code::Args, "--port is a number")))
+                .transpose()?
+                .unwrap_or(0);
+            au::watch::run(&au::device::Paths::base()?, port)?;
+            serde_json::json!({"ok":1})
+        }
+        "test" => return test_command(&a),
         "enroll" => install::enroll(a.get(1).ok_or_else(|| Error::new(Code::Args, "enroll requires an ADB endpoint"))?)?,
         "install" | "uninstall" if a.get(1).is_some_and(|name| !name.starts_with("--")) || a[0] == "install" => agents(&a)?,
         "setup" | "repair" => {
@@ -103,12 +117,81 @@ fn run(human: bool) -> Result<Value> {
         "uninstall" => install::uninstall(a.iter().any(|arg| arg == "--dry-run"))?,
         "version" | "--version" => serde_json::json!({"version":env!("CARGO_PKG_VERSION")}),
         "help" | "--help" | "-h" => {
-            serde_json::json!({"commands":["devices","setup [APK]","status","doctor","update [APK]","enroll ENDPOINT","repair [APK]","serve --mcp","read COMMAND","act COMMAND","install [AGENT|all] [--dry-run] [--force]","uninstall [--dry-run]","uninstall AGENT [--dry-run] [--force]","emulator doctor|install|images|create|start|stop|status|list|snapshot|destroy","targets","--target NAME (any command)"]})
+            serde_json::json!({"commands":["devices","setup [APK]","status","doctor","update [APK]","enroll ENDPOINT","repair [APK]","serve --mcp","read COMMAND","act COMMAND","install [AGENT|all] [--dry-run] [--force]","uninstall [--dry-run]","uninstall AGENT [--dry-run] [--force]","emulator doctor|install|images|create|start|stop|status|list|snapshot|destroy","targets","trace list|show ID|export ID|to-test ID","secret add NAME --apps PKG|list|remove NAME","watch [--port N]","test FILE... [--junit PATH]","--target NAME (any command)"]})
         }
         _ => return Err(Error::new(Code::Args, format!("unknown command: {}", a[0]))),
     };
     Ok(out)
 }
+/// `au trace list | show ID | export ID [--html] | to-test ID`.
+fn trace_command(a: &[String]) -> Result<Value> {
+    let root = au::device::Paths::base()?;
+    let id = || a.get(2).filter(|arg| !arg.starts_with("--")).ok_or_else(|| Error::new(Code::Args, "this command needs a trace ID; au trace list shows them"));
+    let text = |text: String| serde_json::json!({"ok":1,"text":text});
+    match a.get(1).map(String::as_str) {
+        Some("list") => Ok(au::trace::list(&root)),
+        Some("show") => Ok(text(au::trace::show(&root, id()?)?)),
+        Some("export") => Ok(text(au::trace::export_html(&root, id()?)?)),
+        Some("to-test") => Ok(text(au::trace::to_test(&root, id()?)?)),
+        _ => Err(Error::new(Code::Args, "use au trace list, show ID, export ID, or to-test ID")),
+    }
+}
+
+/// A secret's value from standard input; typing is hidden when stdin is a terminal.
+fn read_secret_value() -> Result<String> {
+    let tty = std::io::stdin().is_terminal();
+    if tty {
+        eprint!("Value (hidden): ");
+        let _ = std::process::Command::new("stty").arg("-echo").status();
+    }
+    let mut line = String::new();
+    let read = std::io::stdin().read_line(&mut line);
+    if tty {
+        let _ = std::process::Command::new("stty").arg("echo").status();
+        eprintln!();
+    }
+    read.map_err(|e| Error::new(Code::Io, e.to_string()))?;
+    Ok(line.trim_end_matches(['\r', '\n']).to_owned())
+}
+
+/// `au secret add NAME --apps PKG[,PKG] | list | remove NAME`; the value is read from stdin, never argv.
+fn secret_command(a: &[String]) -> Result<Value> {
+    let root = au::device::Paths::base()?;
+    let store = au::secret::OsStore::at(&root);
+    let name = || a.get(2).filter(|arg| !arg.starts_with("--")).ok_or_else(|| Error::new(Code::Args, "this command needs a secret NAME"));
+    match a.get(1).map(String::as_str) {
+        Some("add") => {
+            let apps: Vec<String> =
+                a.iter().position(|arg| arg == "--apps").and_then(|at| a.get(at + 1)).map(|list| list.split(',').map(str::to_owned).collect()).unwrap_or_default();
+            au::secret::add(&root, &store, name()?, &apps, &read_secret_value()?)
+        }
+        Some("list") => Ok(serde_json::json!({"ok":1,"text":au::secret::list(&root)})),
+        Some("remove") => au::secret::remove(&root, &store, name()?),
+        _ => Err(Error::new(Code::Args, "use au secret add NAME --apps PACKAGE (value on stdin), list, or remove NAME")),
+    }
+}
+
+/// `au test FILE... [--junit PATH]`: exits 1 when any file fails.
+fn test_command(a: &[String]) -> Result<Value> {
+    let junit = a.iter().position(|arg| arg == "--junit").and_then(|at| a.get(at + 1)).cloned();
+    let files: Vec<String> = a[1..].iter().filter(|arg| !arg.starts_with("--") && Some(*arg) != junit.as_ref()).cloned().collect();
+    let mut driver = au::testrun::EngineDriver(Engine::open()?);
+    let outcomes = au::testrun::run_files(&mut driver, &files)?;
+    if let Some(path) = junit {
+        std::fs::write(&path, au::testrun::junit(&outcomes)).map_err(|e| Error::new(Code::Io, format!("cannot write {path}: {e}")))?;
+    }
+    for o in &outcomes {
+        match &o.failure {
+            None => println!("PASS {} ({} steps)", o.name, o.steps),
+            Some(f) => println!("FAIL {}: line {} `{}`: {}\n{}", o.name, f.line, f.text, f.why, f.screen),
+        }
+    }
+    if outcomes.iter().any(|o| o.failure.is_some()) {
+        std::process::exit(1);
+    }
+    Ok(serde_json::json!({"ok":1,"text":format!("{} test file(s) passed", outcomes.len())}))
+}
+
 /// Refuses any `--flag` that `command` does not take, so a misspelled flag never runs the default.
 fn reject_unknown_flags(args: &[String], valid: &[&str], command: &str) -> Result<()> {
     match args.iter().find(|arg| arg.starts_with("--") && !valid.contains(&arg.as_str())) {

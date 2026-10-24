@@ -116,16 +116,19 @@ fn listing(tool: Tool) -> String {
     usages(tool, false).iter().map(|usage| format!("- {usage}\n")).collect()
 }
 
-/// Routine commands are handled before the parser (`routine.rs`), so they are listed here and not in `FORMS`.
-const ROUTINES: &str = "Routines (replay a command that worked, in one call):\n\
+/// These are handled before the parser (`session.rs`), so they are listed here and not in `FORMS`.
+const EXTRAS: &str = "Routines (replay a command that worked, in one call):\n\
 - save routine \"NAME\" from last [with \"VALUE\" ...] (each VALUE must be quoted in the last command; it becomes a parameter)\n\
 - run routine \"NAME\" [with \"VALUE\" ...] (runs like any command, so a changed screen is a miss)\n\
-- android_read routines (lists them)\n";
+Secrets and waiting:\n\
+- type secret \"NAME\" in \"FIELD\" (first step of a command; only a password field of an app the secret allows)\n\
+- wait for notification [from \"APP\"] up to N seconds (N is 1-120)\n\
+- android_read routines | secrets | policy | audit | code from notification \"APP\"\n";
 
 /// The full command list, returned by `help`.
 pub fn help_text() -> String {
     format!(
-        "{READ_TOOL} (never changes the device):\n{}\n{ACT_TOOL} (join up to 16 steps with then; N is 0-30; ask the user before camera, microphone, recording, notifications):\n{}\n{ROUTINES}",
+        "{READ_TOOL} (never changes the device):\n{}\n{ACT_TOOL} (join up to 16 steps with then; N is 0-30; ask the user before camera, microphone, recording, notifications):\n{}\n{EXTRAS}",
         listing(Tool::Read),
         listing(Tool::Act)
     )
