@@ -1,0 +1,58 @@
+{
+  "tasks": [
+    {
+      "name": "screen_timeout_30s",
+      "goal": "In Settings, set the screen timeout to 30 seconds.",
+      "reset": ["adb shell am force-stop com.android.settings", "adb shell settings put system screen_off_timeout 600000", "act press home"],
+      "verify": [{"cmd": "adb shell settings get system screen_off_timeout", "expect": "30000"}]
+    },
+    {
+      "name": "auto_rotate_off",
+      "goal": "Turn off auto-rotate screen.",
+      "reset": ["adb shell am force-stop com.android.settings", "adb shell settings put system accelerometer_rotation 1", "act press home"],
+      "verify": [{"cmd": "adb shell settings get system accelerometer_rotation", "expect": "0"}]
+    },
+    {
+      "name": "dark_theme_on",
+      "goal": "Turn on Dark theme.",
+      "reset": ["adb shell am force-stop com.android.settings", "adb shell cmd uimode night no", "act press home"],
+      "verify": [{"cmd": "adb shell cmd uimode night", "expect": "Night mode: yes"}]
+    },
+    {
+      "name": "wifi_on_from_display",
+      "goal": "Turn Wi-Fi on.",
+      "reset": ["adb shell am force-stop com.android.settings", "adb shell svc wifi disable", "act open setting \"display\""],
+      "verify": [{"cmd": "adb shell settings get global wifi_on", "expect": "1"}]
+    },
+    {
+      "name": "clock_alarm_715",
+      "goal": "In the Clock app, add an alarm for 7:15 AM and leave the alarm list showing.",
+      "reset": ["adb shell pm clear com.google.android.deskclock", "act press home"],
+      "verify": [{"cmd": "read screen", "expect": "7:15"}]
+    },
+    {
+      "name": "fixture_form_then_toggle",
+      "goal": "In the AU Benchmark Fixture app, submit the form with the text 'order 42', then turn the benchmark toggle on.",
+      "reset": ["adb shell am force-stop dev.codex.aubench", "act press home"],
+      "verify": [{"cmd": "read screen", "expect": "Submitted: order 42"}, {"cmd": "read screen", "expect": "=on"}]
+    },
+    {
+      "name": "fixture_second_details",
+      "goal": "In the AU Benchmark Fixture app, open the second Details item.",
+      "reset": ["adb shell am force-stop dev.codex.aubench", "act press home"],
+      "verify": [{"cmd": "read screen", "expect": "Details 2 opened", "not": "Details 1 opened"}]
+    },
+    {
+      "name": "fixture_slow_then_confirm",
+      "goal": "In the AU Benchmark Fixture app, load the slow content, wait until it is ready, then open the benchmark dialog and confirm it.",
+      "reset": ["adb shell am force-stop dev.codex.aubench", "act press home"],
+      "verify": [{"cmd": "read screen", "expect": "Dialog confirmed"}]
+    },
+    {
+      "name": "fixture_save_draft",
+      "goal": "In the AU Benchmark Fixture app, save a draft.",
+      "reset": ["adb shell am force-stop dev.codex.aubench", "act press home"],
+      "verify": [{"cmd": "read screen", "expect": "Saved draft"}]
+    }
+  ]
+}
