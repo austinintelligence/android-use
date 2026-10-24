@@ -644,4 +644,45 @@ mod flows {
         assert!(engine.model_read(CommandRead::Status).unwrap().text.starts_with("Ready."));
         assert_eq!(engine.model_read(CommandRead::Notifications).err().map(|error| error.code), Some(Code::Unsupported));
     }
+
+    fn call(engine: &mut Engine, tool: &str, command: &str) -> Result<ModelResponse> {
+        crate::adapter::new_call(engine, tool, json!({"command": command}), None)
+    }
+
+    #[test]
+    fn a_saved_routine_replays_with_a_new_value_in_one_call() {
+        let (mut engine, _dir) = engine();
+        let first = call(&mut engine, "android_act", r#"open app "Settings" then tap "Wi-Fi""#).unwrap();
+        assert_eq!(first.status, "done", "{}", first.text);
+        let saved = call(&mut engine, "android_act", r#"save routine "open row" from last with "Wi-Fi""#).unwrap();
+        assert!(saved.text.contains(r#"tap {1}"#), "{}", saved.text);
+        assert_eq!(call(&mut engine, "android_read", "routines").unwrap().text, r#"open row: open app "Settings" then tap {1}"#);
+        let replay = call(&mut engine, "android_act", r#"run routine "open row" with "Save draft""#).unwrap();
+        assert_eq!(replay.status, "done", "{}", replay.text);
+        assert!(replay.text.starts_with("Done"), "{}", replay.text);
+    }
+
+    #[test]
+    fn a_routine_whose_label_is_gone_stops_with_a_miss_and_nothing_is_saved_from_a_miss() {
+        let (mut engine, _dir) = engine();
+        assert!(call(&mut engine, "android_act", r#"save routine "x" from last"#).unwrap_err_or_text().contains("nothing to save yet"));
+        call(&mut engine, "android_act", r#"open app "Settings" then tap "Wi-Fi""#).unwrap();
+        call(&mut engine, "android_act", r#"save routine "row" from last with "Wi-Fi""#).unwrap();
+        let miss = call(&mut engine, "android_act", r#"run routine "row" with "Renamed row""#).unwrap();
+        assert!(miss.failed || miss.status != "done", "{}", miss.text);
+        // The failed replay did not replace the last good command.
+        let again = call(&mut engine, "android_act", r#"save routine "row2" from last with "Wi-Fi""#).unwrap();
+        assert!(again.text.contains("Saved routine"), "{}", again.text);
+        assert!(call(&mut engine, "android_act", r#"run routine "nope""#).unwrap_err_or_text().contains("no routine named"));
+        assert!(call(&mut engine, "android_act", r#"run routine "row""#).unwrap_err_or_text().contains("takes 1 value, not 0"));
+    }
+
+    #[test]
+    fn a_routine_value_cannot_smuggle_in_another_step() {
+        let (mut engine, _dir) = engine();
+        call(&mut engine, "android_act", r#"open app "Settings" then tap "Wi-Fi""#).unwrap();
+        call(&mut engine, "android_act", r#"save routine "row" from last with "Wi-Fi""#).unwrap();
+        let bad = call(&mut engine, "android_act", r#"run routine "row" with "x" then tap "Bluetooth""#);
+        assert!(bad.is_err(), "extra text after the value is refused");
+    }
 }

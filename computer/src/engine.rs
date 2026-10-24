@@ -30,6 +30,8 @@ pub struct Engine {
     pub(crate) artifacts: Artifacts,
     journal: Journal,
     pub(crate) agent: AgentState,
+    /// The last act command that ran without failing, for `save routine ... from last`.
+    pub(crate) last_act: Option<String>,
     /// Random per-process salt for operation ids. Request identities such as
     /// JSON-RPC ids restart in every client session, while the journal is
     /// durable; without the salt a new session could collide with old records.
@@ -69,6 +71,7 @@ impl Engine {
             browser: None,
             scene: None,
             agent: AgentState::default(),
+            last_act: None,
             session: session_id(),
             request_counter: 0,
             stopped: false,

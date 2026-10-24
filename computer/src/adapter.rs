@@ -1,7 +1,7 @@
 use crate::{
     api::{parse_act_command, parse_read_command, tool_schemas, Code, Error, Result, MAX_FRAME},
     engine::{plain_error, Engine, ModelResponse},
-    spec,
+    routine, spec,
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{json, Value};
@@ -82,7 +82,7 @@ fn call_tool(engine: &mut Engine, id: &Value, params: &Value) -> Value {
     model_result(new_call(engine, name, args, Some(&identity)))
 }
 
-fn new_call(engine: &mut Engine, name: &str, args: Value, request_identity: Option<&str>) -> Result<ModelResponse> {
+pub(crate) fn new_call(engine: &mut Engine, name: &str, args: Value, request_identity: Option<&str>) -> Result<ModelResponse> {
     if args.as_object().is_none_or(|object| object.len() != 1 || !object.contains_key("command")) {
         return Err(Error::new(Code::Args, "tool calls accept only the command string"));
     }
@@ -90,12 +90,35 @@ fn new_call(engine: &mut Engine, name: &str, args: Value, request_identity: Opti
     // The dotted names of earlier releases are still accepted, though no longer listed: some
     // model APIs reject dots in tool names.
     match name {
+        spec::READ_TOOL | "android.read" if command.trim().eq_ignore_ascii_case("routines") => Ok(ModelResponse { text: routine::list(engine.root()), ..Default::default() }),
         spec::READ_TOOL | "android.read" => engine.model_read(parse_read_command(command)?),
-        spec::ACT_TOOL | "android.act" => {
-            let actions = parse_act_command(command)?;
-            engine.model_act(&actions, request_identity)
-        }
+        spec::ACT_TOOL | "android.act" => match routine::parse(command) {
+            Some(meta) => run_routine(engine, meta?, request_identity),
+            None => act(engine, command, request_identity),
+        },
         _ => Err(Error::new(Code::Args, format!("tool must be {} or {}", spec::READ_TOOL, spec::ACT_TOOL))),
+    }
+}
+
+/// Runs an act command and remembers it when it ran to the end (a clean miss is not success).
+fn act(engine: &mut Engine, command: &str, request_identity: Option<&str>) -> Result<ModelResponse> {
+    let response = engine.model_act(&parse_act_command(command)?, request_identity)?;
+    if !response.failed && response.status == "done" {
+        engine.last_act = Some(command.to_owned());
+    }
+    Ok(response)
+}
+
+fn run_routine(engine: &mut Engine, meta: routine::Meta, request_identity: Option<&str>) -> Result<ModelResponse> {
+    match meta {
+        routine::Meta::Save { name, params } => {
+            let last = engine.last_act.clone().ok_or_else(|| Error::new(Code::Args, "nothing to save yet: run a command that works first"))?;
+            Ok(ModelResponse { text: routine::save(engine.root(), &name, &last, &params)?, ..Default::default() })
+        }
+        routine::Meta::Run { name, args } => {
+            let command = routine::expand(&name, &routine::load(engine.root(), &name)?, &args)?;
+            act(engine, &command, request_identity)
+        }
     }
 }
 

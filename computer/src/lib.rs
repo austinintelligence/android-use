@@ -21,6 +21,7 @@ mod journal;
 mod marks;
 mod present;
 mod resolve;
+mod routine;
 pub mod spec;
 pub mod tree;
 mod visual;
