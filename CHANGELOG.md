@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.3.0 — 2026-10-15
+## 1.3.0 — 2026-10-24
 
 **Highlights.** 1.3.0 hardens and speeds up 1.2 without changing its commands, tools, or flags. The helper now proves who it is before `au` talks to it, `au` installs only a helper signed with the pinned key, and the release path is tag-gated, signed in isolation, published to npm with provenance, and smoke-tested from the real packages on three systems. Agents act first, `set` is idempotent, misses suggest a fix, and a locked phone, a dark screen, or a killed helper each return a typed result with one next step. Every finding from the 1.2 review is fixed here, left to a named 2.0 component, or closed as won't-fix.
 
