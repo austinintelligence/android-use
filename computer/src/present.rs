@@ -17,9 +17,14 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Packages whose windows are Android's own consent prompts.
+const SYSTEM_PROMPTS: [&str; 4] =
+    ["com.google.android.permissioncontroller", "com.android.permissioncontroller", "com.android.packageinstaller", "com.google.android.packageinstaller"];
 const POLL_MS: u64 = 40;
 const LOADING_MS: u64 = 1500;
 const LATE_MS: u64 = 600;
+/// How long a screen that keeps changing is followed before it is reported as it is.
+const CHANGING_MS: u64 = 700;
 pub(crate) const SPACE_FILE: &str = "screen-space.json";
 
 impl Engine {
@@ -28,6 +33,7 @@ impl Engine {
         let rows = self.semantic_rows(focus)?;
         let previous = if focus.is_empty() { self.agent.snapshot.replace(rows.clone()) } else { None };
         let previous_was_shown = previous.is_some();
+        let notes = if focus.is_empty() { self.window_notes() } else { Vec::new() };
         let mut text = match (delta, previous) {
             (true, Some(previous)) => {
                 self.agent.marked_in = None; // A diff does not show the new numbering.
@@ -36,6 +42,9 @@ impl Engine {
             _ => format_semantic_rows(&rows, full, focus),
         };
         self.note_seen(&rows, &text, focus.is_empty() && !(delta && previous_was_shown));
+        if !notes.is_empty() {
+            text = format!("{}\n{text}", notes.join("\n"));
+        }
         let mut image = None;
         if focus.is_empty() && rows.iter().filter(|row| row.kind != "heading").count() <= 1 {
             if let Some((shot, note)) = self.capture_screen_for_model() {
@@ -82,22 +91,30 @@ impl Engine {
                 // generation alone may still be followed by a late change. Poll the cheap
                 // generation and read rows only when it moves.
                 let begun = Instant::now();
+                // A screen that changed is reported once it holds still for a poll, so a list that
+                // is still filling in is not mistaken for the finished one.
+                let (mut steady, mut changing) = (false, false);
                 loop {
                     let loading = rows.len() <= 6 && rows.iter().any(|row| row.kind.is_empty() && normalized(&row.label).starts_with("loading"));
                     let cap = if rows.is_empty() || loading {
                         LOADING_MS
                     } else if seen == self.agent.acted_from {
                         LATE_MS
+                    } else if !steady {
+                        CHANGING_MS
                     } else {
                         break;
                     };
                     if begun.elapsed() >= Duration::from_millis(cap) {
+                        changing = !steady && seen != self.agent.acted_from && !loading && !rows.is_empty();
                         break;
                     }
                     thread::sleep(Duration::from_millis(POLL_MS));
                     if let Ok((generation, _)) = self.bridge_read(|bridge| bridge.status()) {
                         if generation != seen {
-                            (seen, rows) = (generation, self.semantic_rows("").ok()?);
+                            (seen, rows, steady) = (generation, self.semantic_rows("").ok()?, false);
+                        } else {
+                            steady = true;
                         }
                     }
                 }
@@ -115,7 +132,11 @@ impl Engine {
                 };
                 self.note_seen(&rows, &text, whole);
                 self.agent.snapshot = Some(rows);
-                Some(text)
+                let text = match self.window_notes() {
+                    notes if notes.is_empty() => text,
+                    notes => format!("{}\n{text}", notes.join("\n")),
+                };
+                Some(if changing { format!("{text}\nThe screen was still changing; read it again if something is missing.") } else { text })
             }
             Surface::Browser => self.read_page().ok().map(|page| format!("Now: {}", format_browser_page(&page))),
         }
@@ -156,6 +177,48 @@ impl Engine {
             lines.insert(normalized(&resolve::from_row(line).map_or_else(|| line.to_owned(), |(name, _)| name)));
         }
         self.agent.seen.extend(rows.iter().filter(|row| lines.contains(&normalized(&row.label))).map(|row| normalized(&row.label)));
+    }
+
+    /// The windows other than the one listed: an open dialog or popup, the keyboard, and Android's
+    /// own prompts. Empty on a helper without the `tree` op, or when it cannot be read.
+    pub(crate) fn window_notes(&mut self) -> Vec<String> {
+        let Ok((_, caps)) = self.bridge_read(|bridge| bridge.status()) else { return Vec::new() };
+        if caps & crate::tree::CAP_TREE == 0 {
+            return Vec::new();
+        }
+        let Ok(tree) = self.bridge_read(|bridge| bridge.tree(caps)) else { return Vec::new() };
+        let mut notes = Vec::new();
+        let apps: Vec<_> = tree.windows.iter().filter(|w| w.kind == 1 && w.display == 0).collect();
+        if let Some(top) = apps.iter().max_by_key(|w| w.layer).filter(|_| apps.len() > 1) {
+            let title = display_n(&top.title, 80);
+            notes.push(if title.is_empty() { "Dialog or popup open.".to_owned() } else { format!("Dialog: {title}") });
+        }
+        if let Some(prompt) = tree.windows.iter().find(|w| SYSTEM_PROMPTS.contains(&w.pkg.as_str())) {
+            let title = display_n(&prompt.title, 80);
+            notes.push(format!("Android prompt{}: only a person answers it.", if title.is_empty() { String::new() } else { format!(" \"{title}\"") }));
+        }
+        if tree.windows.iter().any(|w| w.kind == 2) {
+            notes.push("Keyboard is open.".into());
+        }
+        if tree.truncated {
+            notes.push("The window list was cut short.".into());
+        }
+        notes
+    }
+
+    /// Whether Android's own permission or install prompt is up.
+    pub(crate) fn system_prompt_open(&mut self) -> bool {
+        self.window_notes().iter().any(|note| note.starts_with("Android prompt"))
+    }
+
+    /// The screen as it is now, for a command that stopped part-way: a short listing the agent can
+    /// act on at once. Empty when the screen cannot be read.
+    pub(crate) fn recovery_view(&mut self) -> String {
+        let Ok(rows) = self.semantic_rows("") else { return String::new() };
+        let text = format_semantic_rows(&rows, false, "");
+        self.note_seen(&rows, &text, true);
+        self.agent.snapshot = Some(rows);
+        format!("\nNow on screen:\n{}", bounded_output(text, 1200))
     }
 
     pub(crate) fn semantic_rows(&mut self, focus: &str) -> Result<Vec<SemanticRow>> {

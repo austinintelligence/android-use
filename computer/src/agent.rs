@@ -230,9 +230,11 @@ impl Engine {
                         Code::Timeout => "the next step timed out before it changed anything.".to_owned(),
                         _ => plain_error_model(&error),
                     };
+                    // Show where things stand, so the next move needs no separate read.
+                    let view = if code == Code::Partial { self.recovery_view() } else { String::new() };
                     return Err(Error::plain(
                         code,
-                        format!("Partly done: {} Then: {cause} Read the screen and send only the steps that are still needed; do not repeat the ones that ran.", completed(&done)),
+                        format!("Partly done: {} Then: {cause} Send only the steps that are still needed; do not repeat the ones that ran.{view}", completed(&done)),
                     ));
                 }
                 Err(error) => return Err(error),

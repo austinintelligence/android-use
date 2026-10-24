@@ -55,6 +55,8 @@ mod flows {
             &["Late"]
         } else if screen == "com.example.bank" {
             &["Email", "Password"]
+        } else if screen == "feed" {
+            &["Item"]
         } else {
             &["Settings"]
         }
@@ -63,6 +65,8 @@ mod flows {
     thread_local! {
         /// Every text the fake device was asked to type.
         static TYPED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+        /// The windows the fake device reports through the `tree` op; none means a helper without it.
+        static TREE: std::cell::RefCell<Option<Value>> = const { std::cell::RefCell::new(None) };
         /// What the fake device reports for `notifications`.
         static NOTES: std::cell::RefCell<Value> = const { std::cell::RefCell::new(Value::Null) };
     }
@@ -84,7 +88,13 @@ mod flows {
             let seq = q[0].clone();
             let names = labels(screen);
             let reply = match q[1].as_str().unwrap() {
-                "status" => json!([seq, 0, generation, 7]),
+                // A live feed: the screen has changed again by the time anyone asks.
+                "status" if screen == "feed" => {
+                    generation += 1;
+                    json!([seq, 0, generation, 7])
+                }
+                "status" => json!([seq, 0, generation, TREE.with(|tree| if tree.borrow().is_some() { 15 } else { 7 })]),
+                "tree" => json!([seq, 0, TREE.with(|tree| tree.borrow().clone().unwrap_or(Value::Null))]),
                 "observe" if q[2].as_str() == Some(generation.to_string().as_str()) => json!([seq, 0, generation]),
                 "observe" => json!([seq, 0, generation, screen, names.iter().enumerate().map(|(i, l)| json!([i, l, 98, 3])).collect::<Vec<_>>()]),
                 // "Dark mode" flips when tapped; "Sticky" is a switch whose tap changes nothing.
@@ -151,6 +161,8 @@ mod flows {
                                         "switches"
                                     } else if op[1] == "com.example.bank" {
                                         "com.example.bank"
+                                    } else if op[1] == "com.slow.feed" {
+                                        "feed"
                                     } else if op[1] == "com.dupes" {
                                         "dupes"
                                     } else {
@@ -390,16 +402,20 @@ mod flows {
     fn only_rows_that_were_shown_count_as_seen_and_a_new_screen_forgets_the_old_one() {
         let (mut engine, _dir) = engine();
         let rows: Vec<SemanticRow> = (0..70)
-            .map(|i| SemanticRow { label: format!("Row {i}"), value: String::new(), kind: String::new(), state: String::new(), enabled: true, selected: false, handle: None })
+            .map(|i| SemanticRow { label: format!("{i} row"), value: String::new(), kind: String::new(), state: String::new(), enabled: true, selected: false, handle: None })
             .collect();
         let shown = format_semantic_rows(&rows, false, "");
         engine.note_seen(&rows, &shown, true);
-        assert!(engine.agent.seen.contains("row 3") && !engine.agent.seen.contains("row 69"), "rows cut from the output were never shown");
+        assert!(engine.agent.seen.contains("3 row") && !engine.agent.seen.contains("69 row"), "rows cut from the output were never shown");
+        // Rows folded into "+N more like" were not shown either, only the first two and the last.
+        let folded: Vec<SemanticRow> = (0..30).map(|i| SemanticRow { label: format!("Song {i}"), ..rows[0].clone() }).collect();
+        engine.note_seen(&folded, &format_semantic_rows(&folded, false, ""), true);
+        assert!(engine.agent.seen.contains("song 0") && engine.agent.seen.contains("song 29") && !engine.agent.seen.contains("song 12"), "{:?}", engine.agent.seen);
         let row = |label: &str| SemanticRow { label: label.into(), ..rows[0].clone() };
         let pair = [row("Delete account settings"), row("Delete account")];
         engine.note_seen(&pair, "Delete account settings", true);
         assert!(engine.agent.seen.contains("delete account settings") && !engine.agent.seen.contains("delete account"), "a label inside another row's text was not shown");
-        engine.note_seen(&rows[..1], "Row 0", true);
+        engine.note_seen(&rows[..1], "0 row", true);
         assert_eq!(engine.agent.seen.len(), 1, "a new screen replaces what was seen");
     }
 
@@ -513,6 +529,8 @@ mod flows {
         assert_eq!(error.code, Code::Partial);
         // The launch ran as its own plan, so the failed check is reported against the new screen.
         assert!(error.message.starts_with("Partly done: Opened Settings.") && error.message.contains(r#"verify "Bluetooth" is gone"#), "{}", error.message);
+        // The reply already shows where things stand, so no separate read is needed.
+        assert!(error.message.contains("Now on screen:\n") && error.message.contains("Wi-Fi") && error.message.contains("Bluetooth"), "{}", error.message);
     }
 
     #[test]
@@ -847,5 +865,64 @@ mod flows {
         call(&mut engine, "android_act", r#"open app "com.example.switches""#).unwrap();
         let audit = call(&mut engine, "android_read", "audit").unwrap().text;
         assert!(audit.contains("\"alarm\" x2") && audit.contains("Not measured"), "{audit}");
+    }
+
+    #[test]
+    fn a_screen_that_never_holds_still_is_reported_at_the_cap_with_a_note() {
+        let (mut engine, _dir) = engine();
+        let started = std::time::Instant::now();
+        let reply = call(&mut engine, "android_act", r#"open app "com.slow.feed""#).unwrap();
+        assert!(reply.text.contains("The screen was still changing"), "{}", reply.text);
+        assert!(started.elapsed() < std::time::Duration::from_secs(4), "the wait is capped: {:?}", started.elapsed());
+        let settled = call(&mut engine, "android_act", r#"open app "Settings""#).unwrap();
+        assert!(!settled.text.contains("still changing"), "a steady screen has no note: {}", settled.text);
+    }
+
+    fn window(kind: i32, layer: i32, title: &str, pkg: &str) -> Value {
+        json!({"type": kind, "layer": layer, "display": 0, "bounds": [0, 0, 10, 10], "title": title, "pkg": pkg, "active": kind == 1, "focused": false, "root": null})
+    }
+
+    fn show_windows(windows: Vec<Value>, truncated: bool) {
+        TREE.with(|tree| *tree.borrow_mut() = Some(json!({"truncated": truncated, "nodes": 0, "seen": 0, "windows": windows})));
+    }
+
+    #[test]
+    fn a_dialog_the_keyboard_and_an_android_prompt_get_one_line_each_above_the_listing() {
+        let (mut engine, _dir) = engine();
+        show_windows(vec![window(1, 0, "Settings", "com.android.settings"), window(1, 3, "Allow notifications?", "com.android.settings"), window(2, 5, "", "ime")], false);
+        let screen = call(&mut engine, "android_read", "screen").unwrap().text;
+        assert!(screen.starts_with("Dialog: Allow notifications?\nKeyboard is open.\n"), "{screen}");
+        show_windows(vec![window(1, 0, "Settings", "com.android.settings"), window(1, 4, "", "com.android.settings")], true);
+        let untitled = call(&mut engine, "android_read", "screen").unwrap().text;
+        assert!(untitled.starts_with("Dialog or popup open.\nThe window list was cut short.\n"), "{untitled}");
+        show_windows(vec![window(1, 0, "Settings", "com.android.settings")], false);
+        assert!(!call(&mut engine, "android_read", "screen").unwrap().text.contains("Dialog"), "a single window adds nothing");
+        TREE.with(|tree| *tree.borrow_mut() = None);
+    }
+
+    #[test]
+    fn a_helper_without_the_tree_op_lists_exactly_what_it_did_before() {
+        TREE.with(|tree| *tree.borrow_mut() = None);
+        let (mut engine, _dir) = engine();
+        let screen = call(&mut engine, "android_read", "screen").unwrap().text;
+        assert!(screen.starts_with("Settings") && !screen.contains("Dialog") && !screen.contains("Keyboard") && !screen.contains("Android prompt"), "{screen}");
+    }
+
+    #[test]
+    fn the_agent_cannot_answer_androids_own_prompt_but_can_tap_the_same_word_elsewhere() {
+        let (mut engine, _dir) = engine();
+        call(&mut engine, "android_act", r#"open app "Settings""#).unwrap();
+        show_windows(vec![window(1, 0, "Settings", "com.android.settings"), window(1, 2, "Allow Maps to send notifications?", "com.google.android.permissioncontroller")], false);
+        let screen = call(&mut engine, "android_read", "screen").unwrap().text;
+        assert!(screen.contains("Android prompt \"Allow Maps to send notifications?\": only a person answers it."), "{screen}");
+        for command in [r#"tap "Allow""#, r#"tap "OK""#, r#"hold "Accept""#] {
+            let error = call(&mut engine, "android_act", command).err().unwrap();
+            assert_eq!(error.code, Code::Blocked, "{command}");
+            assert!(error.message.contains("Only a person answers it") && error.message.contains("Nothing was run"), "{}", error.message);
+        }
+        assert!(call(&mut engine, "android_act", r#"tap "Wi-Fi""#).is_ok(), "other taps still work under the prompt");
+        show_windows(vec![window(1, 0, "Settings", "com.android.settings")], false);
+        assert!(call(&mut engine, "android_act", r#"tap "OK""#).is_ok(), "without the prompt, OK is an ordinary label");
+        TREE.with(|tree| *tree.borrow_mut() = None);
     }
 }

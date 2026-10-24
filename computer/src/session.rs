@@ -46,6 +46,11 @@ fn check_control(root: &Path, acts: bool) -> Result<()> {
     }
 }
 
+/// Whether a step taps a control that answers a prompt (Allow, OK, Accept, ...).
+fn answers_prompt(action: &Action) -> bool {
+    matches!(action, Action::Android(AndroidAction::Tap(target) | AndroidAction::Hold(target)) if resolve::confirms(&target.label))
+}
+
 fn media(action: &Action) -> bool {
     matches!(
         action,
@@ -58,6 +63,10 @@ fn media(action: &Action) -> bool {
 fn check_policy(engine: &mut Engine, actions: &[Action]) -> Result<()> {
     if actions.iter().any(media) {
         engine.guard.policy.capture_ok()?;
+    }
+    // Android's own permission and install prompts are answered by a person, never by the agent.
+    if actions.iter().any(answers_prompt) && engine.system_prompt_open() {
+        return Err(Error::plain(Code::Blocked, "Android is showing its own permission or install prompt. Only a person answers it; ask the user. Nothing was run."));
     }
     if let Some(max) = engine.guard.policy.max_actions {
         let steps = actions.len() as u32;
