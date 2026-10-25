@@ -24,7 +24,7 @@
 - `type secret` needs a field the helper's own flags mark as a password, with no field or text on screen imitating one; replies hide any line that still holds a piece of the value, so shortened or cleaned-up copies cannot leak it.
 - Phone approvals: the helper runs no actions while one waits, so no connection can press its buttons; it is not shown over the lock screen; steps longer than the 300 characters the phone shows are refused; Stop and pause are checked again after the wait. The prompt cannot be captured in a screenshot or recording, and turning the phone while it is up no longer counts as Deny.
 - Trace redaction follows the grammar (`type`/`TYPE`, `in`/`into`, curly quotes, `eN` targets) and redacts routine values. The reply to a command that typed hidden text, values given to `save routine`, and a code read from a notification are not kept in the trace.
-- `au watch` writes Pause and Stop in one step, so a session never reads a half-written file as "carry on". A damaged `secrets.json` stops `au secret add` and `remove` instead of being rewritten, and `remove` reports a value the system store kept (or could not confirm gone).
+- `au watch` writes Pause and Stop in one step, so a session never reads a half-written file as "carry on". Re-adding a secret with a different app list drops the removed apps before the new value is stored, so a failure part-way never widens who receives it. A damaged `secrets.json` stops `au secret add` and `remove` instead of being rewritten, and `remove` reports a value the system store kept (or could not confirm gone).
 - Pulls copy regular files only, are checked against 64 MB again once copied, and never replace a file that appeared meanwhile; transfers count against `actions.max_per_session`.
 
 ### Added

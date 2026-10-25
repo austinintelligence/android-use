@@ -176,9 +176,19 @@ pub fn add(root: &Path, store: &dyn SecretStore, name: &str, apps: &[String], va
     if !typeable(value) {
         return Err(Error::new(Code::Args, "a secret is 1 to 256 characters without quotes, backslashes or control characters"));
     }
+    let key = normalized(name);
     let mut meta = load_meta(root)?;
-    store.set(&normalized(name), value)?;
-    meta.insert(normalized(name), json!(apps));
+    // Narrowed first: before the new value is stored, only apps on both the old and the new list
+    // keep the name, so a failure part-way never leaves an app the new list drops with the value.
+    if let Some(old) = meta.get(&key).map(apps_of) {
+        let both: Vec<&String> = old.iter().filter(|app| apps.contains(app)).collect();
+        if both.len() < old.len() {
+            meta.insert(key.clone(), json!(both));
+            save_meta(root, &meta)?;
+        }
+    }
+    store.set(&key, value)?;
+    meta.insert(key, json!(apps));
     save_meta(root, &meta)?;
     Ok(json!({"ok":1,"text":format!("Saved secret \"{name}\" for {}.", apps.join(", "))}))
 }
@@ -312,6 +322,28 @@ pub(crate) mod tests {
         assert_eq!(allowed_apps(d.path(), "BANK  pin"), Some(vec!["com.example.bank".into()]));
         remove(d.path(), &store, "bank pin").unwrap();
         assert!(store.get("bank pin").unwrap().is_none() && list(d.path()).starts_with("No secrets"));
+    }
+
+    /// A store that refuses every new value.
+    struct Refusing;
+    impl SecretStore for Refusing {
+        fn get(&self, _: &str) -> Result<Option<String>> {
+            Ok(None)
+        }
+        fn set(&self, _: &str, _: &str) -> Result<()> {
+            Err(Error::plain(Code::Unsupported, "refused"))
+        }
+        fn remove(&self, _: &str) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_re_add_that_fails_part_way_leaves_only_apps_on_both_lists() {
+        let d = tempfile::tempdir().unwrap();
+        add(d.path(), &Memory::default(), "pin", &["com.a".into(), "com.b".into()], "1111").unwrap();
+        assert!(add(d.path(), &Refusing, "pin", &["com.b".into(), "com.c".into()], "2222").is_err());
+        assert_eq!(allowed_apps(d.path(), "pin"), Some(vec!["com.b".into()]), "com.a was dropped before the new value went in");
     }
 
     #[test]
