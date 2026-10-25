@@ -252,6 +252,9 @@ final class Bridge implements AutoCloseable {
                 case "apps":
                     return new JSONArray().put(seq).put(0).put(apps(context));
                 case "run":
+                    // While a person decides on an approval, nothing acts on the screen: no
+                    // connection, this one or another, can press the prompt's buttons.
+                    if (Approval.waiting(SystemClock.elapsedRealtime())) return err(seq, 12);
                     return vm.run(seq, q);
                 case "artifact":
                     return capture.read(

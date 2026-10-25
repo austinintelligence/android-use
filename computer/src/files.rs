@@ -87,10 +87,9 @@ pub(crate) fn run(engine: &mut Engine, transfer: &Transfer) -> Result<String> {
         Transfer::Pull(name) => {
             let dest = plan_pull(&dir, name)?;
             let remote = format!("{REMOTE_DIR}/{name}");
-            let size = String::from_utf8_lossy(&engine.adb(&["shell", "stat", "-c", "%s", &format!("'{remote}'")], Duration::from_secs(20))?)
-                .trim()
-                .parse::<u64>()
-                .map_err(|_| Error::plain(Code::Missing, format!("There is no \"{name}\" in the phone's Downloads.")))?;
+            let stat = String::from_utf8_lossy(&engine.adb(&["shell", "stat", "-c", "%F|%s", &format!("'{remote}'")], Duration::from_secs(20))?).trim().to_owned();
+            let size =
+                remote_file_size(&stat).ok_or_else(|| Error::plain(Code::Missing, format!("There is no file \"{name}\" in the phone's Downloads (a folder is not pulled).")))?;
             if size > MAX_BYTES {
                 return Err(Error::plain(Code::Bounds, "Files over 64 MB are not transferred."));
             }
@@ -100,8 +99,23 @@ pub(crate) fn run(engine: &mut Engine, transfer: &Transfer) -> Result<String> {
     }
 }
 
+/// The size from `stat -c '%F|%s'`, only for a regular file: a folder's own size says nothing about
+/// what `adb pull` would copy out of it.
+fn remote_file_size(stat: &str) -> Option<u64> {
+    let (kind, size) = stat.split_once('|')?;
+    kind.starts_with("regular").then(|| size.trim().parse().ok()).flatten()
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_a_regular_remote_file_has_a_size() {
+        assert_eq!(super::remote_file_size("regular file|1234"), Some(1234));
+        assert_eq!(super::remote_file_size("regular empty file|0"), Some(0));
+        assert_eq!(super::remote_file_size("directory|4096"), None);
+        assert_eq!(super::remote_file_size("stat: No such file"), None);
+    }
+
     use super::*;
 
     #[test]

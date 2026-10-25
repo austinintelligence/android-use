@@ -145,8 +145,13 @@ impl Engine {
     /// Runs a parsed action command. Consecutive actions on the same surface
     /// run as one bounded plan; the command stops at the first plan that
     /// fails and reports exactly what did and did not run.
+    ///
+    /// `request_identity` names one request and what it asked: the session layer passes the
+    /// JSON-RPC id joined with the command text, so a resent request gets its first reply and a
+    /// reused id with another command does not. (Formatting the parsed actions instead would pull
+    /// their whole `Debug` code into the binary.)
     pub fn model_act(&mut self, actions: &[Action], request_identity: Option<&str>) -> Result<ModelResponse> {
-        let key = request_identity.map(|id| Box::<str>::from(format!("{id}\0{actions:?}")));
+        let key = request_identity.map(Box::<str>::from);
         if let Some((_, earlier)) = self.agent.replies.iter().find(|(seen, _)| key.as_ref() == Some(seen)) {
             return copy(earlier);
         }
@@ -604,32 +609,63 @@ impl Engine {
             _ => None,
         };
         if let Some(package) = known {
-            self.allow_app(name, &package)?;
+            self.allow_app(Some(name), &package)?;
             return Ok(package);
         }
         let rows = self.bridge_read(|bridge| bridge.query("apps", Value::Null))?;
         let package = resolve::app(&rows, name)?;
-        self.allow_app(name, &package)?;
+        // The words asked only led to this app by a loose match, so they are not one of its names.
+        self.allow_app(None, &package)?;
         Ok(package)
     }
 
-    /// Checks `policy.toml` against every spelling of the app: the name asked, its package, and
-    /// its launcher label, so denying "Settings" also stops `open app "com.android.settings"`.
-    fn allow_app(&mut self, name: &str, package: &str) -> Result<()> {
-        if !self.guard.policy.restricts_apps() {
-            return Ok(());
-        }
-        let known = match package {
+    /// An app's launcher label: `Ok(None)` for a package with no launcher entry (the home screen,
+    /// system UI, Android's own prompts), an error when the app list cannot be read.
+    fn app_label(&mut self, package: &str) -> Result<Option<String>> {
+        Ok(match package {
             "com.android.settings" => Some("Settings".to_owned()),
             "com.android.chrome" => Some("Chrome".to_owned()),
-            _ => self.bridge_read(|bridge| bridge.query("apps", Value::Null)).ok().and_then(|rows| {
-                rows.as_array()?.iter().find_map(|row| match row.as_array().map(Vec::as_slice) {
+            _ => {
+                let rows = self.bridge_read(|bridge| bridge.query("apps", Value::Null))?;
+                rows.as_array().into_iter().flatten().find_map(|row| match row.as_array().map(Vec::as_slice) {
                     Some([p, label]) if p.as_str() == Some(package) => label.as_str().map(str::to_owned),
                     _ => None,
                 })
-            }),
+            }
+        })
+    }
+
+    /// Checks `policy.toml` against every spelling of the app: the package, its launcher label, and
+    /// the name asked when that name is itself a spelling of the app (a package, "Settings"), so
+    /// denying "Settings" also stops `open app "com.android.settings"`.
+    fn allow_app(&mut self, asked: Option<&str>, package: &str) -> Result<()> {
+        if !self.guard.policy.restricts_apps() {
+            return Ok(());
+        }
+        let label = self.app_label(package).ok().flatten();
+        self.guard.policy.app_ok(&[asked.unwrap_or(package), package, label.as_deref().unwrap_or_default()])
+    }
+
+    /// The reason the app on screen may not be driven, if `policy.toml` keeps it out. Apps reached
+    /// another way than `open app` (a setting, a link, a notification, the home screen) are caught
+    /// here. A package with no launcher entry is not restricted; when the app list cannot be read,
+    /// the package alone decides, so a failed lookup never lets a denied app through.
+    pub(crate) fn foreground_blocked(&mut self) -> Result<Option<String>> {
+        if !self.guard.policy.restricts_apps() {
+            return Ok(None);
+        }
+        let package = self.ensure_scene()?.package.to_string();
+        let label = match self.app_label(&package) {
+            Ok(None) => return Ok(None),
+            Ok(Some(label)) => label,
+            Err(_) => package.clone(),
         };
-        self.guard.policy.app_ok(&[name, package, known.as_deref().unwrap_or_default()])
+        Ok(self
+            .guard
+            .policy
+            .app_ok(&[package.as_str(), package.as_str(), label.as_str()])
+            .err()
+            .map(|_| format!("{label} ({package}) is on screen, and policy.toml does not allow it")))
     }
 
     fn notification_key(&mut self, target: &Target) -> Result<Box<str>> {

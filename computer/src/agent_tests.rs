@@ -57,6 +57,8 @@ pub(crate) mod flows {
             &["Email", "Password"]
         } else if screen == "feed" {
             &["Item"]
+        } else if screen == "com.google.android.permissioncontroller" {
+            &["Allow", "While using the app", "Only this time", "Don't allow"]
         } else {
             &["Settings"]
         }
@@ -135,6 +137,8 @@ pub(crate) mod flows {
                     let (refs, tier) = if exact.is_empty() { (hits(true), 2) } else { (exact, 0) };
                     json!([seq, 0, {"r": refs, "t": tier, "l": refs.iter().map(|&i| names[i]).collect::<Vec<_>>()}])
                 }
+                // Launchable apps, as the helper lists them; the home screen and Android's prompts are not.
+                "apps" => json!([seq, 0, [["com.android.settings", "Settings"], ["com.example.bank", "Bank"], ["com.dupes", "Dupes"], ["com.example.switches", "Switches"]]]),
                 "approve" if APPROVAL.with(|answer| answer.borrow().is_some()) => json!([seq, 0, {"state": "pending"}]),
                 "approval" if APPROVAL.with(|answer| answer.borrow().is_some()) => {
                     let (state, changes_screen) = APPROVAL.with(|answer| answer.borrow().unwrap());
@@ -173,6 +177,8 @@ pub(crate) mod flows {
                                         "com.example.bank"
                                     } else if op[1] == "com.slow.feed" {
                                         "feed"
+                                    } else if op[1] == "com.google.android.permissioncontroller" {
+                                        "com.google.android.permissioncontroller"
                                     } else if op[1] == "com.dupes" {
                                         "dupes"
                                     } else {

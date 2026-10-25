@@ -99,19 +99,37 @@ fn extra_risky_words_make_a_loose_match_a_miss() {
     drop(engine.model_read(CommandRead::Status));
 }
 
-fn with_secret(value: &str, apps: &[&str]) -> (Engine, tempfile::TempDir) {
+/// An engine whose store holds "bank pin" for `apps`; the fake device shows one real password
+/// field (its `tree` reports the password flag), or a plain field that only looks like one.
+fn with_stored_value(value: &str, apps: &[&str]) -> (Engine, tempfile::TempDir) {
     let (mut engine, dir) = engine();
     let store = crate::secret::tests::Memory::default();
     let apps: Vec<String> = apps.iter().map(|app| (*app).to_owned()).collect();
     crate::secret::add(dir.path(), &store, "bank pin", &apps, value).unwrap();
     engine.guard.secrets = Box::new(store);
     TYPED.with(|typed| typed.borrow_mut().clear());
+    fields(true, false);
     (engine, dir)
+}
+
+/// The editable nodes the fake helper's `tree` reports: a password field, and a plain field showing
+/// "filled password" (a fake).
+fn fields(masked: bool, look_alike: bool) {
+    let mut nodes = vec![json!({"c": "EditText", "t": "", "b": [0, 0, 1, 1], "f": 8 | 64})];
+    if masked {
+        nodes.push(json!({"c": "EditText", "t": "", "b": [0, 0, 1, 1], "f": 8 | 64 | 256}));
+    }
+    if look_alike {
+        nodes.push(json!({"c": "EditText", "t": "filled password", "b": [0, 0, 1, 1], "f": 8 | 64}));
+    }
+    let count = nodes.len() + 1;
+    let window = json!({"type": 1, "layer": 0, "display": 0, "bounds": [0, 0, 1, 1], "title": "", "pkg": "com.example.bank", "active": true, "focused": true, "root": {"c": "Frame", "b": [0, 0, 1, 1], "f": 0, "k": nodes}});
+    TREE.with(|tree| *tree.borrow_mut() = Some(json!({"truncated": false, "nodes": count, "seen": count, "windows": [window]})));
 }
 
 #[test]
 fn a_secret_is_typed_into_a_password_field_and_appears_nowhere_the_agent_or_disk_can_see() {
-    let (mut engine, dir) = with_secret("4921", &["com.example.bank"]);
+    let (mut engine, dir) = with_stored_value("4921", &["com.example.bank"]);
     call(&mut engine, "android_act", r#"open app "com.example.bank""#).unwrap();
     let reply = call(&mut engine, "android_act", r#"type secret "bank pin" in "Password""#).unwrap();
     assert_eq!(reply.status, "done", "{}", reply.text);
@@ -133,7 +151,7 @@ fn a_secret_is_typed_into_a_password_field_and_appears_nowhere_the_agent_or_disk
 
 #[test]
 fn a_secret_is_refused_in_a_plain_field_in_another_app_or_when_unknown() {
-    let (mut engine, _dir) = with_secret("4921", &["com.example.bank"]);
+    let (mut engine, _dir) = with_stored_value("4921", &["com.example.bank"]);
     call(&mut engine, "android_act", r#"open app "com.example.bank""#).unwrap();
     let plain = call(&mut engine, "android_act", r#"type secret "bank pin" in "Email""#).err().unwrap();
     assert!(plain.message.contains("not a single password field"), "{}", plain.message);
@@ -142,7 +160,7 @@ fn a_secret_is_refused_in_a_plain_field_in_another_app_or_when_unknown() {
     let later = call(&mut engine, "android_act", r#"tap "Email" then type secret "bank pin" in "Password""#).err().unwrap();
     assert!(later.message.contains("first step"), "{}", later.message);
     call(&mut engine, "android_act", r#"open app "Settings""#).unwrap();
-    let (mut other, _d) = with_secret("4921", &["com.other"]);
+    let (mut other, _d) = with_stored_value("4921", &["com.other"]);
     call(&mut other, "android_act", r#"open app "com.example.bank""#).unwrap();
     let wrong_app = call(&mut other, "android_act", r#"type secret "bank pin" in "Password""#).err().unwrap();
     assert!(wrong_app.message.contains("is not allowed in com.example.bank"), "{}", wrong_app.message);
@@ -305,4 +323,87 @@ fn file_transfer_is_off_until_the_policy_names_a_folder() {
     assert_eq!(error.code, Code::Blocked);
     assert!(error.message.contains("files.dir"), "{}", error.message);
     assert_eq!(call(&mut engine, "android_act", r#"pull file "../x""#).err().map(|e| e.code), Some(Code::Args));
+}
+
+#[test]
+fn a_plain_field_made_to_look_like_a_password_field_never_gets_a_secret() {
+    let (mut engine, _dir) = with_stored_value("4921", &["com.example.bank"]);
+    call(&mut engine, "android_act", r#"open app "com.example.bank""#).unwrap();
+    // The listing says "empty password", but a plain field shows the same words.
+    fields(true, true);
+    let faked = call(&mut engine, "android_act", r#"type secret "bank pin" in "Password""#).err().unwrap();
+    assert!(faked.message.contains("not a single password field"), "{}", faked.message);
+    // No field the helper flags as a password: refused too.
+    fields(false, false);
+    assert!(call(&mut engine, "android_act", r#"type secret "bank pin" in "Password""#).is_err());
+    assert!(TYPED.with(|t| t.borrow().is_empty()));
+    TREE.with(|tree| *tree.borrow_mut() = None);
+    assert!(
+        call(&mut engine, "android_act", r#"type secret "bank pin" in "Password""#).err().unwrap().message.contains("au update"),
+        "a helper without the tree op cannot confirm the field"
+    );
+}
+
+#[test]
+fn a_denied_app_reached_another_way_is_left_at_once_and_cannot_be_driven() {
+    let (mut engine, _dir) = engine_with_policy("apps.deny = [\"com.example.bank\"]\n").unwrap();
+    // `com.dupes` is allowed; a launch into the bank by any path is caught after the command.
+    let led = call(&mut engine, "android_act", r#"open app "com.dupes""#);
+    assert!(led.is_ok());
+    // The fake helper has no settings op, so the step fails on the device, but not on the policy.
+    let error = call(&mut engine, "android_act", r#"open setting "wifi""#);
+    assert_ne!(error.err().map(|e| e.code), Some(Code::Blocked), "settings are not denied here");
+    let denied_setting = engine_with_policy("apps.deny = [\"Settings\"]\n").unwrap();
+    let (mut settings, _d) = denied_setting;
+    assert_eq!(call(&mut settings, "android_act", r#"open setting "wifi""#).err().map(|e| e.code), Some(Code::Blocked), "open setting counts as Settings");
+    // An app on screen that the policy keeps out cannot be driven, whatever led there.
+    let (mut bank, _b) = super::tests::flows::engine();
+    call(&mut bank, "android_act", r#"open app "com.example.bank""#).unwrap();
+    bank.guard.policy = crate::policy::Policy::parse("apps.deny = [\"com.example.bank\"]\n").unwrap();
+    let error = call(&mut bank, "android_act", r#"tap "Email""#).err().unwrap();
+    assert!(error.code == Code::Blocked && error.message.contains("is on screen") && error.message.contains("Only press back or press home"), "{}", error.message);
+    assert_ne!(call(&mut bank, "android_act", "press home").err().map(|e| e.code), Some(Code::Blocked), "leaving is allowed");
+}
+
+#[test]
+fn while_androids_own_prompt_is_the_active_window_only_leaving_it_runs() {
+    let (mut engine, _dir) = engine();
+    call(&mut engine, "android_act", r#"open app "com.google.android.permissioncontroller""#).unwrap();
+    for command in [r#"tap "While using the app""#, r#"tap "Only this time""#, "tap e1", "tap point 10 10"] {
+        let error = call(&mut engine, "android_act", command).err().unwrap();
+        assert_eq!(error.code, Code::Blocked, "{command}");
+    }
+    // The fake helper has no key op, so the step fails on the device, but not on the policy.
+    let back = call(&mut engine, "android_act", "press back");
+    assert_ne!(back.err().map(|e| e.code), Some(Code::Blocked), "declining by leaving is allowed");
+}
+
+#[test]
+fn capture_allow_false_also_keeps_screen_images_out_of_replies() {
+    let (mut engine, _dir) = engine_with_policy("capture.allow = false\n").unwrap();
+    // The fake home screen has one row, which normally attaches the screen image.
+    let screen = call(&mut engine, "android_read", "screen").unwrap();
+    assert!(screen.image.is_none() && !screen.text.contains("image is attached"), "{}", screen.text);
+}
+
+#[test]
+fn steps_too_long_to_show_on_the_phone_are_refused_before_asking() {
+    let (mut engine, _dir) = engine();
+    person_answers("allow", false);
+    let steps = (0..40).map(|n| format!(r#"tap "Row {n}""#)).collect::<Vec<_>>().join(" then ");
+    let error = call(&mut engine, "android_act", &format!(r#"ask phone "Go?" then {steps}"#)).err().unwrap();
+    assert!(error.message.contains("too long to show on the phone"), "{}", error.message);
+    APPROVAL.with(|answer| *answer.borrow_mut() = None);
+}
+
+#[test]
+fn session_files_live_in_the_installation_folder_for_an_emulator_target_too() {
+    let base = tempfile::tempdir().unwrap();
+    let target = base.path().join("targets").join("pixel");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(base.path().join("policy.toml"), "apps.deny = [\"Settings\"]\n").unwrap();
+    let link = FakeLink::new(fake_helper(phone_screenshot()));
+    let mut engine = Engine::with_link(crate::device::Paths::at(target).unwrap(), Box::new(link)).unwrap();
+    assert_eq!(engine.home(), base.path());
+    assert_eq!(call(&mut engine, "android_act", r#"open app "Settings""#).err().map(|e| e.code), Some(Code::Blocked), "the base policy.toml applies");
 }

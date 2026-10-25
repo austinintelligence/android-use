@@ -122,6 +122,9 @@ impl Bridge {
         if a.get(1).and_then(Value::as_u64) == Some(11) {
             return Err(crate::link::stopped());
         }
+        if a.get(1).and_then(Value::as_u64) == Some(12) {
+            return Err(Error::plain(Code::Denied, "The phone is waiting for a person to answer an approval, so nothing runs until they do. Nothing was run."));
+        }
         if a.len() < 4 {
             return Err(Error::new(Code::Protocol, "invalid run reply"));
         }

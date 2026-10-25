@@ -18,7 +18,7 @@ use std::{
 };
 
 /// Packages whose windows are Android's own consent prompts.
-const SYSTEM_PROMPTS: [&str; 4] =
+pub(crate) const SYSTEM_PROMPTS: [&str; 4] =
     ["com.google.android.permissioncontroller", "com.android.permissioncontroller", "com.android.packageinstaller", "com.google.android.packageinstaller"];
 const POLL_MS: u64 = 40;
 const LOADING_MS: u64 = 1500;
@@ -210,6 +210,32 @@ impl Engine {
         notes
     }
 
+    /// Editable fields across every window, from the helper's own flags: how many are password
+    /// fields, and how many plain fields show the text the listing uses for a password field
+    /// (`filled password`, `empty password`), which would make a plain field look like one.
+    /// An error on a helper without the `tree` op: the listing alone cannot tell them apart.
+    pub(crate) fn masked_fields(&mut self) -> Result<(usize, usize)> {
+        let (_, caps) = self.bridge_read(|bridge| bridge.status())?;
+        if caps & crate::tree::CAP_TREE == 0 {
+            return Err(Error::plain(Code::Unsupported, "This helper cannot confirm password fields. Run `au update`, then resend."));
+        }
+        let tree = self.bridge_read(|bridge| bridge.query("tree", Value::Null))?;
+        let (mut real, mut fake, mut stack) = (0, 0, Vec::new());
+        stack.extend(tree["windows"].as_array().into_iter().flatten().map(|w| &w["root"]));
+        while let Some(node) = stack.pop() {
+            let flags = node["f"].as_u64().unwrap_or(0) as u16;
+            if flags & crate::tree::EDITABLE != 0 {
+                if flags & crate::tree::PASSWORD != 0 {
+                    real += 1;
+                } else if matches!(node["t"].as_str().unwrap_or("").trim(), "filled password" | "empty password") {
+                    fake += 1;
+                }
+            }
+            stack.extend(node["k"].as_array().into_iter().flatten());
+        }
+        Ok((real, fake))
+    }
+
     /// Whether Android's own permission or install prompt is up.
     pub(crate) fn system_prompt_open(&mut self) -> bool {
         self.window_notes().iter().any(|note| note.starts_with("Android prompt"))
@@ -241,6 +267,10 @@ impl Engine {
     }
 
     pub(crate) fn capture_screen_for_model(&mut self) -> Option<(ModelImage, String)> {
+        // `capture.allow = false` covers the screen images attached to replies too.
+        if !self.guard.policy.capture {
+            return None;
+        }
         let scene = self.ensure_scene().ok()?;
         let plan = Plan {
             id: self.operation_id(None, "read-screen").into_boxed_str(),

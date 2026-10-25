@@ -33,8 +33,14 @@ impl OsStore {
         Self { root: root.to_path_buf() }
     }
 
-    fn run(program: &str, args: &[&str], stdin: Option<&str>) -> Result<(bool, String)> {
-        let mut child = Command::new(program)
+    /// Runs the store's own tool. `file` reaches PowerShell as `AU_SECRET_FILE`: arguments after
+    /// `-Command` are part of the script, not values it can read.
+    fn run(program: &str, args: &[&str], stdin: Option<&str>, file: Option<&Path>) -> Result<(bool, String)> {
+        let mut command = Command::new(program);
+        if let Some(file) = file {
+            command.env("AU_SECRET_FILE", file);
+        }
+        let mut child = command
             .args(args)
             .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
             .stdout(Stdio::piped())
@@ -50,7 +56,9 @@ impl OsStore {
 
     #[cfg(windows)]
     fn file(&self, name: &str) -> PathBuf {
-        self.root.join("secrets").join(format!("{}.dpapi", name.replace(|c: char| !c.is_ascii_alphanumeric(), "_")))
+        // Hex keeps names that differ only in punctuation ("bank pin", "bank-pin") apart.
+        let hex: String = name.bytes().map(|b| format!("{b:02x}")).collect();
+        self.root.join("secrets").join(format!("{hex}.dpapi"))
     }
 }
 
@@ -59,34 +67,34 @@ impl SecretStore for OsStore {
         let _ = &self.root;
         // One expression per platform, so no branch needs an early return.
         #[cfg(target_os = "macos")]
-        let found = Self::run("security", &["find-generic-password", "-s", SERVICE, "-a", name, "-w"], None)?;
+        let found = Self::run("security", &["find-generic-password", "-s", SERVICE, "-a", name, "-w"], None, None)?;
         #[cfg(windows)]
         let found = {
             let file = self.file(name);
-            let script = "$s = Get-Content -LiteralPath $args[0] | ConvertTo-SecureString; [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($s))";
+            let script = "$s = Get-Content -LiteralPath $env:AU_SECRET_FILE | ConvertTo-SecureString; [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($s))";
             if file.is_file() {
-                Self::run("powershell", &["-NoProfile", "-Command", script, &file.display().to_string()], None)?
+                Self::run("powershell", &["-NoProfile", "-Command", script], None, Some(&file))?
             } else {
                 (false, String::new())
             }
         };
         #[cfg(not(any(target_os = "macos", windows)))]
-        let found = Self::run("secret-tool", &["lookup", "service", SERVICE, "account", name], None)?;
+        let found = Self::run("secret-tool", &["lookup", "service", SERVICE, "account", name], None, None)?;
         let (ok, out) = found;
         Ok((ok && !out.is_empty()).then_some(out))
     }
 
     fn set(&self, name: &str, value: &str) -> Result<()> {
         #[cfg(target_os = "macos")]
-        let result = Self::run("security", &["add-generic-password", "-U", "-s", SERVICE, "-a", name, "-w", value], None);
+        let result = Self::run("security", &["add-generic-password", "-U", "-s", SERVICE, "-a", name, "-w", value], None, None);
         #[cfg(windows)]
         let result = {
             fs::create_dir_all(self.root.join("secrets"))?;
-            let script = "[Console]::In.ReadLine() | ConvertTo-SecureString -AsPlainText -Force | ConvertFrom-SecureString | Set-Content -LiteralPath $args[0]";
-            Self::run("powershell", &["-NoProfile", "-Command", script, &self.file(name).display().to_string()], Some(&format!("{value}\n")))
+            let script = "[Console]::In.ReadLine() | ConvertTo-SecureString -AsPlainText -Force | ConvertFrom-SecureString | Set-Content -LiteralPath $env:AU_SECRET_FILE";
+            Self::run("powershell", &["-NoProfile", "-Command", script], Some(&format!("{value}\n")), Some(&self.file(name)))
         };
         #[cfg(not(any(target_os = "macos", windows)))]
-        let result = Self::run("secret-tool", &["store", "--label=Android Use", "service", SERVICE, "account", name], Some(value));
+        let result = Self::run("secret-tool", &["store", "--label=Android Use", "service", SERVICE, "account", name], Some(value), None);
         match result? {
             (true, _) => Ok(()),
             _ => {
@@ -97,11 +105,11 @@ impl SecretStore for OsStore {
 
     fn remove(&self, name: &str) -> Result<()> {
         #[cfg(target_os = "macos")]
-        let _ = Self::run("security", &["delete-generic-password", "-s", SERVICE, "-a", name], None)?;
+        let _ = Self::run("security", &["delete-generic-password", "-s", SERVICE, "-a", name], None, None)?;
         #[cfg(windows)]
         let _ = fs::remove_file(self.file(name));
         #[cfg(not(any(target_os = "macos", windows)))]
-        let _ = Self::run("secret-tool", &["clear", "service", SERVICE, "account", name], None)?;
+        let _ = Self::run("secret-tool", &["clear", "service", SERVICE, "account", name], None, None)?;
         Ok(())
     }
 }
@@ -219,7 +227,28 @@ pub(crate) fn substitute(command: &str, step: &Step, value: &str) -> String {
 
 /// Removes the value (and its quoted form) from any text that is about to leave the host.
 pub(crate) fn scrub(text: &str, name: &str, value: &str) -> String {
-    text.replace(value, &format!("[secret \"{name}\"]"))
+    let text = text.replace(value, &format!("[secret \"{name}\"]"));
+    // A reply can carry a shortened or cleaned-up copy (long values are cut, some punctuation is
+    // dropped), which is not the exact value. Any line still holding a piece of it is hidden whole.
+    let pieces = fragments(value);
+    let hidden = format!("[a line holding part of secret \"{name}\" was hidden]");
+    text.lines().map(|line| if pieces.iter().any(|piece| line.contains(piece.as_str())) { hidden.as_str() } else { line }).collect::<Vec<_>>().join("\n")
+}
+
+/// Every run of four characters of the value, also with the punctuation a reply drops removed;
+/// the whole value when it is shorter.
+fn fragments(value: &str) -> Vec<String> {
+    let cleaned: String = value.chars().filter(|c| !matches!(c, '[' | ']' | '{' | '}') && !c.is_control()).collect();
+    let mut out = Vec::new();
+    for form in [value, cleaned.as_str()] {
+        let chars: Vec<char> = form.chars().collect();
+        if chars.is_empty() {
+            continue;
+        }
+        let width = chars.len().min(4);
+        out.extend(chars.windows(width).map(|w| w.iter().collect::<String>()));
+    }
+    out
 }
 
 pub(crate) fn allowed_apps(root: &Path, name: &str) -> Option<Vec<String>> {
@@ -291,6 +320,16 @@ pub(crate) mod tests {
         assert!(find(r#"tap "type secret" then tap "x""#).unwrap().is_none(), "words inside a label are not a step");
         assert!(find(r#"type secret x in "F""#).is_err() && find(r#"type secret "x""#).is_err());
         assert!(find(r#"type secret "a" in "F" then type secret "b" in "G""#).is_err(), "one per command");
+    }
+
+    #[test]
+    fn a_cut_or_cleaned_copy_of_the_value_hides_its_line() {
+        let long = "x".repeat(10) + "Zq7#mK9!vL2@pR4" + &"y".repeat(60);
+        let cut = format!("Partly done: Typed {}… in Password\nsw Wi-Fi=on", &long[..63]);
+        assert_eq!(scrub(&cut, "k", &long), "[a line holding part of secret \"k\" was hidden]\nsw Wi-Fi=on");
+        let cleaned = scrub("Typed password1 in Password", "k", "pa[ss]word1");
+        assert!(!cleaned.contains("password1") && cleaned.contains("was hidden"), "{cleaned}");
+        assert_eq!(scrub("Settings\nWi-Fi", "k", "4921"), "Settings\nWi-Fi", "lines without a piece stay");
     }
 
     #[test]

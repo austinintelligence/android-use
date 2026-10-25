@@ -118,7 +118,7 @@ fn listing(tool: Tool) -> String {
 
 /// These are handled before the parser (`session.rs`), so they are listed here and not in `FORMS`.
 const EXTRAS: &str = "Routines (replay a command that worked, in one call):\n\
-- save routine \"NAME\" from last [with \"VALUE\" ...] (each VALUE must be quoted in the last command; it becomes a parameter)\n\
+- save routine \"NAME\" from last [with \"VALUE\" ...] (the last command that worked in this session; each VALUE must be quoted in it and becomes a parameter)\n\
 - run routine \"NAME\" [with \"VALUE\" ...] (runs like any command, so a changed screen is a miss)\n\
 Secrets and waiting:\n\
 - type secret \"NAME\" in \"FIELD\" (first step of a command; only a password field of an app the secret allows)\n\

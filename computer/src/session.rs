@@ -2,7 +2,7 @@
 //! `au read`: pause and stop from `au watch`, routines, policy, then the normal parser and engine.
 //! Everything here only restricts or repeats; the engine still checks every plan itself.
 use crate::{
-    api::{parse_act_command, parse_read_command, Code, Error, Result},
+    api::{parse_act_command, parse_read_command, Code, Error, Key, Result},
     ask,
     command::{Action, AndroidAction, BrowserAction},
     engine::{Engine, ModelResponse},
@@ -26,21 +26,21 @@ pub struct Session {
 }
 
 impl Session {
-    pub(crate) fn open(root: &Path) -> Result<Self> {
-        let policy = Policy::load(root)?;
+    pub(crate) fn open(home: &Path) -> Result<Self> {
+        let policy = Policy::load(home)?;
         resolve::set_extra_risky(&policy.risky_extra);
-        Ok(Self { policy, used: 0, trace: std::cell::OnceCell::new(), secrets: Box::new(OsStore::at(root)) })
+        Ok(Self { policy, used: 0, trace: std::cell::OnceCell::new(), secrets: Box::new(OsStore::at(home)) })
     }
 }
 
 /// What `au watch` asks of a running session, read from `control.json` before every command.
-fn control(root: &Path) -> (bool, bool) {
-    let value: Value = fs::read_to_string(root.join("control.json")).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or(Value::Null);
+fn control(home: &Path) -> (bool, bool) {
+    let value: Value = fs::read_to_string(home.join("control.json")).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or(Value::Null);
     (value["paused"] == true, value["stop"] == true)
 }
 
-fn check_control(root: &Path, acts: bool) -> Result<()> {
-    match control(root) {
+fn check_control(home: &Path, acts: bool) -> Result<()> {
+    match control(home) {
         (_, true) => Err(Error::plain(Code::Stopped, "A person pressed Stop in au watch. Do not continue; ask the user.")),
         (true, _) if acts => Err(Error::plain(Code::Paused, "The session is paused from au watch. Nothing was run; wait, then resend.")),
         _ => Ok(()),
@@ -52,6 +52,12 @@ fn answers_prompt(action: &Action) -> bool {
     matches!(action, Action::Android(AndroidAction::Tap(target) | AndroidAction::Hold(target)) if resolve::confirms(&target.label))
 }
 
+/// Steps that only leave the current screen: always allowed, so an agent can back out of an app
+/// the policy keeps out or of Android's own prompt (which declines it).
+fn leaves(action: &Action) -> bool {
+    matches!(action, Action::Android(AndroidAction::Key(Key::Back | Key::Home)))
+}
+
 fn media(action: &Action) -> bool {
     matches!(
         action,
@@ -60,17 +66,9 @@ fn media(action: &Action) -> bool {
     )
 }
 
-/// Policy checks that need only the parsed command; app names are checked where they resolve.
-fn check_policy(engine: &mut Engine, actions: &[Action]) -> Result<()> {
-    if actions.iter().any(media) {
-        engine.guard.policy.capture_ok()?;
-    }
-    // Android's own permission and install prompts are answered by a person, never by the agent.
-    if actions.iter().any(answers_prompt) && engine.system_prompt_open() {
-        return Err(Error::plain(Code::Blocked, "Android is showing its own permission or install prompt. Only a person answers it; ask the user. Nothing was run."));
-    }
+/// Counts steps against `actions.max_per_session`; refuses a command that would pass it.
+fn charge(engine: &mut Engine, steps: u32) -> Result<()> {
     if let Some(max) = engine.guard.policy.max_actions {
-        let steps = actions.len() as u32;
         if engine.guard.used + steps > max {
             return Err(Error::plain(Code::Blocked, format!("Blocked by policy.toml: actions.max_per_session is {max} and {} are used. Nothing was run.", engine.guard.used)));
         }
@@ -79,28 +77,57 @@ fn check_policy(engine: &mut Engine, actions: &[Action]) -> Result<()> {
     Ok(())
 }
 
+/// Policy checks before a command runs; `open app` names are also checked where they resolve.
+fn check_policy(engine: &mut Engine, actions: &[Action]) -> Result<()> {
+    if actions.iter().any(media) {
+        engine.guard.policy.capture_ok()?;
+    }
+    if actions.iter().all(leaves) {
+        return charge(engine, actions.len() as u32);
+    }
+    // Android's own permission and install prompts are answered by a person, never by the agent:
+    // while one is the active window, only leaving it is allowed.
+    let package = engine.ensure_scene()?.package;
+    if crate::present::SYSTEM_PROMPTS.contains(&&*package) || (actions.iter().any(answers_prompt) && engine.system_prompt_open()) {
+        return Err(Error::plain(
+            Code::Blocked,
+            "Android is showing its own permission or install prompt. Only a person answers it; ask the user, or press back to decline. Nothing was run.",
+        ));
+    }
+    if let Some(why) = engine.foreground_blocked()? {
+        return Err(Error::plain(Code::Blocked, format!("Blocked by policy.toml: {why}. Only press back or press home. Nothing was run.")));
+    }
+    if actions.iter().any(|action| matches!(action, Action::Android(AndroidAction::OpenSetting(_)))) {
+        engine.guard.policy.app_ok(&["Settings", "com.android.settings"])?;
+    }
+    charge(engine, actions.len() as u32)
+}
+
 /// Runs one tool call's command text. Never inlined: the MCP loop and the CLI both call it, and a
 /// copy in each would cost the binary its size budget.
 #[inline(never)]
 pub fn call(engine: &mut Engine, read: bool, command: &str, identity: Option<&str>) -> Result<ModelResponse> {
-    check_control(engine.root(), !read)?;
+    let home = engine.home();
+    check_control(&home, !read)?;
     let result = if read {
         read_command(engine, command)
+    } else if let Some(meta) = routine::parse(command) {
+        meta.and_then(|meta| run_routine(engine, meta, identity))
+    } else if let Some(wait) = events::parse_wait(command) {
+        wait.and_then(|wait| wait_notification(engine, &wait))
+    } else if let Some(transfer) = files::parse(command) {
+        transfer
+            .and_then(|transfer| {
+                charge(engine, 1)?;
+                files::run(engine, &transfer)
+            })
+            .map(|text| ModelResponse { text, status: "done", ..Default::default() })
+    } else if let Some(question) = ask::parse(command) {
+        question.and_then(|question| ask_phone(engine, &question, identity))
     } else {
-        if let Some(meta) = routine::parse(command) {
-            meta.and_then(|meta| run_routine(engine, meta, identity))
-        } else if let Some(wait) = events::parse_wait(command) {
-            wait.and_then(|wait| wait_notification(engine, &wait))
-        } else if let Some(transfer) = files::parse(command) {
-            transfer.and_then(|transfer| files::run(engine, &transfer)).map(|text| ModelResponse { text, status: "done", ..Default::default() })
-        } else if let Some(question) = ask::parse(command) {
-            question.and_then(|question| ask_phone(engine, &question, identity))
-        } else {
-            act(engine, command, identity)
-        }
+        act(engine, command, identity)
     };
-    let root = engine.root().to_path_buf();
-    if let Some(trace) = engine.guard.trace.get_or_init(|| Trace::open(&root, &std::process::id().to_string())) {
+    if let Some(trace) = engine.guard.trace.get_or_init(|| Trace::open(&home, &std::process::id().to_string())) {
         match &result {
             Ok(r) => trace.record(read, command, &Ok((if r.status.is_empty() { "ok" } else { r.status }, &r.text, r.image.is_some()))),
             Err(e) => trace.record(read, command, &Err((e.code.wire(), &crate::engine::plain_error(e)))),
@@ -110,10 +137,11 @@ pub fn call(engine: &mut Engine, read: bool, command: &str, identity: Option<&st
 }
 
 fn read_command(engine: &mut Engine, command: &str) -> Result<ModelResponse> {
+    let home = engine.home();
     let text = match command.trim().to_ascii_lowercase().as_str() {
-        "routines" => routine::list(engine.root()),
+        "routines" => routine::list(&home),
         "policy" => engine.guard.policy.describe(),
-        "secrets" => secret::list(engine.root()),
+        "secrets" => secret::list(&home),
         "audit" => events::audit(&engine.semantic_rows("")?),
         lower if lower.starts_with("code from notification ") => return read_code(engine, command.trim()["code from notification ".len()..].trim()),
         _ => return engine.model_read(parse_read_command(command)?),
@@ -124,6 +152,8 @@ fn read_command(engine: &mut Engine, command: &str) -> Result<ModelResponse> {
 /// A person's yes on the phone, then the steps it covers.
 fn ask_phone(engine: &mut Engine, question: &ask::Ask, identity: Option<&str>) -> Result<ModelResponse> {
     ask::ask(engine, question)?;
+    // The wait may have been long: a Stop or pause pressed meanwhile still applies.
+    check_control(&engine.home(), true)?;
     if question.then.is_empty() {
         return Ok(ModelResponse { text: "Allowed on the phone.".into(), status: "done", ..Default::default() });
     }
@@ -135,7 +165,12 @@ fn notification_items(engine: &mut Engine) -> Result<Vec<events::Item>> {
 }
 
 fn wait_notification(engine: &mut Engine, wait: &events::Wait) -> Result<ModelResponse> {
-    let found = events::wait_for(wait, || notification_items(engine), || std::thread::sleep(std::time::Duration::from_secs(1)))?;
+    let home = engine.home();
+    let read = || {
+        check_control(&home, true)?;
+        notification_items(engine)
+    };
+    let found = events::wait_for(wait, read, || std::thread::sleep(std::time::Duration::from_secs(1)))?;
     Ok(match found {
         Some(item) => ModelResponse { text: events::describe(&item), status: "done", ..Default::default() },
         None => ModelResponse {
@@ -166,21 +201,30 @@ fn read_code(engine: &mut Engine, wanted: &str) -> Result<ModelResponse> {
 
 /// Runs an act command and remembers it when it ran to the end (a clean miss is not success).
 fn act(engine: &mut Engine, command: &str, identity: Option<&str>) -> Result<ModelResponse> {
-    let secret = match secret::find(command)? {
+    let typed = match secret::find(command)? {
         Some(step) => {
-            let value = secret_value(engine, &step)?;
+            let value = stored_value(engine, &step)?;
             Some((step.name.clone(), secret::substitute(command, &step, &value), value))
         }
         None => None,
     };
-    let (run, hidden) = match &secret {
+    let (run, hidden) = match &typed {
         Some((name, run, value)) => (run.as_str(), Some((name.as_str(), value.as_str()))),
         None => (command, None),
     };
     let scrub_text = |text: String| hidden.map_or(text.clone(), |(name, value)| secret::scrub(&text, name, value));
     let result = parse_act_command(run).and_then(|actions| {
         check_policy(engine, &actions)?;
-        engine.model_act(&actions, identity)
+        // The request and the command it carried (by its secret's name, never its value).
+        let keyed = identity.map(|id| format!("{id}\0{command}"));
+        let response = engine.model_act(&actions, keyed.as_deref())?;
+        // A link, a notification or a tap on the home screen can lead into an app the policy
+        // keeps out: leave it at once and say so.
+        if let Some(why) = engine.foreground_blocked()? {
+            let _ = engine.model_act(&[Action::Android(AndroidAction::Key(Key::Home))], None);
+            return Err(Error::plain(Code::Blocked, format!("Blocked by policy.toml: the command led to {why}, so Home was pressed.")));
+        }
+        Ok(response)
     });
     let response = match result {
         Ok(mut response) => {
@@ -198,11 +242,11 @@ fn act(engine: &mut Engine, command: &str, identity: Option<&str>) -> Result<Mod
     Ok(response)
 }
 
-/// The value for a `type secret` step, once the target is known to be a password field of an
-/// app the secret was saved for. Nothing is typed otherwise.
-fn secret_value(engine: &mut Engine, step: &secret::Step) -> Result<String> {
-    let apps =
-        secret::allowed_apps(engine.root(), &step.name).ok_or_else(|| Error::plain(Code::Missing, format!("No secret named \"{}\"; `read secrets` lists them.", step.name)))?;
+/// The stored value for a `type secret` step, once the target is known to be a password field of
+/// an app it was saved for. Nothing is typed otherwise.
+fn stored_value(engine: &mut Engine, step: &secret::Step) -> Result<String> {
+    let home = engine.home();
+    let apps = secret::allowed_apps(&home, &step.name).ok_or_else(|| Error::plain(Code::Missing, format!("No secret named \"{}\"; `read secrets` lists them.", step.name)))?;
     let package = engine.ensure_scene()?.package;
     if !apps.iter().any(|app| app.as_str() == &*package) {
         return Err(Error::plain(Code::Blocked, format!("Secret \"{}\" is not allowed in {package}. Nothing was typed.", step.name)));
@@ -211,11 +255,15 @@ fn secret_value(engine: &mut Engine, step: &secret::Step) -> Result<String> {
     let handle = field.strip_prefix('e').and_then(|n| n.parse::<u16>().ok());
     let rows = engine.semantic_rows("")?;
     let mut hits = rows.iter().filter(|row| if handle.is_some() { row.handle == handle } else { crate::api::normalized(&row.label) == field });
-    let password = match (hits.next(), hits.next()) {
-        (Some(row), None) => row.kind == "text field" && row.value.contains("password"),
+    let listed = match (hits.next(), hits.next()) {
+        (Some(row), None) => row.kind == "text field" && matches!(row.value.as_str(), "filled password" | "empty password"),
         _ => false,
     };
-    if !password {
+    // The listing's "filled password" can be faked by typing those words into a plain field, so
+    // the helper's own password flag must also show a password field, and no plain field may
+    // carry those words.
+    let (real, fake) = if listed { engine.masked_fields()? } else { (0, 0) };
+    if !listed || real == 0 || fake > 0 {
         return Err(Error::plain(Code::Blocked, format!("\"{}\" is not a single password field on this screen, so secret \"{}\" was not typed.", step.field, step.name)));
     }
     engine
@@ -226,13 +274,14 @@ fn secret_value(engine: &mut Engine, step: &secret::Step) -> Result<String> {
 }
 
 fn run_routine(engine: &mut Engine, meta: routine::Meta, identity: Option<&str>) -> Result<ModelResponse> {
+    let home = engine.home();
     match meta {
         routine::Meta::Save { name, params } => {
-            let last = engine.last_act.clone().ok_or_else(|| Error::new(Code::Args, "nothing to save yet: run a command that works first"))?;
-            Ok(ModelResponse { text: routine::save(engine.root(), &name, &last, &params)?, ..Default::default() })
+            let last = engine.last_act.clone().ok_or_else(|| Error::new(Code::Args, "nothing to save yet: run a command that works first, in this same session"))?;
+            Ok(ModelResponse { text: routine::save(&home, &name, &last, &params)?, ..Default::default() })
         }
         routine::Meta::Run { name, args } => {
-            let command = routine::expand(&name, &routine::load(engine.root(), &name)?, &args)?;
+            let command = routine::expand(&name, &routine::load(&home, &name)?, &args)?;
             act(engine, &command, identity)
         }
     }

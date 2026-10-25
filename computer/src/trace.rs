@@ -27,11 +27,12 @@ fn now_ms() -> u64 {
 impl Trace {
     /// A new trace file in `root/traces`; old ones are deleted first. `None` when the folder
     /// cannot be written: tracing never stops a session.
-    pub fn open(root: &Path, salt: &str) -> Option<Self> {
+    /// `tag` (the process id) only tells the trace files of one second apart.
+    pub fn open(root: &Path, tag: &str) -> Option<Self> {
         let dir = root.join("traces");
         private_dir(&dir).ok()?;
         expire(&dir);
-        let id = format!("{}-{}", now_ms() / 1000, salt.chars().filter(char::is_ascii_alphanumeric).take(6).collect::<String>());
+        let id = format!("{}-{}", now_ms() / 1000, tag.chars().filter(char::is_ascii_alphanumeric).take(6).collect::<String>());
         Some(Self { path: dir.join(format!("{id}.jsonl")) })
     }
 
@@ -70,26 +71,53 @@ fn secret_field(field: &str) -> bool {
     ["password", "passcode", "passphrase", "pin", "secret", "otp", "cvv", "token", "code"].iter().any(|word| field.split(|c: char| !c.is_alphanumeric()).any(|w| w == *word))
 }
 
-/// The command with typed text replaced by `***` when it goes into a secret-looking field, and
-/// clipboard text always.
-pub(crate) fn redact(command: &str) -> String {
-    let mut out = String::new();
-    let mut rest = command;
-    while let Some(at) = rest.find('"') {
-        let (before, after) = rest.split_at(at);
-        let Some(end) = after[1..].find('"') else { break };
-        let quoted = &after[1..1 + end];
-        let tail = &after[end + 2..];
-        out.push_str(before);
-        let types = before.trim_end().ends_with("type") || before.trim_end().ends_with("clipboard");
-        let field = tail.strip_prefix(" in \"").and_then(|t| t.split_once('"')).map(|(f, _)| f);
-        let hide = types && (before.trim_end().ends_with("clipboard") || field.is_some_and(secret_field));
-        out.push('"');
-        out.push_str(if hide { "***" } else { quoted });
-        out.push('"');
-        rest = tail;
+/// A command's words and quoted values (straight or curly double quotes), as `(quoted, range)`;
+/// a quoted value's range is its inside.
+fn tokens(command: &str) -> Vec<(bool, std::ops::Range<usize>)> {
+    let quote = |c: char| matches!(c, '"' | '\u{201c}' | '\u{201d}');
+    let mut out = Vec::new();
+    let mut chars = command.char_indices().peekable();
+    while let Some(&(at, c)) = chars.peek() {
+        if c.is_whitespace() {
+            chars.next();
+        } else if quote(c) {
+            chars.next();
+            let start = at + c.len_utf8();
+            let end = chars.by_ref().find(|&(_, c)| quote(c)).map_or(command.len(), |(end, _)| end);
+            out.push((true, start..end));
+        } else {
+            let end = chars.by_ref().take_while(|&(_, c)| !c.is_whitespace()).last().map_or(at, |(i, c)| i + c.len_utf8());
+            out.push((false, at..end));
+        }
     }
-    out.push_str(rest);
+    out
+}
+
+/// The command with typed text replaced by `***` when it goes into a secret-looking field, or into
+/// a target that has no name to judge by (`e12`, none); clipboard text and routine values always.
+/// Any spelling the grammar takes counts: `type` in any case, `in` or `into`, curly quotes.
+pub(crate) fn redact(command: &str) -> String {
+    let tokens = tokens(command);
+    let word = |i: usize, w: &str| tokens.get(i).is_some_and(|(quoted, r)| !quoted && command[r.clone()].eq_ignore_ascii_case(w));
+    let quoted = |i: usize| tokens.get(i).is_some_and(|(quoted, _)| *quoted);
+    let routine = word(0, "run") && word(1, "routine");
+    let mut hide = Vec::new();
+    for i in 0..tokens.len() {
+        if routine && i > 2 && quoted(i) {
+            hide.push(tokens[i].1.clone());
+        } else if (word(i, "type") || word(i, "clipboard")) && quoted(i + 1) {
+            let target = if word(i + 2, "in") || word(i + 2, "into") { i + 3 } else { i + 2 };
+            let secret_target = quoted(target) && secret_field(&command[tokens[target].1.clone()]);
+            let unnamed = !quoted(target);
+            if word(i, "clipboard") || secret_target || unnamed {
+                hide.push(tokens[i + 1].1.clone());
+            }
+        }
+    }
+    let mut out = command.to_owned();
+    for range in hide.into_iter().rev() {
+        out.replace_range(range, "***");
+    }
     out
 }
 
@@ -176,13 +204,19 @@ pub fn to_test(root: &Path, id: &str) -> Result<String> {
     let mut out = format!("# From trace {id}. Add `expect screen \"TEXT\"` lines after the steps that matter.\n");
     for e in entries(root, id)?.iter().filter(|e| e["tool"] == "act" && e["ok"] == true && e["status"] == "done") {
         let cmd = e["cmd"].as_str().unwrap_or("");
+        if cmd.starts_with("save routine") {
+            continue;
+        }
+        if cmd.starts_with("run routine") {
+            // Routine values are redacted in traces, so the step is kept for a person to complete.
+            out.push_str(&format!("# {cmd}  (a routine step: write its values back in, or its commands)\n"));
+            continue;
+        }
         if cmd.contains("***") {
             return Err(Error::new(Code::Args, "the trace typed redacted text, which a test cannot replay; edit that step by hand"));
         }
-        if !cmd.starts_with("run routine") && !cmd.starts_with("save routine") {
-            out.push_str(cmd);
-            out.push('\n');
-        }
+        out.push_str(cmd);
+        out.push('\n');
     }
     Ok(out)
 }
@@ -200,6 +234,19 @@ mod tests {
         assert_eq!(redact(r#"type "ok" in "Pinned notes""#), r#"type "ok" in "Pinned notes""#, "whole words only");
         assert_eq!(redact(r#"set clipboard "private""#), r#"set clipboard "***""#);
         assert_eq!(redact(r#"tap "unclosed"#), r#"tap "unclosed"#);
+        // Other spellings the grammar accepts are covered too.
+        for (command, hidden) in [
+            (r#"type "hunter2" into "Password""#, r#"type "***" into "Password""#),
+            (r#"TYPE "x1" in "PIN""#, r#"TYPE "***" in "PIN""#),
+            (r#"type  "x2"   in   "Password""#, r#"type  "***"   in   "Password""#),
+            ("type \u{201c}x3\u{201d} in \u{201c}Password\u{201d}", "type \u{201c}***\u{201d} in \u{201c}Password\u{201d}"),
+            (r#"type "x4" in e12"#, r#"type "***" in e12"#),
+            (r#"run routine "login" with "hunter2" with "x""#, r#"run routine "login" with "***" with "***""#),
+        ] {
+            assert_eq!(redact(command), hidden, "{command}");
+        }
+        assert_eq!(redact(r#"type secret "bank pin" in "PIN""#), r#"type secret "bank pin" in "PIN""#, "a secret's name is not its value");
+        assert_eq!(redact(r#"type "hello" into "Message""#), r#"type "hello" into "Message""#);
     }
 
     #[test]

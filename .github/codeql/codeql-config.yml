@@ -1,0 +1,10 @@
+name: android-use code scanning
+# Test-only files: they never ship, and their assertions print replies from scripted helpers,
+# which the cleartext-logging heuristic reads as secrets reaching a log. Production files,
+# inline test modules included, are all scanned.
+paths-ignore:
+  - computer/src/agent_tests.rs
+  - computer/src/session_tests.rs
+  - computer/src/apk_tests.rs
+  - computer/src/browser_tests.rs
+  - computer/tests

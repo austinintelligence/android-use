@@ -25,7 +25,7 @@ impl Driver for EngineDriver {
         crate::session::call(&mut self.0, false, command, None).map(|r| r.text).map_err(|e| Error::plain(e.code, crate::engine::plain_error(&e)))
     }
     fn screen(&mut self) -> Result<String> {
-        crate::session::call(&mut self.0, true, "screen", None).map(|r| r.text).map_err(|e| Error::plain(e.code, crate::engine::plain_error(&e)))
+        crate::session::call(&mut self.0, true, "screen full", None).map(|r| r.text).map_err(|e| Error::plain(e.code, crate::engine::plain_error(&e)))
     }
     fn shell(&mut self, args: &[&str]) -> Result<()> {
         let mut all = vec!["shell"];

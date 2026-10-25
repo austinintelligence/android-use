@@ -31,10 +31,8 @@ public final class ApproveActivity extends Activity {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
-        getWindow()
-                .addFlags(
-                        WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
-                                | WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        // Not shown over the lock screen: only someone who can unlock the phone may answer.
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
         page.setPadding(48, 96, 48, 48);

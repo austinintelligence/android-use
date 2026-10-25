@@ -10,7 +10,7 @@ use std::io::{self, BufRead, Write};
 pub fn mcp(mut engine: Engine) -> Result<()> {
     engine.agent.strict = true;
     // A pause or stop belongs to the session it was pressed in; a new session starts running.
-    let _ = std::fs::remove_file(engine.root().join("control.json"));
+    let _ = std::fs::remove_file(engine.home().join("control.json"));
     serve(move |v| rpc(&mut engine, v))
 }
 

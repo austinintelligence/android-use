@@ -45,6 +45,10 @@ pub(crate) fn ask(engine: &mut Engine, ask: &Ask) -> Result<()> {
     let before = labels(&engine.semantic_rows("")?);
     // What the phone shows is what will run; typed text in secret-looking fields is already hidden.
     let detail = if ask.then.is_empty() { "nothing; this is a question".to_owned() } else { crate::trace::redact(&ask.then) };
+    // The phone shows at most 300 characters; a person must see every step they approve.
+    if detail.chars().count() > 300 {
+        return Err(Error::plain(Code::Bounds, "Those steps are too long to show on the phone in full. Ask about fewer steps at a time; nothing was run."));
+    }
     let started = engine.bridge()?.query("approve", json!({"text": ask.question, "detail": detail, "ms": DEFAULT_MS}));
     match started {
         Ok(_) => {}

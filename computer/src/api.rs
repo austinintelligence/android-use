@@ -329,7 +329,7 @@ impl Direction {
     }
 }
 impl Key {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Back => "back",
             Self::Home => "home",

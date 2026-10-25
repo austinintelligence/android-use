@@ -37,6 +37,10 @@ pub struct Engine {
     /// JSON-RPC ids restart in every client session, while the journal is
     /// durable; without the salt a new session could collide with old records.
     session: String,
+    /// Random per-process key for plan digests. The journal on disk keeps only keyed digests, so a
+    /// typed value (a PIN, a password) cannot be guessed back from them; digests are compared only
+    /// within one process, because operation ids carry the per-process salt.
+    digest_key: String,
     request_counter: u64,
     /// The last `stopped` the helper reported; Chrome stays refused while it says stopped even
     /// if the helper stops answering.
@@ -63,7 +67,7 @@ impl Engine {
 
     /// An engine over any device link; tests pass a `FakeLink`.
     pub(crate) fn with_link(paths: Paths, link: Box<dyn DeviceLink>) -> Result<Self> {
-        let guard = crate::session::Session::open(&paths.root)?;
+        let guard = crate::session::Session::open(&home(&paths.root))?;
         Ok(Self {
             artifacts: Artifacts::new(paths.clone()),
             journal: Journal::open(&paths)?,
@@ -76,6 +80,7 @@ impl Engine {
             last_act: None,
             guard,
             session: session_id(),
+            digest_key: session_id(),
             request_counter: 0,
             stopped: false,
         })
@@ -85,6 +90,13 @@ impl Engine {
     pub fn adb(&mut self, args: &[&str], timeout: std::time::Duration) -> Result<Vec<u8>> {
         let endpoint = self.link.device()?.endpoint;
         crate::device::Adb::discover()?.run(Some(&endpoint), args, timeout)
+    }
+
+    /// The installation's state folder: `AU_HOME` itself even when `--target` selects an emulator,
+    /// whose own state lives in `AU_HOME/targets/NAME`. Policy, secrets, routines, traces and the
+    /// `au watch` control file live here, where the `au` commands that manage them look.
+    pub fn home(&self) -> PathBuf {
+        home(&self.paths.root)
     }
 
     pub fn root(&self) -> &Path {
@@ -274,9 +286,10 @@ impl Engine {
         }
         let receipt = match self.bridge().and_then(|bridge| bridge.act(p)) {
             Ok(receipt) => receipt,
-            Err(error) if error.code == Code::Stopped => {
-                // The helper refused before running anything: not uncertain, and not repeatable.
-                self.stopped = true;
+            Err(error) if matches!(error.code, Code::Stopped | Code::Denied) => {
+                // The helper refused before running anything (Stop was pressed, or an approval is
+                // waiting for a person): not uncertain, and not repeatable.
+                self.stopped = error.code == Code::Stopped;
                 // A resend after Resume must run, not meet this record: new ids from here on.
                 self.session = session_id();
                 let refused = Receipt { e: Some("stopped".into()), next: None, ..unknown(&p.id, p.generation) };
@@ -332,6 +345,7 @@ impl Engine {
     /// match a record made for a different device.
     fn digest(&mut self, wire: &Value, device_bound: bool) -> Result<String> {
         let mut hash = Sha256::new();
+        hash.update(self.digest_key.as_bytes());
         if device_bound {
             hash.update(self.link.device()?.hardware.as_bytes());
         }
@@ -365,6 +379,14 @@ fn operation_id(session: &str, kind: &str, identity: &str) -> String {
         hash.update([0]);
     }
     format!("n{}", &hex(&hash.finalize())[..31])
+}
+
+/// `base` for `base/targets/NAME`, else the folder itself.
+fn home(root: &Path) -> PathBuf {
+    match root.parent() {
+        Some(targets) if targets.file_name().is_some_and(|name| name == "targets") => targets.parent().map_or_else(|| root.to_path_buf(), Path::to_path_buf),
+        _ => root.to_path_buf(),
+    }
 }
 
 pub(crate) fn session_id() -> String {

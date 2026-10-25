@@ -19,7 +19,7 @@ Run files with `au test tests/*.au --junit out.xml`. Each file is one test case;
 | --- | --- |
 | any `android_act` command | Runs it; an error or a miss fails the line. `then` chains work. |
 | `reset app "PKG"` / `clear app "PKG"` | `am force-stop` / `pm clear` through adb, for a known start. |
-| `expect screen "TEXT" [within N seconds]` | Waits up to N seconds (default 5, at most 60) for the text on screen. |
+| `expect screen "TEXT" [within N seconds]` | Waits up to N seconds (default 5, at most 60) for the text on screen (the full listing, so rows the short listing folds still count). |
 | `expect no screen "TEXT" [within N seconds]` | The same, for text that must be gone. |
 | `expect result "TEXT"` | The previous command's reply contains the text. |
 
@@ -27,7 +27,7 @@ Run files with `au test tests/*.au --junit out.xml`. Each file is one test case;
 
 ## From an agent session to a test
 
-Let an agent explore once, then `au trace to-test ID > tests/login.au`. The file holds the commands that ran to the end, without the misses; add `expect screen` lines after the steps that matter. A trace that typed redacted text (`***`) is refused: edit that step by hand so the test does not depend on a secret.
+Let an agent explore once, then `au trace to-test ID > tests/login.au`. The file holds the commands that ran to the end, without the misses; add `expect screen` lines after the steps that matter. A `run routine` step comes back as a comment, because traces keep routine values redacted: write the values back in, or the routine's own commands. A trace that typed redacted text (`***`) is refused: edit that step by hand so the test does not depend on a secret.
 
 ## The lab screens
 
