@@ -87,13 +87,14 @@ pub(crate) fn run(engine: &mut Engine, transfer: &Transfer) -> Result<String> {
         Transfer::Pull(name) => {
             let dest = plan_pull(&dir, name)?;
             let remote = format!("{REMOTE_DIR}/{name}");
-            let stat = String::from_utf8_lossy(&engine.adb(&["shell", "stat", "-c", "%F|%s", &format!("'{remote}'")], Duration::from_secs(20))?).trim().to_owned();
+            let stat = String::from_utf8_lossy(&engine.adb(&["shell", "stat", "-c", "'%F|%s'", &format!("'{remote}'")], Duration::from_secs(20))?).trim().to_owned();
             let size =
                 remote_file_size(&stat).ok_or_else(|| Error::plain(Code::Missing, format!("There is no file \"{name}\" in the phone's Downloads (a folder is not pulled).")))?;
             if size > MAX_BYTES {
                 return Err(Error::plain(Code::Bounds, "Files over 64 MB are not transferred."));
             }
-            // Pulled aside first (names never start with a dot, so this is no one's file), checked
+            // adb joins shell arguments with spaces, so the `|` in the format is quoted for the
+            // phone's shell. Pulled aside first (names never start with a dot, so this is no one's file), checked
             // again once whole, since the phone's file can change after the stat, then copied to a
             // name that must still be free.
             let part = dir.join(format!(".{name}.part"));

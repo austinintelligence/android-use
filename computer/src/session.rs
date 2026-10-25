@@ -85,6 +85,11 @@ fn check_policy(engine: &mut Engine, actions: &[Action]) -> Result<()> {
     if actions.iter().all(leaves) {
         return charge(engine, actions.len() as u32);
     }
+    // The phone's state first, so a locked phone or a stopped helper gets its typed answer rather
+    // than an error from reading the screen.
+    if !engine.agent.verified {
+        engine.preflight()?;
+    }
     // Android's own permission and install prompts are answered by a person, never by the agent:
     // while one is the active window, only leaving it is allowed.
     let package = engine.ensure_scene()?.package;

@@ -36,6 +36,11 @@ impl OsStore {
     /// Runs the store's own tool. `file` reaches PowerShell as `AU_SECRET_FILE`: arguments after
     /// `-Command` are part of the script, not values it can read.
     fn run(program: &str, args: &[&str], stdin: Option<&str>, file: Option<&Path>) -> Result<(bool, String)> {
+        Self::run_code(program, args, stdin, file).map(|(code, out)| (code == Some(0), out))
+    }
+
+    /// `run` with the tool's exit code, for telling "not there" from a failure.
+    fn run_code(program: &str, args: &[&str], stdin: Option<&str>, file: Option<&Path>) -> Result<(Option<i32>, String)> {
         let mut command = Command::new(program);
         if let Some(file) = file {
             command.env("AU_SECRET_FILE", file);
@@ -51,7 +56,7 @@ impl OsStore {
             pipe.write_all(text.as_bytes())?;
         }
         let out = child.wait_with_output()?;
-        Ok((out.status.success(), String::from_utf8_lossy(&out.stdout).trim_end_matches(['\r', '\n']).to_owned()))
+        Ok((out.status.code(), String::from_utf8_lossy(&out.stdout).trim_end_matches(['\r', '\n']).to_owned()))
     }
 
     #[cfg(windows)]
@@ -104,14 +109,18 @@ impl SecretStore for OsStore {
     }
 
     fn remove(&self, name: &str) -> Result<()> {
+        // Done, or the value was not there: `security` exits 44 for an item it cannot find, and
+        // `secret-tool clear` succeeds when nothing matched. Anything else leaves the value.
         #[cfg(target_os = "macos")]
-        let (done, _) = Self::run("security", &["delete-generic-password", "-s", SERVICE, "-a", name], None, None)?;
+        let done = matches!(Self::run_code("security", &["delete-generic-password", "-s", SERVICE, "-a", name], None, None)?.0, Some(0 | 44));
         #[cfg(windows)]
-        let done = fs::remove_file(self.file(name)).is_ok();
+        let done = match fs::remove_file(self.file(name)) {
+            Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+            Ok(()) => true,
+        };
         #[cfg(not(any(target_os = "macos", windows)))]
-        let (done, _) = Self::run("secret-tool", &["clear", "service", SERVICE, "account", name], None, None)?;
-        // A failure that leaves nothing behind was "not there"; one that leaves the value is an error.
-        if !done && self.get(name)?.is_some() {
+        let done = Self::run("secret-tool", &["clear", "service", SERVICE, "account", name], None, None)?.0;
+        if !done {
             return Err(Error::plain(Code::Io, "The system's secret store kept the value; unlock it and try again. Nothing was changed."));
         }
         Ok(())

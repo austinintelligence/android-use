@@ -187,7 +187,7 @@ The full model: [SECURITY.md](SECURITY.md) and the [control guide](docs/guides/c
 
 <details><summary><strong>Wi-Fi instead of USB?</strong></summary><br>Release testing uses USB. Wireless ADB works as an advanced transport; secure it like physical access.</details>
 
-<details><summary><strong>Where do captures, traces, and logs go?</strong></summary><br>They stay on your machine in a private folder. Captures and traces are deleted after 7 days, and the journal keeps operation metadata, never screen or media contents. <code>au uninstall</code> removes the helper, the journal, and captures; stored secrets stay in your system's secret store until <code>au secret remove</code>. See <a href="SECURITY.md">Security</a>.</details>
+<details><summary><strong>Where do captures, traces, and logs go?</strong></summary><br>They stay on your machine in a private folder. Captures and traces older than 7 days are deleted the next time Android Use opens that device, and the journal keeps operation metadata, never screen or media contents. <code>au uninstall</code> removes the helper, the journal, and captures; stored secrets stay in your system's secret store until <code>au secret remove</code>. See <a href="SECURITY.md">Security</a>.</details>
 
 ## Status
 

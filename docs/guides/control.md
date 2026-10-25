@@ -40,7 +40,7 @@ The value goes to the system store (macOS Keychain, Secret Service through `secr
 
 ## Traces
 
-Every session writes a trace you can review: `au trace list`, `au trace show ID`, `au trace export ID` (one page, no scripts), and `au trace to-test ID` ([testing apps](app-testing.md)). Text typed into password, PIN, code, token and similar fields, or into a field with no name to judge by (`e12`), clipboard text, and routine values are replaced by `***` before anything is written, whatever the spelling (`type`/`TYPE`, `in`/`into`, curly quotes). Traces are private to you and deleted after 7 days.
+Every session writes a trace you can review: `au trace list`, `au trace show ID`, `au trace export ID` (one page, no scripts), and `au trace to-test ID` ([testing apps](app-testing.md)). Text typed into password, PIN, code, token and similar fields, or into a field with no name to judge by (`e12`), clipboard text, and routine values are replaced by `***` before anything is written, whatever the spelling (`type`/`TYPE`, `in`/`into`, curly quotes). Traces are private to you; one older than 7 days is deleted the next time a session starts.
 
 ## Waiting and files
 

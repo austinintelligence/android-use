@@ -26,6 +26,8 @@ const LATE_MS: u64 = 600;
 /// How long a screen that keeps changing is followed before it is reported as it is.
 const CHANGING_MS: u64 = 700;
 const UNREAD_WINDOWS: &str = "The window list could not be read.";
+/// A cut-short reply can leave whole windows out, Android's prompt among them.
+const CUT_WINDOWS: &str = "The window list was cut short.";
 pub(crate) const SPACE_FILE: &str = "screen-space.json";
 
 impl Engine {
@@ -185,7 +187,7 @@ impl Engine {
     /// The windows other than the one listed: an open dialog or popup, the keyboard, and Android's
     /// own prompts. Empty on a helper without the `tree` op, or when it cannot be read.
     pub(crate) fn window_notes(&mut self) -> Vec<String> {
-        let Ok((_, caps)) = self.bridge_read(|bridge| bridge.status()) else { return Vec::new() };
+        let Ok((_, caps)) = self.bridge_read(|bridge| bridge.status()) else { return vec![UNREAD_WINDOWS.into()] };
         if caps & crate::tree::CAP_TREE == 0 {
             return Vec::new();
         }
@@ -195,8 +197,8 @@ impl Engine {
         // `system_prompt_open` treats them as one.
         let Ok(tree) = self.bridge_read(|bridge| bridge.query("tree", Value::Null)) else { return vec![UNREAD_WINDOWS.into()] };
         let windows = tree["windows"].as_array().map(Vec::as_slice).unwrap_or_default();
-        let (kind, text) = (|w: &Value| w["type"].as_i64().unwrap_or(0), |w: &Value, key: &str| display_n(w[key].as_str().unwrap_or(""), 80));
         let mut notes = Vec::new();
+        let (kind, text) = (|w: &Value| w["type"].as_i64().unwrap_or(0), |w: &Value, key: &str| display_n(w[key].as_str().unwrap_or(""), 80));
         let apps: Vec<&Value> = windows.iter().filter(|w| kind(w) == 1 && w["display"].as_i64().unwrap_or(0) == 0).collect();
         if let Some(top) = apps.iter().max_by_key(|w| w["layer"].as_i64().unwrap_or(0)).filter(|_| apps.len() > 1) {
             let title = text(top, "title");
@@ -210,7 +212,7 @@ impl Engine {
             notes.push("Keyboard is open.".into());
         }
         if tree["truncated"] == true {
-            notes.push("The window list was cut short.".into());
+            notes.push(CUT_WINDOWS.into());
         }
         notes
     }
@@ -229,12 +231,13 @@ impl Engine {
         stack.extend(tree["windows"].as_array().into_iter().flatten().map(|w| &w["root"]));
         while let Some(node) = stack.pop() {
             let flags = node["f"].as_u64().unwrap_or(0) as u16;
-            if flags & crate::tree::EDITABLE != 0 {
-                if flags & crate::tree::PASSWORD != 0 {
-                    real += 1;
-                } else if matches!(node["t"].as_str().unwrap_or("").trim(), "filled password" | "empty password") {
-                    fake += 1;
-                }
+            // The listing can take a plain field's value from text beside it, so the marker words
+            // anywhere on screen (text or description) count as an imitation.
+            let marker = |key: &str| matches!(node[key].as_str().unwrap_or("").trim(), "filled password" | "empty password");
+            if flags & crate::tree::EDITABLE != 0 && flags & crate::tree::PASSWORD != 0 {
+                real += 1;
+            } else if marker("t") || marker("d") {
+                fake += 1;
             }
             stack.extend(node["k"].as_array().into_iter().flatten());
         }
@@ -243,7 +246,7 @@ impl Engine {
 
     /// Whether Android's own permission or install prompt is up.
     pub(crate) fn system_prompt_open(&mut self) -> bool {
-        self.window_notes().iter().any(|note| note.starts_with("Android prompt") || note == UNREAD_WINDOWS)
+        self.window_notes().iter().any(|note| note.starts_with("Android prompt") || note == UNREAD_WINDOWS || note == CUT_WINDOWS)
     }
 
     /// The screen as it is now, for a command that stopped part-way: a short listing the agent can

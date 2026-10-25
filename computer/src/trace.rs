@@ -104,13 +104,14 @@ fn tokens(command: &str) -> Vec<(bool, std::ops::Range<usize>)> {
 }
 
 /// The command with typed text replaced by `***` when it goes into a secret-looking field, or into
-/// a target that has no name to judge by (`e12`, none); clipboard text and routine values always.
+/// a target that has no name to judge by (`e12`, none); clipboard text and the values of `run` and
+/// `save routine` always.
 /// Any spelling the grammar takes counts: `type` in any case, `in` or `into`, curly quotes.
 pub(crate) fn redact(command: &str) -> String {
     let tokens = tokens(command);
     let word = |i: usize, w: &str| tokens.get(i).is_some_and(|(quoted, r)| !quoted && command[r.clone()].eq_ignore_ascii_case(w));
     let quoted = |i: usize| tokens.get(i).is_some_and(|(quoted, _)| *quoted);
-    let routine = word(0, "run") && word(1, "routine");
+    let routine = (word(0, "run") || word(0, "save")) && word(1, "routine");
     let mut hide = Vec::new();
     for i in 0..tokens.len() {
         if routine && i > 2 && quoted(i) {
@@ -252,6 +253,7 @@ mod tests {
             ("type \u{201c}x3\u{201d} in \u{201c}Password\u{201d}", "type \u{201c}***\u{201d} in \u{201c}Password\u{201d}"),
             (r#"type "x4" in e12"#, r#"type "***" in e12"#),
             (r#"run routine "login" with "hunter2" with "x""#, r#"run routine "login" with "***" with "***""#),
+            (r#"save routine "login" from last with "hunter2""#, r#"save routine "login" from last with "***""#),
         ] {
             assert_eq!(redact(command), hidden, "{command}");
         }

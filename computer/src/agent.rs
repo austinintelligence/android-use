@@ -161,8 +161,9 @@ impl Engine {
         }
         let result = self.run_command(actions, request_identity);
         self.agent.verified = matches!(&result, Ok(response) if response.status == "done" && !response.failed);
-        // A refusal because the helper is stopped did not run; the resend after Resume must.
-        let refused = matches!(&result, Err(error) if error.code == Code::Stopped);
+        // A refusal because the helper is stopped, or waiting on an approval, did not run; the
+        // resend after Resume or the answer must.
+        let refused = matches!(&result, Err(error) if matches!(error.code, Code::Stopped | Code::Denied));
         if let Some(key) = key.filter(|_| !refused) {
             self.agent.replies.truncate(15);
             self.agent.replies.insert(0, (key, copy(&result)));

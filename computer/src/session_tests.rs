@@ -120,7 +120,8 @@ fn fields(masked: bool, look_alike: bool) {
         nodes.push(json!({"c": "EditText", "t": "", "b": [0, 0, 1, 1], "f": 8 | 64 | 256}));
     }
     if look_alike {
-        nodes.push(json!({"c": "EditText", "t": "filled password", "b": [0, 0, 1, 1], "f": 8 | 64}));
+        // A plain text label: the listing can lend its words to an empty plain field beside it.
+        nodes.push(json!({"c": "TextView", "t": "filled password", "b": [0, 0, 1, 1], "f": 0}));
     }
     let count = nodes.len() + 1;
     let window = json!({"type": 1, "layer": 0, "display": 0, "bounds": [0, 0, 1, 1], "title": "", "pkg": "com.example.bank", "active": true, "focused": true, "root": {"c": "Frame", "b": [0, 0, 1, 1], "f": 0, "k": nodes}});
