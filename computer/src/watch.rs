@@ -46,9 +46,13 @@ fn control_state(root: &Path) -> Value {
     std::fs::read_to_string(root.join("control.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(json!({}))
 }
 
+/// Written aside and renamed over, so a session never reads a half-written (empty) file as "not stopped".
 fn write_control(root: &Path, paused: bool, stop: bool) -> Result<()> {
-    let mut file = private_file().write(true).create(true).truncate(true).open(root.join("control.json"))?;
+    let temp = root.join("control.json.tmp");
+    let mut file = private_file().write(true).create(true).truncate(true).open(&temp)?;
     writeln!(file, "{}", json!({"paused": paused, "stop": stop}))?;
+    drop(file);
+    std::fs::rename(&temp, root.join("control.json"))?;
     Ok(())
 }
 

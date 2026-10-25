@@ -31,8 +31,12 @@ public final class ApproveActivity extends Activity {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
-        // Not shown over the lock screen: only someone who can unlock the phone may answer.
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        // Not shown over the lock screen: only someone who can unlock the phone may answer. Secure,
+        // so no screenshot or recording carries the prompt.
+        getWindow()
+                .addFlags(
+                        WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                                | WindowManager.LayoutParams.FLAG_SECURE);
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
         page.setPadding(48, 96, 48, 48);
@@ -69,8 +73,10 @@ public final class ApproveActivity extends Activity {
     @Override
     protected void onDestroy() {
         handler.removeCallbacks(watch);
-        // Leaving the prompt any other way is a refusal.
-        Approval.answer(false, SystemClock.elapsedRealtime());
+        // Leaving the prompt any other way is a refusal; a rotation only recreates it.
+        if (!isChangingConfigurations()) {
+            Approval.answer(false, SystemClock.elapsedRealtime());
+        }
         super.onDestroy();
     }
 

@@ -642,24 +642,21 @@ impl Engine {
         if !self.guard.policy.restricts_apps() {
             return Ok(());
         }
-        let label = self.app_label(package).ok().flatten();
+        // A failed lookup fails: a deny list may name the app only by its launcher label.
+        let label = self.app_label(package)?;
         self.guard.policy.app_ok(&[asked.unwrap_or(package), package, label.as_deref().unwrap_or_default()])
     }
 
     /// The reason the app on screen may not be driven, if `policy.toml` keeps it out. Apps reached
     /// another way than `open app` (a setting, a link, a notification, the home screen) are caught
     /// here. A package with no launcher entry is not restricted; when the app list cannot be read,
-    /// the package alone decides, so a failed lookup never lets a denied app through.
+    /// the command fails, since a deny list may name the app only by its launcher label.
     pub(crate) fn foreground_blocked(&mut self) -> Result<Option<String>> {
         if !self.guard.policy.restricts_apps() {
             return Ok(None);
         }
         let package = self.ensure_scene()?.package.to_string();
-        let label = match self.app_label(&package) {
-            Ok(None) => return Ok(None),
-            Ok(Some(label)) => label,
-            Err(_) => package.clone(),
-        };
+        let Some(label) = self.app_label(&package)? else { return Ok(None) };
         Ok(self
             .guard
             .policy

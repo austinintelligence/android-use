@@ -19,12 +19,13 @@
 ### Security
 
 - The journal's plan digests are keyed with a random per-process key, so text typed into a field (a PIN, a password) cannot be recovered from `operations.*` by guessing; digests are only ever compared within one process.
-- `policy.toml` covers the app on screen, not only `open app`: `open setting` counts as Settings, while a kept-out app is in front only `press back`/`press home` run, and a command that leads into one is answered with Home. A loose name match no longer counts as one of the app's names, and a failed app-list lookup never lets a denied app through. `capture.allow = false` also keeps screen images out of replies.
-- While Android's own permission or install prompt is the active window, only `press back` and `press home` run, whatever the label, handle or point.
+- `policy.toml` covers the app on screen, not only `open app`: `open setting` counts as Settings, while a kept-out app is in front only `press back`/`press home` run, and a command that leads into one is answered with Home. A loose name match no longer counts as one of the app's names, and a failed app-list lookup stops the command, since a deny list may name an app only by its launcher label. `capture.allow = false` also keeps screen images out of replies.
+- While Android's own permission or install prompt is the active window, only `press back` and `press home` run, whatever the label, handle or point. A window list that cannot be read counts as such a prompt for taps on Allow, OK and the like.
 - `type secret` needs a field the helper's own flags mark as a password, with no plain field imitating one; replies hide any line that still holds a piece of the value, so shortened or cleaned-up copies cannot leak it.
-- Phone approvals: the helper runs no actions while one waits, so no connection can press its buttons; it is not shown over the lock screen; steps longer than the 300 characters the phone shows are refused; Stop and pause are checked again after the wait.
-- Trace redaction follows the grammar (`type`/`TYPE`, `in`/`into`, curly quotes, `eN` targets) and redacts routine values.
-- Pulls copy regular files only, and transfers count against `actions.max_per_session`.
+- Phone approvals: the helper runs no actions while one waits, so no connection can press its buttons; it is not shown over the lock screen; steps longer than the 300 characters the phone shows are refused; Stop and pause are checked again after the wait. The prompt cannot be captured in a screenshot or recording, and turning the phone while it is up no longer counts as Deny.
+- Trace redaction follows the grammar (`type`/`TYPE`, `in`/`into`, curly quotes, `eN` targets) and redacts routine values. The reply to a command that typed hidden text, and a code read from a notification, are not kept in the trace.
+- `au watch` writes Pause and Stop in one step, so a session never reads a half-written file as "carry on". A damaged `secrets.json` stops `au secret add` and `remove` instead of being rewritten, and `remove` reports a value the system store kept.
+- Pulls copy regular files only, are checked against 64 MB again once copied, and never replace a file that appeared meanwhile; transfers count against `actions.max_per_session`.
 
 ### Added
 
@@ -49,8 +50,8 @@
 - Policy, secrets, routines, traces and the `au watch` control file live in `AU_HOME` itself, also for emulator targets, where the `au secret`, `au trace` and `au watch` commands look.
 - Windows secret files are named by the hex of the secret's name, and PowerShell gets the file path through the environment.
 - Source budgets raised once for these features (Rust 12,000, Java 5,600, automation 3,900, authored 27,500), and the documentation budgets for the protocol and CLI references.
-- The host binary is back under its limits (Linux x86_64 1,445,376 bytes against 1,450,000; macOS arm64 1,072,272 against 1,120,000): the session layer is compiled once instead of inlined into both the MCP loop and the CLI, window notes read the helper's `tree` reply as plain JSON instead of through generated deserializers, secrets metadata reuses the JSON value code, and sorts that did not need to be stable use one shared instantiation or none.
-- Windows gets its own host binary limit, 1,200,000 bytes (it shared macOS's 1,120,000). Windows sizes were never measured before: the 1.3.0 code links to about 1,078,000 bytes there and 1.4.0 to 1,177,088, so the shared limit no longer fit once routines, policy, secrets, approvals, traces and `au test` were in. CI now checks the binary against its platform's limit on Linux, macOS and Windows on every change (`cargo xtask binary-size`); before, only Linux was checked, at release.
+- The host binary is back under its limits (Linux x86_64 1,447,968 bytes against 1,450,000; macOS arm64 about 1,073,000 against 1,120,000): the session layer is compiled once instead of inlined into both the MCP loop and the CLI, window notes read the helper's `tree` reply as plain JSON instead of through generated deserializers, secrets metadata reuses the JSON value code, and sorts that did not need to be stable use one shared instantiation or none.
+- Windows gets its own host binary limit, 1,200,000 bytes (it shared macOS's 1,120,000). Windows sizes were never measured before: the 1.3.0 code links to about 1,078,000 bytes there and 1.4.0 to about 1,180,000, so the shared limit no longer fit once routines, policy, secrets, approvals, traces and `au test` were in. CI now checks the binary against its platform's limit on Linux, macOS and Windows on every change (`cargo xtask binary-size`); before, only Linux was checked, at release.
 
 ### Fixed
 

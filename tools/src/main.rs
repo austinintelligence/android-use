@@ -96,7 +96,7 @@ fn artifact_sizes(root: &Path) -> Result<(), String> {
     Ok(())
 }
 /// The `dist` host binary against its platform's limit. The same source links to different sizes:
-/// Linux (ELF) is largest, macOS smallest (1.4.0: 1,445,376, 1,177,088 on Windows, 1,072,272 on
+/// Linux (ELF) is largest, macOS smallest (1.4.0: about 1.45 MB, 1.18 MB on Windows, 1.07 MB on
 /// macOS), so each platform has its own limit. CI checks all three on every change.
 fn binary_size(root: &Path) -> Result<(), String> {
     let binary = file_bytes(&root.join("target/dist").join(if cfg!(windows) { "au.exe" } else { "au" }))?;

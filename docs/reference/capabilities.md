@@ -32,7 +32,7 @@ List and select tabs; read a page's title, text, and interactive elements; open 
 
 ## Tools and 2.0 only
 
-The helper reports status capability bit 3 (value 8) when it can dump every window with the `tree` op: each window's type, layer, display, bounds, title, and package, and its node tree (class, text, description, view id, bounds, flags). Password text is never sent, and a reply is capped at 2,048 nodes and 900 KB, with a `truncated` flag and counts when cut short. No agent command uses it.
+The helper reports status capability bit 3 (value 8) when it can dump every window with the `tree` op: each window's type, layer, display, bounds, title, and package, and its node tree (class, text, description, view id, bounds, flags). Password text is never sent, and a reply is capped at 2,048 nodes and 900 KB, with a `truncated` flag and counts when cut short. `screen` uses each window's header, when the helper has this bit, to note an open dialog, the keyboard, and Android's own permission prompts, and `type secret` uses the node flags to confirm a password field; neither sends the node tree to the agent.
 
 ## Targets
 

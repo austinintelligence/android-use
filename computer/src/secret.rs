@@ -105,11 +105,15 @@ impl SecretStore for OsStore {
 
     fn remove(&self, name: &str) -> Result<()> {
         #[cfg(target_os = "macos")]
-        let _ = Self::run("security", &["delete-generic-password", "-s", SERVICE, "-a", name], None, None)?;
+        let (done, _) = Self::run("security", &["delete-generic-password", "-s", SERVICE, "-a", name], None, None)?;
         #[cfg(windows)]
-        let _ = fs::remove_file(self.file(name));
+        let done = fs::remove_file(self.file(name)).is_ok();
         #[cfg(not(any(target_os = "macos", windows)))]
-        let _ = Self::run("secret-tool", &["clear", "service", SERVICE, "account", name], None, None)?;
+        let (done, _) = Self::run("secret-tool", &["clear", "service", SERVICE, "account", name], None, None)?;
+        // A failure that leaves nothing behind was "not there"; one that leaves the value is an error.
+        if !done && self.get(name)?.is_some() {
+            return Err(Error::plain(Code::Io, "The system's secret store kept the value; unlock it and try again. Nothing was changed."));
+        }
         Ok(())
     }
 }
@@ -119,12 +123,19 @@ fn meta_path(root: &Path) -> PathBuf {
     root.join("secrets.json")
 }
 
-/// A JSON object of name -> package list; a missing or unreadable file is empty.
+/// A JSON object of name -> package list.
 type Meta = serde_json::Map<String, Value>;
 
-fn load_meta(root: &Path) -> Meta {
-    let value: Option<Value> = fs::read_to_string(meta_path(root)).ok().and_then(|text| serde_json::from_str(&text).ok());
-    value.and_then(|v| v.as_object().cloned()).unwrap_or_default()
+/// A missing file is empty; one that cannot be read is an error, so nothing rewrites it from scratch.
+fn load_meta(root: &Path) -> Result<Meta> {
+    let text = match fs::read_to_string(meta_path(root)) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Meta::new()),
+        read => read?,
+    };
+    match serde_json::from_str(&text) {
+        Ok(Value::Object(meta)) => Ok(meta),
+        _ => Err(Error::plain(Code::Io, "secrets.json in the state folder is damaged. Fix or delete it; nothing was changed.")),
+    }
 }
 
 fn apps_of(value: &Value) -> Vec<String> {
@@ -156,16 +167,16 @@ pub fn add(root: &Path, store: &dyn SecretStore, name: &str, apps: &[String], va
     if !typeable(value) {
         return Err(Error::new(Code::Args, "a secret is 1 to 256 characters without quotes, backslashes or control characters"));
     }
+    let mut meta = load_meta(root)?;
     store.set(&normalized(name), value)?;
-    let mut meta = load_meta(root);
     meta.insert(normalized(name), json!(apps));
     save_meta(root, &meta)?;
     Ok(json!({"ok":1,"text":format!("Saved secret \"{name}\" for {}.", apps.join(", "))}))
 }
 
 pub fn remove(root: &Path, store: &dyn SecretStore, name: &str) -> Result<Value> {
+    let mut meta = load_meta(root)?;
     store.remove(&normalized(name))?;
-    let mut meta = load_meta(root);
     let existed = meta.remove(&normalized(name)).is_some();
     save_meta(root, &meta)?;
     Ok(json!({"ok":1,"text":if existed { format!("Removed secret \"{name}\".") } else { format!("There was no secret \"{name}\".") }}))
@@ -173,7 +184,10 @@ pub fn remove(root: &Path, store: &dyn SecretStore, name: &str) -> Result<Value>
 
 /// Names and allowed apps; never values.
 pub fn list(root: &Path) -> String {
-    let meta = load_meta(root);
+    let meta = match load_meta(root) {
+        Ok(meta) => meta,
+        Err(e) => return e.message.to_string(),
+    };
     if meta.is_empty() {
         return "No secrets saved. Add one with `au secret add NAME --apps PACKAGE`.".into();
     }
@@ -252,7 +266,7 @@ fn fragments(value: &str) -> Vec<String> {
 }
 
 pub(crate) fn allowed_apps(root: &Path, name: &str) -> Option<Vec<String>> {
-    load_meta(root).get(&normalized(name)).map(apps_of)
+    load_meta(root).ok()?.get(&normalized(name)).map(apps_of)
 }
 
 #[cfg(test)]
@@ -289,6 +303,17 @@ pub(crate) mod tests {
         assert_eq!(allowed_apps(d.path(), "BANK  pin"), Some(vec!["com.example.bank".into()]));
         remove(d.path(), &store, "bank pin").unwrap();
         assert!(store.get("bank pin").unwrap().is_none() && list(d.path()).starts_with("No secrets"));
+    }
+
+    #[test]
+    fn a_damaged_names_file_is_kept_and_nothing_is_stored() {
+        let d = tempfile::tempdir().unwrap();
+        let store = Memory::default();
+        fs::write(meta_path(d.path()), "{\"bank pin\": [\"com.example.bank\"").unwrap();
+        assert_eq!(add(d.path(), &store, "other", &["com.x".into()], "v").unwrap_err().code, Code::Io);
+        assert!(remove(d.path(), &store, "bank pin").is_err() && store.0.borrow().is_empty());
+        assert!(list(d.path()).contains("damaged") && allowed_apps(d.path(), "bank pin").is_none());
+        assert_eq!(fs::read_to_string(meta_path(d.path())).unwrap(), "{\"bank pin\": [\"com.example.bank\"", "the file is left for the person to fix");
     }
 
     #[test]

@@ -41,10 +41,20 @@ impl Trace {
             Ok((status, text, image)) => (true, *status, *text, *image),
             Err((code, text)) => (false, *code, *text, false),
         };
+        let cmd = redact(command);
+        // The screen after hidden text was typed can show it again, and a code read from a
+        // notification is a secret of its own: neither reply is kept.
+        let text = if cmd.contains("***") && !command.contains("***") {
+            "[reply hidden: the command typed hidden text]"
+        } else if read && command.trim_start().to_ascii_lowercase().starts_with("code from notification") {
+            "[code hidden]"
+        } else {
+            text
+        };
         let line = json!({
             "t": now_ms(),
             "tool": if read { "read" } else { "act" },
-            "cmd": redact(command),
+            "cmd": cmd,
             "ok": ok,
             "status": status,
             "text": text.chars().take(MAX_TEXT).collect::<String>(),
@@ -253,13 +263,14 @@ mod tests {
     fn a_trace_is_private_listed_shown_exported_and_expires() {
         let d = tempfile::tempdir().unwrap();
         let t = Trace::open(d.path(), "a1b2c3d4").unwrap();
-        t.record(false, r#"type "pw" in "Password""#, &Ok(("done", "Done.\n<b>x</b>", false)));
+        t.record(false, r#"type "pw" in "PIN""#, &Ok(("done", "Done.\nPIN: pw", false)));
         t.record(false, r#"tap "Missing""#, &Err(("missing", "No such label")));
-        t.record(true, "screen", &Ok(("ok", "Settings", false)));
+        t.record(true, "screen", &Ok(("ok", "Settings <b>x</b>", false)));
+        t.record(true, r#"code from notification "Bank""#, &Ok(("ok", "Code: 482913", false)));
         let id = ids(d.path()).remove(0);
-        assert_eq!(list(d.path())["traces"][0]["steps"], 3);
+        assert_eq!(list(d.path())["traces"][0]["steps"], 4);
         let shown = show(d.path(), &id).unwrap();
-        assert!(shown.contains(r#"1. act type "***" in "Password" -> done"#) && !shown.contains("pw"), "{shown}");
+        assert!(shown.contains(r#"1. act type "***" in "PIN" -> done"#) && !shown.contains("pw") && !shown.contains("482913"), "{shown}");
         let html = export_html(d.path(), &id).unwrap();
         assert!(html.contains("&lt;b&gt;x&lt;/b&gt;") && !html.contains("<script") && html.contains("class=\"bad\""), "{html}");
         #[cfg(unix)]

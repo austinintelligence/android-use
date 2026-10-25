@@ -25,6 +25,7 @@ const LOADING_MS: u64 = 1500;
 const LATE_MS: u64 = 600;
 /// How long a screen that keeps changing is followed before it is reported as it is.
 const CHANGING_MS: u64 = 700;
+const UNREAD_WINDOWS: &str = "The window list could not be read.";
 pub(crate) const SPACE_FILE: &str = "screen-space.json";
 
 impl Engine {
@@ -92,8 +93,9 @@ impl Engine {
                 // generation and read rows only when it moves.
                 let begun = Instant::now();
                 // A screen that changed is reported once it holds still for a poll, so a list that
-                // is still filling in is not mistaken for the finished one.
-                let (mut steady, mut changing) = (false, false);
+                // is still filling in is not mistaken for the finished one. That wait starts when the
+                // changed screen first shows, so a slow load does not use it up.
+                let (mut steady, mut changing, mut changed) = (false, false, None);
                 loop {
                     let loading = rows.len() <= 6 && rows.iter().any(|row| row.kind.is_empty() && normalized(&row.label).starts_with("loading"));
                     let cap = if rows.is_empty() || loading {
@@ -105,7 +107,8 @@ impl Engine {
                     } else {
                         break;
                     };
-                    if begun.elapsed() >= Duration::from_millis(cap) {
+                    let since = if cap == CHANGING_MS { *changed.get_or_insert_with(Instant::now) } else { begun };
+                    if since.elapsed() >= Duration::from_millis(cap) {
                         changing = !steady && seen != self.agent.acted_from && !loading && !rows.is_empty();
                         break;
                     }
@@ -188,7 +191,9 @@ impl Engine {
         }
         // Only each window's header is needed, so the reply is read as plain JSON rather than through
         // the typed `tree` reader, whose generated code would cost the binary about 10 KB.
-        let Ok(tree) = self.bridge_read(|bridge| bridge.query("tree", Value::Null)) else { return Vec::new() };
+        // Unread windows could hide Android's own prompt, so they are named, and
+        // `system_prompt_open` treats them as one.
+        let Ok(tree) = self.bridge_read(|bridge| bridge.query("tree", Value::Null)) else { return vec![UNREAD_WINDOWS.into()] };
         let windows = tree["windows"].as_array().map(Vec::as_slice).unwrap_or_default();
         let (kind, text) = (|w: &Value| w["type"].as_i64().unwrap_or(0), |w: &Value, key: &str| display_n(w[key].as_str().unwrap_or(""), 80));
         let mut notes = Vec::new();
@@ -238,7 +243,7 @@ impl Engine {
 
     /// Whether Android's own permission or install prompt is up.
     pub(crate) fn system_prompt_open(&mut self) -> bool {
-        self.window_notes().iter().any(|note| note.starts_with("Android prompt"))
+        self.window_notes().iter().any(|note| note.starts_with("Android prompt") || note == UNREAD_WINDOWS)
     }
 
     /// The screen as it is now, for a command that stopped part-way: a short listing the agent can

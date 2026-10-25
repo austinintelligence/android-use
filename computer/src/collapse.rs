@@ -20,7 +20,7 @@ impl Part {
 fn run_key(row: &SemanticRow) -> Option<String> {
     let label = row.label.trim();
     let prefix = label.trim_end_matches(|c: char| c.is_ascii_digit());
-    let plain = row.value.is_empty() && row.state.is_empty() && matches!(row.kind.as_str(), "" | "button" | "link");
+    let plain = row.enabled && row.value.is_empty() && row.state.is_empty() && matches!(row.kind.as_str(), "" | "button" | "link");
     (plain && prefix.len() < label.len() && prefix.ends_with(' ') && prefix.trim().len() > 1 && !crate::resolve::risky(label)).then(|| format!("{}\0{}", row.kind, prefix.trim()))
 }
 

@@ -93,10 +93,31 @@ pub(crate) fn run(engine: &mut Engine, transfer: &Transfer) -> Result<String> {
             if size > MAX_BYTES {
                 return Err(Error::plain(Code::Bounds, "Files over 64 MB are not transferred."));
             }
-            engine.adb(&["pull", &remote, &dest.display().to_string()], slow)?;
+            // Pulled aside first (names never start with a dot, so this is no one's file), checked
+            // again once whole, since the phone's file can change after the stat, then copied to a
+            // name that must still be free.
+            let part = dir.join(format!(".{name}.part"));
+            let _ = fs::remove_file(&part);
+            let pulled = engine.adb(&["pull", &remote, &part.display().to_string()], slow).and_then(|_| publish(&part, &dest, name));
+            let _ = fs::remove_file(&part);
+            pulled?;
             Ok(format!("Pulled {name} from Downloads (sha256 {}).", sha256(&dest)?))
         }
     }
+}
+
+/// Moves a finished pull to `dest` without ever replacing a file there.
+fn publish(part: &Path, dest: &Path, name: &str) -> Result<()> {
+    if fs::metadata(part)?.len() > MAX_BYTES {
+        return Err(Error::plain(Code::Bounds, "Files over 64 MB are not transferred."));
+    }
+    let mut out = fs::File::options()
+        .write(true)
+        .create_new(true)
+        .open(dest)
+        .map_err(|_| Error::plain(Code::Blocked, format!("\"{name}\" already exists in the transfer folder; a pull never replaces a file.")))?;
+    std::io::Write::write_all(&mut out, &fs::read(part)?)?;
+    Ok(())
 }
 
 /// The size from `stat -c '%F|%s'`, only for a regular file: a folder's own size says nothing about
@@ -162,5 +183,11 @@ mod tests {
         assert!(plan_pull(d.path(), "new.jpg").unwrap().ends_with("new.jpg"));
         fs::write(d.path().join("old.jpg"), "x").unwrap();
         assert_eq!(plan_pull(d.path(), "old.jpg").unwrap_err().code, Code::Blocked);
+        // A file that appears while the pull runs is not replaced either.
+        fs::write(d.path().join(".new.jpg.part"), "pulled").unwrap();
+        assert_eq!(publish(&d.path().join(".new.jpg.part"), &d.path().join("old.jpg"), "old.jpg").unwrap_err().code, Code::Blocked);
+        assert_eq!(fs::read_to_string(d.path().join("old.jpg")).unwrap(), "x");
+        publish(&d.path().join(".new.jpg.part"), &d.path().join("new.jpg"), "new.jpg").unwrap();
+        assert_eq!(fs::read_to_string(d.path().join("new.jpg")).unwrap(), "pulled");
     }
 }
