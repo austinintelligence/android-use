@@ -44,7 +44,7 @@ impl Trace {
         let cmd = redact(command);
         // The screen after hidden text was typed can show it again, and a code read from a
         // notification is a secret of its own: neither reply is kept.
-        let text = if cmd.contains("***") && !command.contains("***") {
+        let text = if cmd != command {
             "[reply hidden: the command typed hidden text]"
         } else if read && command.trim_start().to_ascii_lowercase().starts_with("code from notification") {
             "[code hidden]"
@@ -269,10 +269,12 @@ mod tests {
         t.record(false, r#"tap "Missing""#, &Err(("missing", "No such label")));
         t.record(true, "screen", &Ok(("ok", "Settings <b>x</b>", false)));
         t.record(true, r#"code from notification "Bank""#, &Ok(("ok", "Code: 482913", false)));
+        // Literal `***` in the command does not turn the hiding off.
+        t.record(false, r#"type "hunter2" in "Password" then tap "Missing***""#, &Err(("partial", "Partly done: Typed hunter2 in Password.")));
         let id = ids(d.path()).remove(0);
-        assert_eq!(list(d.path())["traces"][0]["steps"], 4);
+        assert_eq!(list(d.path())["traces"][0]["steps"], 5);
         let shown = show(d.path(), &id).unwrap();
-        assert!(shown.contains(r#"1. act type "***" in "PIN" -> done"#) && !shown.contains("pw") && !shown.contains("482913"), "{shown}");
+        assert!(shown.contains(r#"1. act type "***" in "PIN" -> done"#) && !shown.contains("pw") && !shown.contains("482913") && !shown.contains("hunter2"), "{shown}");
         let html = export_html(d.path(), &id).unwrap();
         assert!(html.contains("&lt;b&gt;x&lt;/b&gt;") && !html.contains("<script") && html.contains("class=\"bad\""), "{html}");
         #[cfg(unix)]

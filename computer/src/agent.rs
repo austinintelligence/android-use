@@ -216,6 +216,17 @@ impl Engine {
                         last_change = Some(at);
                     }
                     start += consumed;
+                    // A step that led into an app policy.toml keeps out ends the command there, so
+                    // the rest never runs inside it.
+                    if start < actions.len() && step.changed.is_some() {
+                        if let Some(why) = self.foreground_blocked()? {
+                            let _ = self.run_command(&[Action::Android(AndroidAction::Key(crate::api::Key::Home))], None);
+                            return Err(Error::plain(
+                                Code::Blocked,
+                                format!("Partly done: {} Blocked by policy.toml: that led to {why}, so Home was pressed and nothing more was run.", completed(&done)),
+                            ));
+                        }
+                    }
                 }
                 Err(error) if resolve::is_screen_miss(&error) => {
                     let missed = resolve::missed_label(&error).map(normalized);

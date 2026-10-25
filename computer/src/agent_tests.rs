@@ -198,6 +198,14 @@ pub(crate) mod flows {
                                 TYPED.with(|typed| typed.borrow_mut().push(op[2].as_str().unwrap().to_owned()));
                                 (generation, changes) = (generation + 1, changes + 1)
                             }
+                            // A link that opens an app: the bank's web address is an app link into it.
+                            "link" => {
+                                (screen, generation, changes) = (
+                                    if op[1].as_str().is_some_and(|url| url.starts_with("https://bank.example/")) { "com.example.bank" } else { "settings" },
+                                    generation + 1,
+                                    changes + 1,
+                                )
+                            }
                             "capture" => artifact = Some("a1"),
                             "settle" => {}
                             "wait" => generation += 1, // The screen changes by itself.

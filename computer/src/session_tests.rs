@@ -364,6 +364,12 @@ fn a_denied_app_reached_another_way_is_left_at_once_and_cannot_be_driven() {
     let error = call(&mut bank, "android_act", r#"tap "Email""#).err().unwrap();
     assert!(error.code == Code::Blocked && error.message.contains("is on screen") && error.message.contains("Only press back or press home"), "{}", error.message);
     assert_ne!(call(&mut bank, "android_act", "press home").err().map(|e| e.code), Some(Code::Blocked), "leaving is allowed");
+    // A chain that leads into it stops there: the steps after the link never run inside it.
+    let (mut chain, _c) = engine_with_policy("apps.deny = [\"com.example.bank\"]\n").unwrap();
+    TYPED.with(|typed| typed.borrow_mut().clear());
+    let error = call(&mut chain, "android_act", r#"open link "https://bank.example/transfer" then type "100" in "Email" then press home"#).err().unwrap();
+    assert!(error.code == Code::Blocked && error.message.contains("nothing more was run"), "{}", error.message);
+    assert!(TYPED.with(|typed| typed.borrow().is_empty()), "nothing was typed into the denied app");
 }
 
 #[test]
