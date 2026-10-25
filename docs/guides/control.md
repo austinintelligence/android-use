@@ -16,6 +16,8 @@ codes.apps = ["com.example.bank"]                # apps `read code from notifica
 files.dir = "/home/me/au-files"                  # the one folder push file and pull file may use
 ```
 
+Values cannot contain backslashes, so on Windows write paths with forward slashes: `files.dir = "C:/Users/me/au-files"`.
+
 An app is matched on the name the agent gave, its package, and its launcher name, so denying `Settings` also stops `open app "com.android.settings"`. A blocked command returns `blocked_by_policy`, names the rule, and runs nothing. `android_read policy` shows what is in force.
 
 `codes.apps` limits the convenience command only. Notification text is still readable through `notifications` once you grant notification access; keep that access off for phones where it matters.

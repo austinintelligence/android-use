@@ -57,26 +57,23 @@ impl OsStore {
 impl SecretStore for OsStore {
     fn get(&self, name: &str) -> Result<Option<String>> {
         let _ = &self.root;
+        // One expression per platform, so no branch needs an early return.
         #[cfg(target_os = "macos")]
-        {
-            let (ok, out) = Self::run("security", &["find-generic-password", "-s", SERVICE, "-a", name, "-w"], None)?;
-            return Ok(ok.then_some(out));
-        }
+        let found = Self::run("security", &["find-generic-password", "-s", SERVICE, "-a", name, "-w"], None)?;
         #[cfg(windows)]
-        {
+        let found = {
             let file = self.file(name);
-            if !file.is_file() {
-                return Ok(None);
-            }
             let script = "$s = Get-Content -LiteralPath $args[0] | ConvertTo-SecureString; [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($s))";
-            let (ok, out) = Self::run("powershell", &["-NoProfile", "-Command", script, &file.display().to_string()], None)?;
-            return Ok(ok.then_some(out));
-        }
+            if file.is_file() {
+                Self::run("powershell", &["-NoProfile", "-Command", script, &file.display().to_string()], None)?
+            } else {
+                (false, String::new())
+            }
+        };
         #[cfg(not(any(target_os = "macos", windows)))]
-        {
-            let (ok, out) = Self::run("secret-tool", &["lookup", "service", SERVICE, "account", name], None)?;
-            Ok((ok && !out.is_empty()).then_some(out))
-        }
+        let found = Self::run("secret-tool", &["lookup", "service", SERVICE, "account", name], None)?;
+        let (ok, out) = found;
+        Ok((ok && !out.is_empty()).then_some(out))
     }
 
     fn set(&self, name: &str, value: &str) -> Result<()> {

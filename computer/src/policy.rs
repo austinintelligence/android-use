@@ -156,7 +156,9 @@ mod tests {
 
     #[test]
     fn files_dir_must_be_an_absolute_path() {
-        assert_eq!(Policy::parse("files.dir = \"/srv/au-files\"").unwrap().files_dir.as_deref(), Some("/srv/au-files"));
+        // An absolute path on this platform (Windows needs a drive letter, so no literal "/srv").
+        let dir = std::env::temp_dir().join("au-files").display().to_string().replace('\\', "/");
+        assert_eq!(Policy::parse(&format!("files.dir = \"{dir}\"")).unwrap().files_dir.as_deref(), Some(dir.as_str()));
         assert!(Policy::parse("files.dir = \"relative/dir\"").unwrap_err().message.contains("absolute"));
         assert!(Policy::default().files_dir.is_none());
     }
