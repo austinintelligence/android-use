@@ -15,6 +15,6 @@
   },
   "devDependencies": {
     "@oxlint/plugins": "1.78.0",
-    "oxlint": "1.78.0"
+    "oxlint": "1.89.0"
   }
 }
