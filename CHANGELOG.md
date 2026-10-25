@@ -49,7 +49,8 @@
 - Policy, secrets, routines, traces and the `au watch` control file live in `AU_HOME` itself, also for emulator targets, where the `au secret`, `au trace` and `au watch` commands look.
 - Windows secret files are named by the hex of the secret's name, and PowerShell gets the file path through the environment.
 - Source budgets raised once for these features (Rust 12,000, Java 5,600, automation 3,900, authored 27,500), and the documentation budgets for the protocol and CLI references.
-- The host binary stays under its size limit without raising it (Linux x86_64 1,445,376 bytes against 1,450,000): the session layer is compiled once instead of inlined into both the MCP loop and the CLI, window notes read the helper's `tree` reply as plain JSON instead of through generated deserializers, secrets metadata reuses the JSON value code, and sorts that did not need to be stable use one shared instantiation or none.
+- The host binary is back under its limits (Linux x86_64 1,445,376 bytes against 1,450,000; macOS arm64 1,072,272 against 1,120,000): the session layer is compiled once instead of inlined into both the MCP loop and the CLI, window notes read the helper's `tree` reply as plain JSON instead of through generated deserializers, secrets metadata reuses the JSON value code, and sorts that did not need to be stable use one shared instantiation or none.
+- Windows gets its own host binary limit, 1,200,000 bytes (it shared macOS's 1,120,000). Windows sizes were never measured before: the 1.3.0 code links to about 1,078,000 bytes there and 1.4.0 to 1,177,088, so the shared limit no longer fit once routines, policy, secrets, approvals, traces and `au test` were in. CI now checks the binary against its platform's limit on Linux, macOS and Windows on every change (`cargo xtask binary-size`); before, only Linux was checked, at release.
 
 ### Fixed
 

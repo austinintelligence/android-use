@@ -14,9 +14,7 @@ jobs:
       - run: cargo +1.94.0 xtask check
       - run: cargo +1.94.0 test --locked --workspace --all-targets
       - run: cargo +1.94.0 build --locked --profile dist -p au
-      - name: Report the release binary size (the gate checks Linux; this shows macOS and Windows)
-        shell: bash
-        run: wc -c target/dist/au* | grep -v total
+      - run: cargo +1.94.0 xtask binary-size
   helper:
     runs-on: ubuntu-24.04
     steps:

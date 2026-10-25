@@ -64,7 +64,7 @@ Modes
 
 ## Gates that keep it this way
 
-`cargo xtask verify` fails the build if: fixed tokens exceed 420 or the recorded screens exceed 360 (`tools/src/tokens.rs`); a documentation file exceeds its token budget (the agent-facing ones are capped between 130 and 1,800 tokens each); the helper APK exceeds 60,000 bytes or the host binary 1,120,000 (1,450,000 on Linux); the Rust, Java, automation, or total source line budgets are exceeded; or product code mentions `uiautomator`. `cargo xtask benchmark-live` with `BENCH_BASELINE` and `BENCH_GATE=1` also fails on a lower success rate or a p95 more than 20% slower.
+`cargo xtask verify` fails the build if: fixed tokens exceed 420 or the recorded screens exceed 360 (`tools/src/tokens.rs`); a documentation file exceeds its token budget (the agent-facing ones are capped between 130 and 1,800 tokens each); the helper APK exceeds 60,000 bytes or the host binary 1,120,000 on macOS, 1,200,000 on Windows, or 1,450,000 on Linux (CI also checks the binary on all three with `cargo xtask binary-size`); the Rust, Java, automation, or total source line budgets are exceeded; or product code mentions `uiautomator`. `cargo xtask benchmark-live` with `BENCH_BASELINE` and `BENCH_GATE=1` also fails on a lower success rate or a p95 more than 20% slower.
 
 ## Reproduce
 

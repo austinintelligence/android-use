@@ -52,6 +52,7 @@ fn run() -> Result<(), String> {
         "bench-shim" => bench_model::shim(&env::args().skip(2).collect::<Vec<_>>()),
         "emulator-e2e" => emulator_e2e::run(&root),
         "size" => size(&root).map(|_| ()),
+        "binary-size" => binary_size(&root),
         "docs" => docs(&root, env::args().nth(2).as_deref() == Some("--write")),
         "golden-capture" => {
             let args: Vec<String> = env::args().skip(2).collect();
@@ -60,7 +61,7 @@ fn run() -> Result<(), String> {
         }
         _ => {
             println!(
-                "cargo xtask check|test|android|package|release|version|release-manifest DIR|release-notes|manifest|verify|workflow-policy|benchmark|benchmark-live|bench-model|emulator-e2e|size|docs [--write]|golden-capture NAME --reviewed"
+                "cargo xtask check|test|android|package|release|version|release-manifest DIR|release-notes|manifest|verify|workflow-policy|benchmark|benchmark-live|bench-model|emulator-e2e|size|binary-size|docs [--write]|golden-capture NAME --reviewed"
             );
             Ok(())
         }
@@ -86,14 +87,29 @@ fn verify(root: &Path) -> Result<(), String> {
 /// The release artifacts stay small: the helper APK, and the host binary (which carries the APK in
 /// releases, so its limit has room for it).
 fn artifact_sizes(root: &Path) -> Result<(), String> {
-    let binary = file_bytes(&root.join("target/dist").join(if cfg!(windows) { "au.exe" } else { "au" }))?;
+    binary_size(root)?;
     let apk = file_bytes(&release_apk(root).or_else(|_| root.join("device/app/build/outputs/apk/release/app-release-unsigned.apk").canonicalize().map_err(ioe))?)?;
-    // Linux (ELF) binaries come out about 30% larger than macOS and Windows ones from the same
-    // source (v1.0.0: 892,536 against 688,528), so the limit is per platform.
-    let max_binary = if cfg!(target_os = "linux") { 1_450_000 } else { 1_120_000 };
-    println!("artifact_sizes binary_bytes={binary} apk_bytes={apk} max_binary={max_binary} max_apk=60000");
-    if binary > max_binary || apk > 60_000 {
-        return Err("a release artifact exceeds its size limit".into());
+    println!("artifact_sizes apk_bytes={apk} max_apk=60000");
+    if apk > 60_000 {
+        return Err("the helper APK exceeds its size limit".into());
+    }
+    Ok(())
+}
+/// The `dist` host binary against its platform's limit. The same source links to different sizes:
+/// Linux (ELF) is largest, macOS smallest (1.4.0: 1,445,376, 1,177,088 on Windows, 1,072,272 on
+/// macOS), so each platform has its own limit. CI checks all three on every change.
+fn binary_size(root: &Path) -> Result<(), String> {
+    let binary = file_bytes(&root.join("target/dist").join(if cfg!(windows) { "au.exe" } else { "au" }))?;
+    let max_binary = if cfg!(target_os = "linux") {
+        1_450_000
+    } else if cfg!(windows) {
+        1_200_000
+    } else {
+        1_120_000
+    };
+    println!("binary_size binary_bytes={binary} max_binary={max_binary}");
+    if binary > max_binary {
+        return Err(format!("the host binary is {binary} bytes, over its {max_binary}-byte limit"));
     }
     Ok(())
 }
