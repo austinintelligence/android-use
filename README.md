@@ -1,12 +1,13 @@
 <p align="center"><img src="images/logo.svg" width="88" alt="Android Use logo"></p>
 
 <h1 align="center">android-use</h1>
-<p align="center"><strong>Give AI an Android device.</strong></p>
-<p align="center">Your agent sees the screen, taps, types, opens apps, and drives Chrome on a real phone or a local emulator, in about two tool calls per task.</p>
+<p align="center"><strong>Give your AI agent an Android phone. Keep your hands on the leash.</strong></p>
+<p align="center">Your agent opens apps, reads the screen, taps, types, and drives Chrome on a real phone or an emulator, in about two tool calls per task. You decide what it may touch.</p>
 
 <p align="center">
   <a href="docs/guides/install.md"><strong>Install</strong></a> ·
   <a href="docs/agents/quickstart.md">Connect an agent</a> ·
+  <a href="docs/guides/control.md">Control</a> ·
   <a href="docs/guides/emulators.md">Emulators</a> ·
   <a href="docs/README.md">Documentation</a> ·
   <a href="CHANGELOG.md">Changelog</a>
@@ -18,6 +19,19 @@
   <a href="https://github.com/austinintelligence/android-use/releases"><img alt="GitHub release" src="https://img.shields.io/github/v/release/austinintelligence/android-use"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-8CF2C1"></a>
 </p>
+
+## What is android-use?
+
+Your agent lives in a terminal and a browser. Most of the apps people use every day live on a phone. android-use connects the two: it gives the agent you already use (Claude Code, Codex, Cursor, Gemini CLI, and others) hands on a real Android phone or emulator.
+
+There are two pieces. A small helper app on the device reads the screen through Android's accessibility service and carries out actions. `au`, on your computer, talks to the helper over ADB and gives your agent two tools: one to look, one to act. The agent asks in plain commands like `open app "Settings" then tap "Network & internet"` and gets back a short answer: the screen it reached, and after later actions, only what changed.
+
+- **It reads text first.** The screen comes back as a list of what is there: labels, buttons, switches with their state (`sw Wi-Fi=on`), and fields with their contents. Agents act on labels, not on guessed coordinates. When an app shows little text, a small screenshot with a numbered box per control comes along, so `tap e4` still works.
+- **It checks itself.** Every action is matched against the screen it was planned from, journaled so it runs at most once, and confirmed after. A locked phone, a screen that is off, or an ambiguous label stops it with the reason and the one step that fixes it, instead of a blind tap.
+- **It remembers what worked.** Save a command that worked as a routine and run it again in one call. Every session leaves a trace you can review, export, or turn into a test.
+- **You stay in charge.** A `policy.toml` decides which apps the agent may open, what it may capture, and how many steps it gets. Passwords are typed for the agent without the agent ever seeing them. For anything sensitive, the agent can ask the phone itself: you see the exact steps and tap Allow once or Deny, and the approval is void if the screen changed while you decided.
+
+Developers use it to let their agent run the app it just built, report what it sees, and keep those runs as tests. Agents use it for real phone tasks end to end: checking settings, working through an app, reading a sign-in code from a notification, filling a form in Chrome. With a throwaway emulator, all of it can happen while your own phone stays in your pocket.
 
 ## One call, then only what changed
 
@@ -48,13 +62,13 @@ Changed:
 ~ sw Airplane mode=on
 ```
 
-The picture is what the agent gets when a screen has little text: 17 KB, with a numbered box per control, so `tap e4` works.
+The picture is what the agent gets when a screen has little text: 17 KB, with a numbered box per control.
 
 </td>
 </tr>
 </table>
 
-Fewer round trips and shorter results are the point. Measured on an API 36 emulator over MCP, 13 tasks run 10 times each, against the same tasks before the changes in 1.1 ([method and numbers](docs/design/measurements.md)):
+Measured on an API 36 emulator over MCP, 13 tasks run 10 times each, against the same tasks before the changes in 1.1 ([method and numbers](docs/design/measurements.md)):
 
 | | Before | Now |
 | --- | --- | --- |
@@ -64,69 +78,86 @@ Fewer round trips and shorter results are the point. Measured on an API 36 emula
 | Output tokens per task | 117 | **53** |
 | Tasks that succeeded | 64% | **98%** (127 of 130) |
 
-Tap latency is unchanged (p50 about 700 ms). Screen listings are 36% shorter, not the 50% we aimed for; the saving that matters is after an action, where a one-line diff replaces a full listing.
-
-## Install
-
-You need Android 8 or newer with USB debugging, or an emulator. `au` runs on macOS (Apple Silicon and Intel), Linux (x86_64 and arm64), and Windows (x86_64 and arm64).
+## Get started
 
 ```sh
-npx -y android-use@1.4.0 setup                 # npm; needs Node.js 20.11+
-brew install austinintelligence/tap/android-use && au setup   # Homebrew
-curl -fsSL https://raw.githubusercontent.com/austinintelligence/android-use/v1.4.0/install/install.sh | ANDROID_USE_VERSION=1.4.0 sh && au setup
+npx -y android-use@1.4.0 setup
 ```
 
-On Windows, run `install/install.ps1` in PowerShell, or unzip the archive from [Releases](https://github.com/austinintelligence/android-use/releases) and run `.\au.exe setup`. Every download is checked against `SHA256SUMS`, and the archive contains `au` with the Android helper built in.
-
-`setup` installs the helper on the device, registers Android Use with every agent it finds, and finishes with a live read of the screen. Android asks you to allow USB debugging and to turn on **Android-Use** under Settings → Accessibility; Android Use never skips those prompts. [Step by step →](docs/guides/install.md)
-
-## Use Android Use in your agent
-
-Paste this into Claude Code, Codex, Cursor, Gemini CLI, OpenCode, or any coding agent:
+That is the whole install for most people (it needs Node.js 20.11+). `setup` puts the helper on your device, registers android-use with every agent it finds, and ends by reading your screen back to you. Or tell your agent to do it:
 
 ```text
 Run `npx -y android-use@1.4.0 setup`, follow its prompts, then use android_read and android_act.
 ```
 
-Or register one agent yourself:
+You need Android 8 or newer with USB debugging on, or an emulator. No root. Android asks you to allow USB debugging and to turn on **Android-Use** under Settings → Accessibility; android-use never skips those prompts.
+
+<details><summary><strong>Homebrew, shell installer, Windows</strong></summary><br>
 
 ```sh
-au install claude      # also: codex, cursor, gemini, vscode, claude-desktop, opencode, all
-au install --dry-run   # show what would change; nothing is written
+brew install austinintelligence/tap/android-use && au setup
+curl -fsSL https://raw.githubusercontent.com/austinintelligence/android-use/v1.4.0/install/install.sh | ANDROID_USE_VERSION=1.4.0 sh && au setup
 ```
 
-Only the `android-use` entry is added or removed; every other setting stays as it was ([client details](docs/agents/clients.md)). The agent gets two tools, each taking one `command` string: `android_read` looks (`screen`, `page`, `notifications`, `help`), and `android_act` does (`tap "Wi-Fi"`, `type "hello" in "Message"`, `open app "Chrome"`). Agents without MCP use the same commands from a shell: `au read screen`, `au act 'tap "Wi-Fi"'`. Coding agents can start with [AGENTS.md](AGENTS.md).
+On Windows, run `install/install.ps1` in PowerShell, or unzip the archive from [Releases](https://github.com/austinintelligence/android-use/releases) and run `.\au.exe setup`. `au` runs on macOS (Apple Silicon and Intel), Linux (x86_64 and arm64), and Windows (x86_64 and arm64). Every download is checked against `SHA256SUMS`, and the archive contains `au` with the helper built in. [Step by step →](docs/guides/install.md)
 
-## No phone? Use an emulator
+</details>
+
+To register one agent yourself: `au install claude` (also `codex`, `cursor`, `gemini`, `vscode`, `claude-desktop`, `opencode`, `all`), or `au install --dry-run` to see what would change. Only the `android-use` entry is touched ([client details](docs/agents/clients.md)). Coding agents can start with [AGENTS.md](AGENTS.md).
+
+## Two tools, plain language
+
+`android_read` looks: `screen`, `page`, `notifications`, `routines`, `policy`, `help`. `android_act` does:
+
+```text
+tap "Wi-Fi"                     set "Airplane mode" on           type "hello" in "Message"
+open app "Chrome"               scroll down until "Privacy"      open app "Settings" then tap "Battery"
+wait for notification from "Bank" up to 60 seconds
+type secret "bank pin" in "PIN"
+save routine "set timeout" from last with "30 seconds"
+run routine "set timeout" with "1 minute"
+ask phone "Pay $25 to Alex?" then tap "Pay $25"
+```
+
+The same commands work from a shell, no MCP needed: `au read screen`, `au act 'tap "Wi-Fi"'`. Miss a label and the reply lists the near matches and a ready-to-send fix. Hit a locked phone or a stopped helper and it says exactly that. Every form: `android_read help`, or the [agent protocol](docs/reference/agent-protocol.md).
+
+## What your agent can do with it
+
+- **Use apps** the way a person would: open, read, tap, type, scroll, go back, chain steps with `then`
+- **Drive Chrome**: open pages, click, fill, read, screenshot, through Chrome's own debugging socket
+- **Remember routines**: save a command that worked, with a value as a parameter, and replay it in one call
+- **Sign in safely**: type a stored secret into a password field without seeing it, and read a one-time code from a notification (`read code from notification "Bank"`) for apps you list
+- **Read the phone**: notifications (and act on them) and one-shot location, when you allow them
+- **Capture**: screenshots; camera, microphone, and screen recording with Android's permission
+- **Turn runs into tests**: `au trace to-test` writes a session out as a test, and `au test` runs files of the same plain commands with `expect screen` checks and JUnit output for CI ([app testing](docs/guides/app-testing.md))
+- **Work on emulators**: managed emulators with snapshots, side by side with your real phone
+
+[Capability details →](docs/reference/capabilities.md)
+
+## No phone handy? Use an emulator
 
 ```sh
-au emulator doctor           # needs the Android SDK; if it says none, install Android Studio or the command-line tools first
+au emulator doctor           # needs the Android SDK; if it finds none, install Android Studio or the command-line tools
 au emulator install          # fetch the missing emulator package and system image (you accept Google's license)
 au emulator create demo
 au emulator start demo
 au --target demo setup       # then turn on Android-Use in the emulator's Accessibility settings
 ```
 
-Each emulator is its own target with its own enrollment, journal, and serve lock, so an agent can work on one while you use your phone. Snapshots, restarts, and identity checks are covered in [Emulators and targets](docs/guides/emulators.md).
+Each emulator is its own target with its own enrollment, journal, and serve lock, so an agent can work on one while you use your phone. Snapshots, restarts, and identity checks: [Emulators and targets](docs/guides/emulators.md).
 
-## What it can do
+## Safe to hand your phone to
 
-| | Capability | Notes |
-| --- | --- | --- |
-| 👁 | **See the screen** | Labels, switches, fields, lists, with state (`sw Wi-Fi=on`). A numbered image when an app exposes little text. |
-| 👆 | **Use apps** | Tap, type, scroll (even `until "TEXT"`), go back or home, open apps, chain steps with `then`. |
-| 🌐 | **Drive Chrome** | Open pages, click, fill, read, screenshot, through Chrome's own debugging socket. |
-| 📱 | **Read the device** | Notifications and one-shot location, when you allow them. |
-| 📷 | **Capture on request** | Screenshots; camera, microphone, and screen recording with Android's permission. |
-| 🖥 | **Test safely** | Managed emulators with snapshots, side by side with a real device. |
-
-[Capability details →](docs/reference/capabilities.md)
-
-## How it works
+- **One device.** A session is bound to one enrolled phone or emulator, checked on every connection, and the helper must answer a fresh cryptographic challenge before `au` sends it anything.
+- **Your policy, your rules.** `policy.toml` sets allowed and denied apps, extra risky words, a step cap, whether anything may be captured, which apps codes may be read from, and the one folder files may move through. A file that does not parse stops the session; it never means "no policy". While a denied app is in front, only back and home work.
+- **Secrets stay secret.** Values live in the system's secret store (macOS Keychain, Secret Service on Linux, per-user DPAPI on Windows), are typed only into a field the helper flags as a password field in an app you allowed, and are removed from every reply, error, trace, and routine.
+- **Approvals happen on the phone.** While the prompt waits, the helper runs no actions at all, so no agent can tap Allow for you, and it never shows over the lock screen. The agent also cannot answer Android's own system permission prompts.
+- **You can stop it.** `au watch` prints a link to a page on your computer that shows each command as it runs, with **Pause** and **Stop**. The helper's notification has a Stop button too.
+- **Nothing extra.** The helper has no internet permission, `au` exposes no shell, and every action is bounded in size and time.
 
 <img src="images/how-it-works.svg" alt="Agent to Android Use to Android device workflow" width="100%">
 
-`au` on your computer talks to a small helper app on the device over ADB. Every action is checked against the screen it was planned from, journaled so it runs at most once, and bounded in size and time. Android still owns every sensitive prompt, the helper has no internet permission, and `au` exposes no shell. [Security model →](SECURITY.md) · [Architecture →](docs/concepts/architecture.md)
+The full model: [SECURITY.md](SECURITY.md) and the [control guide](docs/guides/control.md). Under the hood: [Architecture](docs/concepts/architecture.md).
 
 ## Documentation
 
@@ -134,6 +165,8 @@ Each emulator is its own target with its own enrollment, journal, and serve lock
 | --- | --- |
 | Get it running | [Install](docs/guides/install.md), [Troubleshooting](docs/guides/troubleshooting.md) |
 | Connect Codex, Claude Code, Cursor, … | [Agent quickstart](docs/agents/quickstart.md), [client setup](docs/agents/clients.md) |
+| Set limits, secrets, approvals, routines | [Control](docs/guides/control.md) |
+| Test my app | [App testing](docs/guides/app-testing.md) |
 | Look up a command | [CLI](docs/reference/cli.md), [agent protocol](docs/reference/agent-protocol.md), [environment](docs/reference/environment.md) |
 | Run on emulators | [Emulators and targets](docs/guides/emulators.md) |
 | Understand the cost numbers | [Token budget](docs/concepts/token-budget.md) |
@@ -142,18 +175,22 @@ Each emulator is its own target with its own enrollment, journal, and serve lock
 
 ## FAQ
 
-<details><summary><strong>Does it include an AI model?</strong></summary><br>No. It gives the agent you already use a compact, safe Android interface.</details>
+<details><summary><strong>Does it include an AI model?</strong></summary><br>No. It gives the agent you already use a compact, checked Android interface.</details>
 
-<details><summary><strong>Does it need screenshots?</strong></summary><br>Usually not. The text screen is smaller and names every actionable control. When a screen has little text, or a label is not found, a compressed screenshot with numbered boxes is attached, and point taps on it map back to exact device pixels.</details>
+<details><summary><strong>Can it type my password without learning it?</strong></summary><br>Yes. Add it once with <code>printf %s "$PIN" | au secret add "bank pin" --apps com.example.bank</code>. The agent then sends <code>type secret "bank pin" in "PIN"</code>, and the value never appears in anything it gets back. <code>au secret list</code> shows names only; <code>au secret remove NAME</code> deletes one.</details>
 
-<details><summary><strong>Does the phone need to be rooted?</strong></summary><br>No. It uses USB debugging and Android's accessibility service, both granted by you.</details>
+<details><summary><strong>Does it need screenshots?</strong></summary><br>Usually not. The text screen is smaller and names every control the agent can use. When a screen has little text, or a label is not found, a compressed screenshot with numbered boxes is attached, and <code>tap point X Y</code> on it maps back to exact device pixels.</details>
 
-<details><summary><strong>Can it control any connected device?</strong></summary><br>No. A session is bound to one enrolled device (or one emulator target), checked on every connection.</details>
+<details><summary><strong>Does my phone need to be rooted?</strong></summary><br>No. It uses USB debugging and Android's accessibility service, both granted by you.</details>
+
+<details><summary><strong>Can it wander onto the wrong device?</strong></summary><br>No. A session is bound to one enrolled device or emulator target, checked every time it connects.</details>
 
 <details><summary><strong>Wi-Fi instead of USB?</strong></summary><br>Release testing uses USB. Wireless ADB works as an advanced transport; secure it like physical access.</details>
 
-<details><summary><strong>Where do captures and logs go?</strong></summary><br>Large captures are private local artifacts. The journal stores bounded operation metadata, never screen or media contents. <code>au uninstall</code> removes both. See <a href="SECURITY.md">Security</a>.</details>
+<details><summary><strong>Where do captures, traces, and logs go?</strong></summary><br>They stay on your machine in a private folder. Captures and traces are deleted after 7 days, and the journal keeps operation metadata, never screen or media contents. <code>au uninstall</code> removes the helper, the journal, and captures; stored secrets stay in your system's secret store until <code>au secret remove</code>. See <a href="SECURITY.md">Security</a>.</details>
 
 ## Status
 
-Android Use targets Android 8 and newer; the automated checks run on an Android 16 (API 36) emulator and real devices. Optional capabilities vary by device, and `au doctor` is the authority for what a connected one supports. MIT licensed; contributions are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md).
+android-use targets Android 8 and newer; the automated checks run on an Android 16 (API 36) emulator. Optional capabilities vary by device, and `au doctor` says what a connected one supports. The 1.4 control features are covered by unit and flow tests; the [changelog](CHANGELOG.md) lists what has not been run on a device yet.
+
+MIT licensed. Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). If android-use earns a place in your setup, a star helps the next person find it.
