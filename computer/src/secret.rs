@@ -26,15 +26,31 @@ pub trait SecretStore {
 /// macOS Keychain (`security`), Secret Service (`secret-tool`), or a per-user DPAPI file on Windows.
 pub struct OsStore {
     root: PathBuf,
+    /// A keychain file instead of the login keychain (tests use a throwaway one).
+    #[cfg(target_os = "macos")]
+    keychain: Option<PathBuf>,
 }
 
 impl OsStore {
     pub fn at(root: &Path) -> Self {
-        Self { root: root.to_path_buf() }
+        Self {
+            root: root.to_path_buf(),
+            #[cfg(target_os = "macos")]
+            keychain: None,
+        }
+    }
+
+    /// `security` with the keychain to use, when one is set, as its last argument.
+    #[cfg(target_os = "macos")]
+    fn security(&self, args: &[&str], stdin: Option<&str>) -> Result<(Option<i32>, String)> {
+        let keychain = self.keychain.as_ref().map(|path| path.display().to_string());
+        let args: Vec<&str> = args.iter().copied().chain(keychain.as_deref()).collect();
+        Self::run_code("security", &args, stdin, None)
     }
 
     /// Runs the store's own tool. `file` reaches PowerShell as `AU_SECRET_FILE`: arguments after
     /// `-Command` are part of the script, not values it can read.
+    #[cfg(not(target_os = "macos"))]
     fn run(program: &str, args: &[&str], stdin: Option<&str>, file: Option<&Path>) -> Result<(bool, String)> {
         Self::run_code(program, args, stdin, file).map(|(code, out)| (code == Some(0), out))
     }
@@ -72,7 +88,7 @@ impl SecretStore for OsStore {
         let _ = &self.root;
         // One expression per platform, so no branch needs an early return.
         #[cfg(target_os = "macos")]
-        let found = Self::run("security", &["find-generic-password", "-s", SERVICE, "-a", name, "-w"], None, None)?;
+        let found = self.security(&["find-generic-password", "-s", SERVICE, "-a", name, "-w"], None).map(|(code, out)| (code == Some(0), out))?;
         #[cfg(windows)]
         let found = {
             let file = self.file(name);
@@ -90,8 +106,16 @@ impl SecretStore for OsStore {
     }
 
     fn set(&self, name: &str, value: &str) -> Result<()> {
+        // `security -i` reads its command from stdin, so the value never shows in any process's
+        // arguments; names and values cannot hold quotes or backslashes, so double quotes keep
+        // each one a single word. Interactive mode exits 0 whatever happened, so the value is
+        // read back to know it was stored.
         #[cfg(target_os = "macos")]
-        let result = Self::run("security", &["add-generic-password", "-U", "-s", SERVICE, "-a", name, "-w", value], None, None);
+        let result: Result<(bool, String)> = {
+            let keychain = self.keychain.as_ref().map_or(String::new(), |path| format!(" \"{}\"", path.display()));
+            Self::run_code("security", &["-i"], Some(&format!("add-generic-password -U -s {SERVICE} -a \"{name}\" -w \"{value}\"{keychain}\n")), None)?;
+            Ok((self.get(name)?.as_deref() == Some(value), String::new()))
+        };
         #[cfg(windows)]
         let result = {
             fs::create_dir_all(self.root.join("secrets"))?;
@@ -112,7 +136,7 @@ impl SecretStore for OsStore {
         // Done, or the value was not there: `security` exits 44 for an item it cannot find, and
         // `secret-tool clear` succeeds when nothing matched. Anything else leaves the value.
         #[cfg(target_os = "macos")]
-        let done = matches!(Self::run_code("security", &["delete-generic-password", "-s", SERVICE, "-a", name], None, None)?.0, Some(0 | 44));
+        let done = matches!(self.security(&["delete-generic-password", "-s", SERVICE, "-a", name], None)?.0, Some(0 | 44));
         #[cfg(windows)]
         let done = match fs::remove_file(self.file(name)) {
             Err(e) => e.kind() == std::io::ErrorKind::NotFound,
@@ -344,6 +368,28 @@ pub(crate) mod tests {
         add(d.path(), &Memory::default(), "pin", &["com.a".into(), "com.b".into()], "1111").unwrap();
         assert!(add(d.path(), &Refusing, "pin", &["com.b".into(), "com.c".into()], "2222").is_err());
         assert_eq!(allowed_apps(d.path(), "pin"), Some(vec!["com.b".into()]), "com.a was dropped before the new value went in");
+    }
+
+    /// The real `security`, on a throwaway keychain: CI runs this on its macOS runner.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_keychain_gets_the_value_through_stdin_and_gives_it_back() {
+        let d = tempfile::tempdir().unwrap();
+        let keychain = d.path().join("au-test.keychain-db");
+        let path = keychain.display().to_string();
+        let security = |args: &[&str]| assert!(std::process::Command::new("security").args(args).status().unwrap().success(), "security {args:?}");
+        security(&["create-keychain", "-p", "au-test", &path]);
+        security(&["unlock-keychain", "-p", "au-test", &path]);
+        let store = OsStore { root: d.path().to_path_buf(), keychain: Some(keychain.clone()) };
+        let value = "Zq7 #mK9!v'L2@pR4$x";
+        store.set("bank pin", value).unwrap();
+        assert_eq!(store.get("bank pin").unwrap().as_deref(), Some(value));
+        store.set("bank pin", "second").unwrap();
+        assert_eq!(store.get("bank pin").unwrap().as_deref(), Some("second"), "-U replaces the value");
+        store.remove("bank pin").unwrap();
+        assert!(store.get("bank pin").unwrap().is_none());
+        store.remove("bank pin").unwrap();
+        let _ = std::process::Command::new("security").args(["delete-keychain", &path]).status();
     }
 
     #[test]

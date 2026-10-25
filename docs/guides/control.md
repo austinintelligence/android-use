@@ -32,7 +32,7 @@ An app is matched on its package and its launcher name (and on the name the agen
 printf %s "$BANK_PIN" | au secret add "bank pin" --apps com.example.bank
 ```
 
-The value goes to the system store (macOS Keychain, Secret Service through `secret-tool` on Linux, a per-user DPAPI file on Windows). Only the name and the allowed apps are kept in `AU_HOME`. The agent then sends `type secret "bank pin" in "PIN"` as the first step of a command. It is typed only into a single field the helper itself flags as a password field, in an allowed app, and only when no plain field on screen imitates one; the value is removed from every reply, error, trace and routine, and a line holding any piece of it is hidden whole. `android_read secrets` lists names, never values. On macOS the add command briefly shows the value in the `security` process arguments; use a terminal you trust.
+The value goes to the system store (macOS Keychain, Secret Service through `secret-tool` on Linux, a per-user DPAPI file on Windows). Only the name and the allowed apps are kept in `AU_HOME`. The agent then sends `type secret "bank pin" in "PIN"` as the first step of a command. It is typed only into a single field the helper itself flags as a password field, in an allowed app, and only when no plain field on screen imitates one; the value is removed from every reply, error, trace and routine, and a line holding any piece of it is hidden whole. `android_read secrets` lists names, never values. The value reaches the store's own tool on its standard input, never in a process's arguments.
 
 ## Pause and stop
 
