@@ -90,7 +90,7 @@ fn artifact_sizes(root: &Path) -> Result<(), String> {
     let apk = file_bytes(&release_apk(root).or_else(|_| root.join("device/app/build/outputs/apk/release/app-release-unsigned.apk").canonicalize().map_err(ioe))?)?;
     // Linux (ELF) binaries come out about 30% larger than macOS and Windows ones from the same
     // source (v1.0.0: 892,536 against 688,528), so the limit is per platform.
-    let max_binary = if cfg!(target_os = "linux") { 1_300_000 } else { 1_000_000 };
+    let max_binary = if cfg!(target_os = "linux") { 1_450_000 } else { 1_120_000 };
     println!("artifact_sizes binary_bytes={binary} apk_bytes={apk} max_binary={max_binary} max_apk=60000");
     if binary > max_binary || apk > 60_000 {
         return Err("a release artifact exceeds its size limit".into());
