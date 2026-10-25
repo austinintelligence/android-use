@@ -79,7 +79,9 @@ fn check_policy(engine: &mut Engine, actions: &[Action]) -> Result<()> {
     Ok(())
 }
 
-/// Runs one tool call's command text.
+/// Runs one tool call's command text. Never inlined: the MCP loop and the CLI both call it, and a
+/// copy in each would cost the binary its size budget.
+#[inline(never)]
 pub fn call(engine: &mut Engine, read: bool, command: &str, identity: Option<&str>) -> Result<ModelResponse> {
     check_control(engine.root(), !read)?;
     let result = if read {
@@ -148,9 +150,11 @@ fn wait_notification(engine: &mut Engine, wait: &events::Wait) -> Result<ModelRe
 /// apps `codes.apps` lists.
 fn read_code(engine: &mut Engine, wanted: &str) -> Result<ModelResponse> {
     let wanted = wanted.trim().trim_matches('"');
-    let mut items: Vec<events::Item> = notification_items(engine)?.into_iter().filter(|item| events::from_app(item, wanted)).collect();
-    items.sort_by_key(|item| item.time);
-    let item = items.pop().ok_or_else(|| Error::plain(Code::Missing, format!("No notification from \"{wanted}\".")))?;
+    let item = notification_items(engine)?
+        .into_iter()
+        .filter(|item| events::from_app(item, wanted))
+        .max_by_key(|item| item.time)
+        .ok_or_else(|| Error::plain(Code::Missing, format!("No notification from \"{wanted}\".")))?;
     if !engine.guard.policy.code_ok(&item.package, &item.title) {
         return Err(Error::plain(Code::Blocked, format!("Blocked by policy.toml: codes.apps does not list {}.", item.package)));
     }

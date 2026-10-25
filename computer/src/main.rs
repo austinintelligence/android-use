@@ -230,7 +230,7 @@ fn targets() -> Result<Value> {
     };
     let mut rows = vec![serde_json::json!({"name":"default","kind":"device","endpoint":bound(&base)})];
     let mut names: Vec<_> = std::fs::read_dir(base.join("targets")).map(|dir| dir.flatten().filter_map(|e| e.file_name().into_string().ok()).collect()).unwrap_or_default();
-    names.sort();
+    names.sort_unstable();
     for name in names {
         let dir = base.join("targets").join(&name);
         let kind = std::fs::read(dir.join("target.json"))

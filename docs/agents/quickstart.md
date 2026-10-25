@@ -1,6 +1,6 @@
 # Agent quickstart
 
-1. Run `au setup` (or `npx -y android-use@1.3.0 setup`) with one unlocked, USB-debugging-authorized device and approve Settings → Accessibility → Android-Use. It registers every agent it finds and reads the screen once to prove it works. `au doctor` explains anything missing.
+1. Run `au setup` (or `npx -y android-use@1.4.0 setup`) with one unlocked, USB-debugging-authorized device and approve Settings → Accessibility → Android-Use. It registers every agent it finds and reads the screen once to prove it works. `au doctor` explains anything missing.
 2. To register one agent yourself: `au install claude` (also `codex`, `cursor`, `gemini`, `vscode`, `claude-desktop`, `opencode`). Manual configs: [client setup](clients.md).
 3. Try it:
 

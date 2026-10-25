@@ -10,7 +10,7 @@ Set up Android Use for this agent and connect one Android device. Inspect the ex
 
 ## Host install
 
-One command: `npx -y android-use@1.3.0 setup` (npm), `brew install austinintelligence/tap/android-use` then `au setup`, or the install script (`install/install.sh`, `install/install.ps1`), which takes the latest release and verifies `SHA256SUMS` before extracting. Platforms: macOS, Linux, and Windows on x86_64 and arm64. From a verified release archive:
+One command: `npx -y android-use@1.4.0 setup` (npm), `brew install austinintelligence/tap/android-use` then `au setup`, or the install script (`install/install.sh`, `install/install.ps1`), which takes the latest release and verifies `SHA256SUMS` before extracting. Platforms: macOS, Linux, and Windows on x86_64 and arm64. From a verified release archive:
 
 ```powershell
 .\au.exe doctor

@@ -185,7 +185,7 @@ pub(crate) fn list(root: &Path) -> String {
             (path.extension()? == "txt" && !stem.starts_with('.')).then(|| format!("{}: {}", stem.replace('-', " "), fs::read_to_string(&path).unwrap_or_default().trim()))
         })
         .collect();
-    rows.sort();
+    rows.sort_unstable();
     if rows.is_empty() {
         "No routines saved. After a command works, `save routine \"NAME\" from last`.".into()
     } else {

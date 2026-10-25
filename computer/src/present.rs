@@ -186,21 +186,25 @@ impl Engine {
         if caps & crate::tree::CAP_TREE == 0 {
             return Vec::new();
         }
-        let Ok(tree) = self.bridge_read(|bridge| bridge.tree(caps)) else { return Vec::new() };
+        // Only each window's header is needed, so the reply is read as plain JSON rather than through
+        // the typed `tree` reader, whose generated code would cost the binary about 10 KB.
+        let Ok(tree) = self.bridge_read(|bridge| bridge.query("tree", Value::Null)) else { return Vec::new() };
+        let windows = tree["windows"].as_array().map(Vec::as_slice).unwrap_or_default();
+        let (kind, text) = (|w: &Value| w["type"].as_i64().unwrap_or(0), |w: &Value, key: &str| display_n(w[key].as_str().unwrap_or(""), 80));
         let mut notes = Vec::new();
-        let apps: Vec<_> = tree.windows.iter().filter(|w| w.kind == 1 && w.display == 0).collect();
-        if let Some(top) = apps.iter().max_by_key(|w| w.layer).filter(|_| apps.len() > 1) {
-            let title = display_n(&top.title, 80);
+        let apps: Vec<&Value> = windows.iter().filter(|w| kind(w) == 1 && w["display"].as_i64().unwrap_or(0) == 0).collect();
+        if let Some(top) = apps.iter().max_by_key(|w| w["layer"].as_i64().unwrap_or(0)).filter(|_| apps.len() > 1) {
+            let title = text(top, "title");
             notes.push(if title.is_empty() { "Dialog or popup open.".to_owned() } else { format!("Dialog: {title}") });
         }
-        if let Some(prompt) = tree.windows.iter().find(|w| SYSTEM_PROMPTS.contains(&w.pkg.as_str())) {
-            let title = display_n(&prompt.title, 80);
+        if let Some(prompt) = windows.iter().find(|w| SYSTEM_PROMPTS.contains(&w["pkg"].as_str().unwrap_or(""))) {
+            let title = text(prompt, "title");
             notes.push(format!("Android prompt{}: only a person answers it.", if title.is_empty() { String::new() } else { format!(" \"{title}\"") }));
         }
-        if tree.windows.iter().any(|w| w.kind == 2) {
+        if windows.iter().any(|w| kind(w) == 2) {
             notes.push("Keyboard is open.".into());
         }
-        if tree.truncated {
+        if tree["truncated"] == true {
             notes.push("The window list was cut short.".into());
         }
         notes

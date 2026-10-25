@@ -71,9 +71,9 @@ Tap latency is unchanged (p50 about 700 ms). Screen listings are 36% shorter, no
 You need Android 8 or newer with USB debugging, or an emulator. `au` runs on macOS (Apple Silicon and Intel), Linux (x86_64 and arm64), and Windows (x86_64 and arm64).
 
 ```sh
-npx -y android-use@1.3.0 setup                 # npm; needs Node.js 20.11+
+npx -y android-use@1.4.0 setup                 # npm; needs Node.js 20.11+
 brew install austinintelligence/tap/android-use && au setup   # Homebrew
-curl -fsSL https://raw.githubusercontent.com/austinintelligence/android-use/v1.3.0/install/install.sh | ANDROID_USE_VERSION=1.3.0 sh && au setup
+curl -fsSL https://raw.githubusercontent.com/austinintelligence/android-use/v1.4.0/install/install.sh | ANDROID_USE_VERSION=1.4.0 sh && au setup
 ```
 
 On Windows, run `install/install.ps1` in PowerShell, or unzip the archive from [Releases](https://github.com/austinintelligence/android-use/releases) and run `.\au.exe setup`. Every download is checked against `SHA256SUMS`, and the archive contains `au` with the Android helper built in.
@@ -85,7 +85,7 @@ On Windows, run `install/install.ps1` in PowerShell, or unzip the archive from [
 Paste this into Claude Code, Codex, Cursor, Gemini CLI, OpenCode, or any coding agent:
 
 ```text
-Run `npx -y android-use@1.3.0 setup`, follow its prompts, then use android_read and android_act.
+Run `npx -y android-use@1.4.0 setup`, follow its prompts, then use android_read and android_act.
 ```
 
 Or register one agent yourself:

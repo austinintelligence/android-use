@@ -8,8 +8,8 @@ import { fileURLToPath } from "node:url";
 import { readManifest, sha256 } from "./manifest.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const version = "1.3.0";
-const commands = ["setup", "repair", "doctor", "status", "update", "uninstall", "install", "serve", "read", "act", "devices", "enroll", "version"];
+const version = "1.4.0";
+const commands = ["setup", "repair", "doctor", "status", "update", "uninstall", "install", "serve", "read", "act", "devices", "enroll", "test", "trace", "secret", "watch", "version"];
 const command = process.argv[2] || "setup";
 const help = `Android Use
 

@@ -1,8 +1,20 @@
 # Changelog
 
-## Unreleased (1.4.0)
+## 1.4.0 — 2026-10-25
 
 **Highlights.** An agent can now keep what worked, be held back by a person's rules, and be watched and stopped from the computer or the phone. Commands, tools and flags from 1.3 are unchanged; everything new is additive and off until used. Design and test plan: [docs/design/1.4.md](docs/design/1.4.md).
+
+### Upgrading from 1.2
+
+1.3.0 was not published on its own, so 1.4.0 is the first release after 1.2.0 and includes all of it ([1.3.0 notes](https://github.com/austinintelligence/android-use/blob/v1.4.0/CHANGELOG.md#130--2026-10-24)). Its behavior changes apply when you upgrade:
+
+- `au uninstall` flags now work as named: `--dry-run` only reports, unknown flags are errors, and uninstall refuses while `au serve` is running.
+- Host state is private and artifacts expire after 7 days; a shared `AU_HOME` on CI must become per user.
+- au upgrades the helper by itself, and going back to 1.2 needs `au uninstall` first.
+- A label the agent never saw no longer runs if it is risky.
+- `run notification action` needs a label when a notification has several actions.
+- Newlines in screen text show as spaces, and `toggle` checks that the switch flipped.
+- MCP results no longer carry `structuredContent` (see Fixed).
 
 ### Added
 
@@ -23,18 +35,20 @@
 - A dialog or popup, the keyboard and Android's own permission prompts get one line above the listing when the helper has the `tree` op. The agent cannot tap Allow, OK or Accept while Android's own prompt is up.
 - Runs of six or more look-alike plain rows (`Fixture row 1` ...) collapse to the first two, a `+N more like` line and the last; `screen full` lists them all. Risky, stateful and mixed-kind runs never collapse.
 - A `Partly done` result includes the current screen.
+- The npm launcher passes `test`, `trace`, `secret` and `watch` through to `au`; it refused them before.
 - Source budgets raised once for these features (Rust 12,000, Java 5,600, automation 3,900, authored 27,500), and the documentation budgets for the protocol and CLI references.
+- The host binary stays under its size limit without raising it (Linux x86_64 1,440,656 bytes against 1,450,000): the session layer is compiled once instead of inlined into both the MCP loop and the CLI, window notes read the helper's `tree` reply as plain JSON instead of through generated deserializers, secrets metadata reuses the JSON value code, and sorts that did not need to be stable use one shared instantiation or none.
 
 ### Fixed
 
-- The MCP tools no longer return `structuredContent` (contributed by lisniuse in [#90](https://github.com/austinintelligence/android-use/pull/90)). The server declares no `outputSchema` but sent structured content with every result, and a client that prefers it to `content`, such as Claude Code, handed the model `{"status":"ok"}` in place of the screen: every read arrived empty and every failure lost its explanation. The status is already in the text. **Compatibility:** a client that read `structuredContent.status` or `.changed` no longer sees them. Present since at least 1.1.2.
+- The MCP tools no longer return `structuredContent` (contributed by @lisniuse in [#90](https://github.com/austinintelligence/android-use/pull/90)). The server declares no `outputSchema` but sent structured content with every result, and a client that prefers it to `content`, such as Claude Code, handed the model `{"status":"ok"}` in place of the screen: every read arrived empty and every failure lost its explanation. The status is already in the text. **Compatibility:** a client that read `structuredContent.status` or `.changed` no longer sees them. Present since at least 1.1.2.
 
 ### Not done
 
-- Gradle dependency locking (needs Google's Maven repository; not reachable where this was built).
-- The Android helper changes (approvals, lab screens) were written without an Android toolchain and have not been compiled or run; run `cargo xtask test` and the live checks before release.
-- `read icons` contact sheet and a clipboard command: `eN` already names every unlabeled control, and Android 10+ does not let a background service read the clipboard reliably.
-- Emulator chaos scenarios E1 to E8 and the version bump to 1.4.0.
+- Gradle dependency locking: generating the lockfiles needs Google's Maven repository, which the environment this release was prepared in could not reach.
+- The helper and fixture Java was compiled against the Android 16 framework and its JVM tests pass (56), and CI builds and tests it, but the approval prompt and the lab screens have not been run on a device yet.
+- A `read icons` contact sheet and clipboard commands: `eN` already names every unlabeled control, and Android 10+ does not let a background service read the clipboard reliably.
+- The emulator chaos scenarios E1 to E8 from the test plan, and real-model runs of the 1.4 task file.
 
 ## 1.3.0 — 2026-10-24
 

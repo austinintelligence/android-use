@@ -9,7 +9,7 @@ import { chmod, mkdtemp, mkdir, writeFile, copyFile, rm } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { writeManifest } from "../manifest.mjs";
 const run = promisify(execFile), cli = join(dirname(fileURLToPath(import.meta.url)), "..", "cli.mjs");
-const commands = ["setup", "repair", "doctor", "status", "update", "uninstall", "install", "serve", "read", "act", "devices", "enroll", "version"];
+const commands = ["setup", "repair", "doctor", "status", "update", "uninstall", "install", "serve", "read", "act", "devices", "enroll", "test", "trace", "secret", "watch", "version"];
 const posix = { skip: process.platform === "win32" && "uses a POSIX stub script" };
 
 // A stub au that prints its argv as one JSON line, so the test sees exactly what the launcher passed.
@@ -23,7 +23,7 @@ async function argvThrough(t, args) {
   return JSON.parse(r.stdout);
 }
 
-test("reports the package version without network access",async()=>{const r=await run(process.execPath,[cli,"--version"]);assert.equal(r.stdout.trim(),"1.3.0")});
+test("reports the package version without network access",async()=>{const r=await run(process.execPath,[cli,"--version"]);assert.equal(r.stdout.trim(),"1.4.0")});
 test("explains the platform binary and lists every au command",async()=>{const r=await run(process.execPath,[cli,"--help"]);assert.match(r.stdout,/platform binary/);for(const c of commands)assert.match(r.stdout,new RegExp(`\\b${c}\\b`))});
 test("rejects commands outside the au surface",async()=>{await assert.rejects(run(process.execPath,[cli,"bogus"]),e=>e.code===2)});
 test("fails closed when a platform binary is absent",async()=>{await assert.rejects(run(process.execPath,[cli,"doctor"],{env:{...process.env,AU_BIN:""}}),e=>/binary is missing/.test(e.stderr))});

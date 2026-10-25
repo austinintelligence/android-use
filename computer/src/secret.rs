@@ -8,7 +8,6 @@ use crate::{
 };
 use serde_json::{json, Value};
 use std::{
-    collections::BTreeMap,
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -115,13 +114,21 @@ fn meta_path(root: &Path) -> PathBuf {
     root.join("secrets.json")
 }
 
-fn load_meta(root: &Path) -> BTreeMap<String, Vec<String>> {
-    fs::read_to_string(meta_path(root)).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default()
+/// A JSON object of name -> package list; a missing or unreadable file is empty.
+type Meta = serde_json::Map<String, Value>;
+
+fn load_meta(root: &Path) -> Meta {
+    let value: Option<Value> = fs::read_to_string(meta_path(root)).ok().and_then(|text| serde_json::from_str(&text).ok());
+    value.and_then(|v| v.as_object().cloned()).unwrap_or_default()
 }
 
-fn save_meta(root: &Path, meta: &BTreeMap<String, Vec<String>>) -> Result<()> {
+fn apps_of(value: &Value) -> Vec<String> {
+    value.as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect()
+}
+
+fn save_meta(root: &Path, meta: &Meta) -> Result<()> {
     let mut file = private_file().write(true).create(true).truncate(true).open(meta_path(root))?;
-    writeln!(file, "{}", serde_json::to_string_pretty(meta)?)?;
+    writeln!(file, "{}", Value::Object(meta.clone()))?;
     Ok(())
 }
 
@@ -146,7 +153,7 @@ pub fn add(root: &Path, store: &dyn SecretStore, name: &str, apps: &[String], va
     }
     store.set(&normalized(name), value)?;
     let mut meta = load_meta(root);
-    meta.insert(normalized(name), apps.to_vec());
+    meta.insert(normalized(name), json!(apps));
     save_meta(root, &meta)?;
     Ok(json!({"ok":1,"text":format!("Saved secret \"{name}\" for {}.", apps.join(", "))}))
 }
@@ -165,7 +172,7 @@ pub fn list(root: &Path) -> String {
     if meta.is_empty() {
         return "No secrets saved. Add one with `au secret add NAME --apps PACKAGE`.".into();
     }
-    meta.iter().map(|(name, apps)| format!("{name}: {}", apps.join(", "))).collect::<Vec<_>>().join("\n")
+    meta.iter().map(|(name, apps)| format!("{name}: {}", apps_of(apps).join(", "))).collect::<Vec<_>>().join("\n")
 }
 
 /// A `type secret "NAME" in "FIELD"` step found in a command.
@@ -219,7 +226,7 @@ pub(crate) fn scrub(text: &str, name: &str, value: &str) -> String {
 }
 
 pub(crate) fn allowed_apps(root: &Path, name: &str) -> Option<Vec<String>> {
-    load_meta(root).remove(&normalized(name))
+    load_meta(root).get(&normalized(name)).map(apps_of)
 }
 
 #[cfg(test)]

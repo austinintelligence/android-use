@@ -104,7 +104,7 @@ fn ids(root: &Path) -> Vec<String> {
         .flatten()
         .filter_map(|e| e.path().file_stem().and_then(|s| s.to_str()).filter(|_| e.path().extension().is_some_and(|x| x == "jsonl")).map(str::to_owned))
         .collect();
-    ids.sort();
+    ids.sort_unstable();
     ids
 }
 

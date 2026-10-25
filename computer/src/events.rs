@@ -135,7 +135,7 @@ pub(crate) fn audit(rows: &[SemanticRow]) -> String {
         *counts.entry(normalized(&row.label)).or_default() += 1;
     }
     let mut dupes: Vec<String> = counts.into_iter().filter(|(_, n)| *n > 1).map(|(label, n)| format!("\"{label}\" x{n}")).collect();
-    dupes.sort();
+    dupes.sort_unstable();
     let disabled = controls().filter(|row| !row.enabled).count();
     let mut lines = Vec::new();
     if !nameless.is_empty() {

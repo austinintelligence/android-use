@@ -182,10 +182,7 @@ final class Bridge implements AutoCloseable {
                             .put(seq)
                             .put(0)
                             .put(ui == null ? 0 : ui.generation())
-                            .put(
-                                    ui == null
-                                            ? 0
-                                            : 7 | TreeWindows.CAPABILITY | Approval.CAPABILITY);
+                            .put(ui == null ? 0 : 7 | TreeWindows.CAPABILITY | Approval.CAPABILITY);
                 case "observe":
                     if (ui == null) return err(seq, 10);
                     return ui.observe(seq, q.isNull(2) ? null : q.optString(2), q.optInt(3));

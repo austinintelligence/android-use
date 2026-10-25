@@ -359,8 +359,14 @@ pub(crate) fn near_labels<'a>(wanted: &str, labels: impl IntoIterator<Item = &'a
             scored.push((closeness(&folded), label));
         }
     }
-    scored.sort_by(|a, b| b.0.total_cmp(&a.0));
-    scored.into_iter().take(3).map(|(_, label)| label).collect()
+    // The three closest, ties in screen order: a short selection, not a sort, which keeps a sort
+    // instantiation out of the binary.
+    let mut best = Vec::with_capacity(3);
+    while best.len() < 3 && !scored.is_empty() {
+        let top = (0..scored.len()).fold(0, |top, i| if scored[i].0 > scored[top].0 { i } else { top });
+        best.push(scored.remove(top).1);
+    }
+    best
 }
 
 /// A label missing from the Android screen (not a page, app, or

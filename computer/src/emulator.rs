@@ -77,7 +77,7 @@ pub fn images(sdk: &Path) -> Vec<Image> {
             }
         }
     }
-    out.sort_by(|a, b| b.api.cmp(&a.api).then_with(|| a.id.cmp(&b.id)));
+    out.sort_unstable_by(|a, b| b.api.cmp(&a.api).then_with(|| a.id.cmp(&b.id)));
     out
 }
 
@@ -456,8 +456,9 @@ pub fn snapshot(name: &str, action: &str, tag: &str) -> Result<Value> {
 pub fn list() -> Result<Value> {
     let l = layout()?;
     let names = fs::read_dir(l.base.join("targets")).map(|dir| dir.flatten().filter_map(|e| e.file_name().into_string().ok()).collect::<Vec<_>>()).unwrap_or_default();
-    let mut rows: Vec<Value> = names.iter().filter(|name| require_target(&l, name).is_ok()).filter_map(|name| status(name).ok()).collect();
-    rows.sort_by_key(|row| row["name"].as_str().unwrap_or_default().to_owned());
+    let mut names = names;
+    names.sort_unstable();
+    let rows: Vec<Value> = names.iter().filter(|name| require_target(&l, name).is_ok()).filter_map(|name| status(name).ok()).collect();
     Ok(json!({"ok":1,"emulators":rows}))
 }
 
