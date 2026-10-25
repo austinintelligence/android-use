@@ -20,7 +20,7 @@ test("README keeps the two-line prompt and the recovery guide keeps the full con
     readFile(join(root, "docs", "agents", "install.md"), "utf8"),
   ]);
   const version = (await readFile(join(root, "VERSION"), "utf8")).trim();
-  const short = prompt(readme, "## Use Android Use in your agent");
+  const short = prompt(readme, "## Get started");
   assert.ok(short.length < 200, "the README prompt stays short");
   for (const required of [`npx -y android-use@${version} setup`, "android_read", "android_act"]) {
     assert.ok(short.includes(required), `README prompt is missing: ${required}`);
